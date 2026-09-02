@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mu_docs.server import UNIT_NAME, handle, read_prompt
+from mu_spec.server import UNIT_NAME, handle, read_prompt
 
 
 def _prompts(tmp_path: Path, **files: str) -> Path:
@@ -53,11 +53,11 @@ def test_tools_manifest_is_served_even_while_empty(tmp_path):
 
 
 def test_prompts_default_tier_returns_raw_text(tmp_path):
-    d = _prompts(tmp_path, default="# mu-docs\n\nwhat this unit is.\n")
+    d = _prompts(tmp_path, default="# mu-spec\n\nwhat this unit is.\n")
     status, content_type, body = handle("GET", "/prompts/default", d)
     assert status == 200
     assert content_type.startswith("text/plain")
-    assert body == "# mu-docs\n\nwhat this unit is.\n"
+    assert body == "# mu-spec\n\nwhat this unit is.\n"
 
 
 # -- degradation: absence is normal, never an exception ---------------------
@@ -89,7 +89,7 @@ def test_non_get_is_rejected(tmp_path):
 def test_the_shipped_default_prompt_is_actually_servable():
     """prompts/default.md is declared in this unit's manifest entry and
     fetched by peers assembling their own context. If it goes missing or
-    gets renamed, peers silently learn nothing about mu-docs."""
+    gets renamed, peers silently learn nothing about mu-spec."""
     status, _, body = handle("GET", "/prompts/default", Path("prompts"))
     assert status == 200
     assert body.strip()

@@ -1,0 +1,352 @@
+# Layered specification pipeline for agent-built software
+
+A working architecture for making agent-produced software trustworthy by making the
+reasoning that produced it auditable.
+
+---
+
+## 1. Purpose and core claim
+
+The problem is not that agents write bad code. It is that agents write code whose
+justification is invisible, so no human can tell a correct implementation of a wrong
+decision from an incorrect implementation of a right one.
+
+This system fixes that by requiring that every artifact declare what it derives from.
+Code traces to spec, spec traces to architecture, architecture traces to behaviour,
+behaviour traces to intent. Nothing exists without a parent. Nothing above exists
+without something below serving it.
+
+The result is that a change anywhere has a **mechanically computable blast radius**,
+and human review becomes affordable because it is scoped to that radius instead of to
+whole documents.
+
+---
+
+## 2. The five layers
+
+| Layer | Answers | Written by | Sliced |
+|---|---|---|---|
+| Intent | Why — the buyer's problem and constraints | Human, agent-assisted | No |
+| Behaviour | What — observable, testable, implementation-free | Agent | Filed after gate |
+| Architecture | How — flows, boundaries, data movement | Agent | Yes |
+| Implementation spec | With what — libraries, modules, interfaces, layout | Agent | Yes |
+| Code | The artifact | Executor agent | Yes |
+
+### 2.1 Intent
+
+The bare requirement as the buyer would state it. This is where requirements *end*
+from the human side. It is short by nature and everyone reads it.
+
+### 2.2 Behaviour
+
+The layer most systems omit, and the reason they fail. Intent is too vague to verify
+against; architecture is a set of decisions, and decisions can be defensible and still
+wrong. Behaviour is the only testable artifact that isn't code.
+
+Stated as: given this input the system does this; this actor can do this and cannot do
+that; when this fails the user sees this.
+
+Every acceptance test downstream traces to a behaviour entry. Every architectural
+choice must justify itself by naming which behaviours it serves.
+
+### 2.3 Architecture
+
+The agent explaining to its own future sessions what the right structural take is —
+data flow, procedure flow, boundaries, standards that bind every later line of code.
+Deliberately free of library choices and implementation detail.
+
+### 2.4 Implementation spec
+
+The gap between "data flows this way" and "write this function." Named libraries,
+module boundaries, file layout, interfaces. Kept separate from architecture because it
+churns fastest, and churn here must not drag architecture with it.
+
+### 2.5 Code
+
+Every module declares which spec identifiers it implements. Without this backlink the
+bottom layer floats free of the structure and the whole scheme is decorative.
+
+---
+
+## 3. Entries and identifiers
+
+Every entry at every layer carries:
+
+- **Identifier** — layer prefix plus a flat number. `B·14`, `A·07`, `S·31`.
+- **Derives-from** — the list of upstream identifiers it serves.
+- **Body** — the content, in that layer's idiom.
+
+Rules:
+
+- Identifiers are **never reused and never renumbered**. Renumbering silently rots
+  every historical reference.
+- Identifiers encode **layer and creation order only, never slice**. Slice membership
+  is a property of the manifest, not of the identifier. This is what makes §4.6's split
+  rule work without renumbering: a split redistributes membership, and every entry keeps
+  the identifier it was born with.
+- Amendments are **append-only**, with a superseding marker. History is what makes the
+  process auditable.
+- Two fields — identifier and derives-from — turn a pile of markdown into a directed
+  graph. That graph is the whole system.
+
+---
+
+## 4. Slices
+
+### 4.1 What a slice is
+
+A vertical cut through the system by capability — listings, discovery, messaging. A
+slice owns its behaviour, architecture and spec entries. Working on one slice means
+loading one complete vertical column.
+
+### 4.2 When slices are defined
+
+Exactly once: **after the behaviour layer is complete, before any architecture is
+written.** Not earlier, because slicing on intent prose produces the wrong cuts. Not
+later, because architecture entries need somewhere to live.
+
+### 4.3 Who decides
+
+The agent proposes, the human ratifies. The human is answering a question the agent
+cannot: does this match how the business actually thinks about the product? Slices that
+match the org's mental model survive. Clever technical slices get abandoned.
+
+### 4.4 How the agent proposes
+
+1. **Group by shared nouns.** Behaviours that read and write the same domain object
+   almost always belong together. Produces candidate baskets.
+2. **Coupling test.** If a typical change touches basket A, does it also touch basket
+   B? Constant mutual reference means they are one slice pretending to be two.
+3. **Direction test.** If the dependency runs one way only, they are two slices with a
+   declared one-directional dependency — which must be named in the manifest, not
+   inferred.
+4. **Ubiquity test.** If everything touches it and it owns almost no behaviour of its
+   own, it is not a slice. It is cross-cutting.
+5. **Size test.** A basket with forty behaviours and no internal structure is probably
+   two slices.
+
+These run pairwise across all candidate baskets before anything is proposed.
+
+Do **not** slice by technical layer — frontend, backend, database. That is the classic
+failure. Slice where changes land together.
+
+### 4.5 Cross-cutting concerns
+
+Logging, error handling, auth middleware, notifications. Distinguished from slices by
+three tells:
+
+- **Ownership** — delete it and no behaviour loses its subject; things just stop firing.
+- **Direction** — almost purely inbound from everywhere.
+- **Reverse change test** — a change to *any* slice tends to touch it, so it is not
+  parallel to the slices, it sits underneath them.
+
+Cross-cutting entries live in their own file at each layer. Any slice that touches them
+must declare it. From a slice's perspective the cross-cutting column is **read-only**:
+a slice declares that it emits into notifications; it never defines notification
+behaviour. Writing there requires a separate amendment.
+
+### 4.6 Splitting rule
+
+Slices can be **split** later. They can **never be merged** — merging destroys
+identifier locality.
+
+---
+
+## 5. Storage and retrieval
+
+Plain filesystem is correct, but only because there is an index on top of it. The tree
+is storage; it is not retrieval.
+
+```
+manifest.md                  slices, identifier membership set, declared dependencies
+intent.md
+spine/
+  behaviour.md               id · one-line title · derives-from
+  architecture.md
+  spec.md
+behaviour/
+  listings.md
+  discovery.md
+  messaging.md
+  cross-cutting.md
+architecture/
+  listings.md  …
+spec/
+  listings.md  …
+history/
+  amendments-*.md            never loaded by default
+```
+
+**One file per slice per layer.** Not one file per entry — per-file overhead in a read
+tool kills you at fifty reads. Not one file per layer — large systems drown the context.
+
+**Spines are the load-bearing idea.** One file per layer listing only identifier,
+one-line title and derives-from. Roughly fifteen tokens per entry. The agent loads
+spines unconditionally, then pulls full entry bodies **by identifier, on demand**, once
+it knows from the spine which ones it needs.
+
+Typical session load: manifest, all spines, target column's full entries, declared
+dependency columns' spines only, cross-cutting spine. Full bodies only for the blast
+radius.
+
+**No vector search, no embeddings.** Semantic retrieval is non-deterministic: same
+question, different chunks, different day. The derives-from graph is already a precise
+index, and traversing it is deterministic, cheap and explainable. "I loaded `A·14`
+because `B·22` derives from it" is auditable. "The retriever ranked it 0.83" is not.
+
+**History files are never loaded by default.** They exist for reconciliation and audit.
+If history lives alongside live entries, every read pays for every past mistake.
+
+---
+
+## 6. Gates
+
+A gate is not "human approves layer" — that produces rubber-stamping within days. A
+gate is a decision on a specific question about a specific node.
+
+**Admission gates** — mechanical, run by the agent, human sees only failures:
+- Does every entry below trace to something above? (orphans)
+- Does every entry above have at least one entry below serving it? (unserved
+  requirements)
+- Does any dependency arrow point backwards against a declared direction? (bad slicing)
+
+**Judgement gates** — the agent must flag, *as it works*, every call it could not
+derive: a tradeoff, an ambiguity in intent, a decision with more than one defensible
+answer. The human then reviews a short list of things the agent chose but could not
+prove. Five minutes instead of an hour.
+
+The agent declaring its own uncertainty as a first-class artifact is what makes gates
+real. If it only ever reports confidence, the gates are theatre.
+
+**Conflict gates** — hard stop. The agent may not proceed.
+
+---
+
+## 7. Change: adding a feature
+
+A new feature originates at intent. It enters as an **intent amendment** — a new
+numbered entry, never an edit to existing text — and propagates downward.
+
+At each layer the agent asks:
+1. What new behaviours does this imply?
+2. Do any existing behaviours change or conflict?
+3. Does the existing architecture accommodate this?
+
+Question three has two possible answers and **the agent must state which one out loud**:
+either the architecture accommodates it, here is how; or it does not, here is the
+amendment. An agent quietly bending architecture to fit a feature is precisely where
+trust dies.
+
+---
+
+## 8. Change: corrections
+
+When a human says "that's wrong," the first job is **not** to fix it. It is to classify
+where the error lives:
+
+- Misunderstood what you wanted → intent defect
+- Understood you, described the wrong behaviour → behaviour defect
+- Right behaviour, bad structural decision → architecture defect
+- Right decision, sloppy code → implementation defect
+
+The fix is applied **at that layer** and re-propagated down — never patched at the point
+where the symptom was noticed. Fixing a symptom in code while the spec above still says
+the wrong thing means your artifacts now lie, and the next session reads the lie and
+reintroduces the bug.
+
+---
+
+## 9. Upward reconciliation
+
+Before any downflow, a correction at layer N is checked against layer N−1. This does
+**not** rewrite the layer above; it interrogates it. The question is: does the corrected
+version still satisfy every entry above that the original claimed to serve?
+
+Three outcomes, and only three:
+
+1. **Satisfies all of them** — a genuine reasoning slip. The agent had good inputs and
+   derived badly. Log it and propagate down.
+2. **Satisfies them, but reveals something the layer above never stated** — the upper
+   layer was incomplete. Not an agent error: a missing requirement. Promote it upward as
+   an amendment *before* the downflow runs.
+3. **Contradicts a stated entry above** — real conflict. The agent must stop and not
+   propagate. Either the human is overriding intent without realising, or the upper
+   layer was wrong. Only a human resolves this.
+
+### Diagnostic value
+
+The distribution of outcomes over time tells you where the pipeline is weak. Mostly
+outcome two means intent capture is too shallow. Mostly outcome one means architecture
+prompting needs work. This is the debug signal for the agent system itself.
+
+---
+
+## 10. Spec to code
+
+### 10.1 First iteration
+
+Spec entries are planned into tasks and executed. Each module records the spec
+identifiers it implements.
+
+### 10.2 Subsequent changes
+
+The planner's input is a **spec-level diff** — which spec entries were added, modified
+or superseded. This falls out of propagation for free.
+
+**Do not feed a git diff to the planner as input.** That makes code the source of
+truth: the planner starts reasoning about what the code does rather than what the spec
+says it should do, and within a few cycles the spec layer is decorative.
+
+The planner resolves the spec diff into two sets:
+
+- **Write set** — modules declaring they implement a changed spec entry. Editable.
+- **Read set** — modules depending on those, whose own spec entries did not change.
+  Read-only context.
+
+This makes "peeking at related features" a declared, bounded operation instead of the
+executor wandering the repo.
+
+### 10.3 Shape of the work unit
+
+- **Deep isolated feature** — one task, full column context, executor goes deep.
+- **Wide shallow change** — group by slice, one task per slice, and the task carries the
+  *rule* being applied rather than per-module instructions. If the planner emits forty
+  near-identical tickets, it has misclassified the change.
+
+### 10.4 Where git diff does belong
+
+Afterwards, as audit. Compare the actual diff against the declared write set. Any file
+touched outside that set is a gate failure — either the planner missed a dependency or
+the executor freelanced. Both are worth knowing. Mechanical check.
+
+---
+
+## 11. Known open items
+
+Not yet designed. These need closing before implementation.
+
+- **Entry field shape** per layer — the actual fields, not the prose.
+- **Session boundaries** — which layers are written by the same agent session and which
+  demand a fresh one. Context bleed between layers is real and undermines the separation.
+- **Judgement-call criteria** — what the agent is *obliged* to flag, stated concretely
+  enough to be enforceable rather than aspirational.
+- **Thin intent handling** — when the human says "build me a thing," does the agent
+  interrogate or assume-and-flag?
+- **Interface-change detection** — a spec change altering an interface other slices
+  consume looks isolated at spec level and is not. This is the highest-risk undetected
+  case in the current design.
+
+---
+
+## 12. The principles, compressed
+
+1. Every artifact declares what it derives from.
+2. Changes enter at their layer of origin and propagate downward.
+3. Corrections are classified before they are fixed.
+4. Reconciliation runs upward before propagation runs downward.
+5. Amendments are append-only; identifiers are permanent.
+6. Slices are vertical and persist unchanged to code; cross-cutting concerns sit
+   underneath them and are read-only from a slice.
+7. Retrieval is graph traversal, not similarity search.
+8. The agent must declare what it could not derive.
+9. Spec is the source of truth for planning; code is the source of truth for audit.

@@ -1,4 +1,4 @@
-"""The standard unit HTTP contract for mu-docs.
+"""The standard unit HTTP contract for mu-spec.
 
 Every unit in this system implements /health, /stats, /tools and
 /prompts/<tier> independently -- there is no shared base class, and that
@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-UNIT_NAME = "mu-docs"
+UNIT_NAME = "mu-spec"
 
 PROMPT_TIERS = ("default", "reference")
 

@@ -1,5 +1,5 @@
 [project]
-name = "mu-docs"
+name = "mu-spec"
 version = "0.1.0"
 description = "Memory unit: authoritative per-project documentation, served over the standard unit contract."
 requires-python = ">=3.10"
@@ -11,11 +11,11 @@ dev = [
 ]
 
 [project.scripts]
-mu-docs = "mu_docs.main:main"
+mu-spec = "mu_spec.main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["mu_docs*"]
+include = ["mu_spec*"]
