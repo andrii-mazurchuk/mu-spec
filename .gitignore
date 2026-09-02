@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# written into this directory by the gateway at process start -- never
+# committed, recomputed on every `holonic start`
+peers.json
+cost_policy.json
+delivery_policy.json
+
+# this unit's own private storage
+state/
