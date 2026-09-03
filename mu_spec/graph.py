@@ -33,6 +33,11 @@ class DuplicateIdentifier(ValueError):
 class Entry:
     id: Identifier
     derives_from: tuple[Identifier, ...] = ()
+    # The one-line title the spine carries. Stored explicitly rather than
+    # inferred, because the spine is the thing agents read to decide what to
+    # load, and a title that silently changes when someone reflows a
+    # paragraph is a bad foundation for that.
+    title: str = ""
     body: str = ""
     # Set on the *replacement*, naming the entry it retires. Amendments are
     # append-only: the superseded entry stays in the file and stays
@@ -40,10 +45,13 @@ class Entry:
     supersedes: Identifier | None = None
 
     @property
-    def title(self) -> str:
-        """First line of the body, stripped of heading marks. What the spine
-        carries. An empty body yields an empty title rather than raising --
-        a half-written entry must still be listable."""
+    def display_title(self) -> str:
+        """The explicit title, falling back to the body's first line for an
+        entry written before titles were explicit. An entry with neither
+        yields an empty string rather than raising -- a half-written entry
+        must still be listable."""
+        if self.title.strip():
+            return self.title.strip()
         first = self.body.strip().splitlines()[0] if self.body.strip() else ""
         return first.lstrip("#").strip()
 
@@ -158,6 +166,6 @@ class Graph:
         knows from the spine which ones it actually needs. A spine carrying
         bodies would defeat the entire scheme."""
         return [
-            (str(e.id), e.title, tuple(str(d) for d in e.derives_from))
+            (str(e.id), e.display_title, tuple(str(d) for d in e.derives_from))
             for e in self.entries()
         ]

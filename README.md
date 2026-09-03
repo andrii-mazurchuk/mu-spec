@@ -59,16 +59,31 @@ Enforced, not documented. Violating one is a hard error, not a warning.
   audit; keeping it out of the default read path means a session doesn't pay
   for every past mistake.
 
+## Seeing it work
+
+```bash
+python walkthrough.py                 # runs the whole pipeline, prints every stage
+python walkthrough.py --keep ./demo   # leave the files behind to read
+```
+
+It starts a real server on a real socket and makes real HTTP requests --
+nothing is stubbed. It walks intent → behaviour → architecture → spec across
+two slices, shows the gate refusing an unsound amendment, issues a work
+package, splits a slice, and prints what ended up on disk. Read it top to
+bottom and you can see exactly what the unit does and judge whether the shape
+is right.
+
 ## Status
 
-Scaffolding. The four standard unit endpoints are implemented and tested;
-`/tools` is deliberately empty because no capability exists yet.
+Working end to end. Storage, the graph, two admission gates, and the six
+operations are implemented and served over HTTP.
 
-Next: the graph core — parse, validate, spine, traverse, and the three
-admission gates. That work is **not blocked** by the undesigned per-layer
-field shapes (`docs/DESIGN.md` §11): the graph only ever needs `id`,
-`derives_from` and `body`, and the field shapes constrain what goes inside a
-body. Layer-specific validation is a later pass.
+Not built yet: the third gate (backwards dependency arrows between slices),
+spec-level diffs so a work package can carry only what *changed* rather than
+a whole slice, and the code layer's module backlinks. Per-layer field shapes
+(`docs/DESIGN.md` §11) are still open and deliberately do not block anything
+— the graph needs only `id`, `derives_from` and `body`, and the shapes
+constrain what goes inside a body.
 
 ## Commands
 

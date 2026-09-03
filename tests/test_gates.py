@@ -35,9 +35,11 @@ def test_a_well_formed_graph_produces_no_findings():
 
 def test_intent_entries_are_never_orphans():
     """Intent is the top layer -- it derives from nothing by definition, and
-    flagging it would make every graph permanently red."""
+    flagging it would make every graph permanently red. B·01 is reported
+    unserved here, which is a completeness finding, not a soundness one:
+    nothing has been derived from it yet."""
     graph = Graph([_entry("I·01"), _entry("B·01", "I·01")])
-    assert admission_gates(graph) == []
+    assert [f for f in admission_gates(graph) if f.kind == ORPHAN] == []
 
 
 def test_spec_entries_are_never_unserved():
@@ -52,7 +54,11 @@ def test_spec_entries_are_never_unserved():
 
 def test_an_entry_with_no_derives_from_is_an_orphan():
     graph = Graph([_entry("I·01"), _entry("B·01")])
-    assert _kinds(admission_gates(graph)) == [(ORPHAN, "B·01"), (UNSERVED, "I·01")]
+    assert _kinds(admission_gates(graph)) == [
+        (ORPHAN, "B·01"),
+        (UNSERVED, "B·01"),
+        (UNSERVED, "I·01"),
+    ]
 
 
 def test_an_entry_deriving_from_a_missing_identifier_is_an_orphan():
@@ -95,7 +101,9 @@ def test_an_entry_nothing_derives_from_is_unserved():
     """A requirement no lower layer serves is a requirement nobody built."""
     graph = Graph([_entry("I·01"), _entry("I·02"), _entry("B·01", "I·01")])
     findings = [f for f in admission_gates(graph) if f.kind == UNSERVED]
-    assert [str(f.id) for f in findings] == ["I·02"]
+    # I·02 has nothing under it at all; B·01 has not been carried down to
+    # architecture yet. Both are real outstanding work.
+    assert [str(f.id) for f in findings] == ["I·02", "B·01"]
 
 
 def test_being_served_by_any_lower_layer_counts_not_just_the_adjacent_one():
@@ -118,7 +126,9 @@ def test_a_superseded_entry_is_not_reported_as_unserved():
             _entry("B·02", "I·01", supersedes=parse("B·01")),
         ]
     )
-    assert admission_gates(graph) == []
+    unserved_ids = [str(f.id) for f in admission_gates(graph) if f.kind == UNSERVED]
+    assert "B·01" not in unserved_ids
+    assert unserved_ids == ["B·02"]
 
 
 def test_deriving_from_a_superseded_entry_is_an_orphan():
@@ -145,4 +155,9 @@ def test_findings_are_sorted_in_spine_order():
     """The human sees only failures, so the list is the entire report. Spine
     order means it reads top-down like the graph does."""
     graph = Graph([_entry("S·01"), _entry("B·01")])
-    assert [str(f.id) for f in admission_gates(graph)] == ["B·01", "S·01"]
+    assert _kinds(admission_gates(graph)) == [
+        (ORPHAN, "B·01"),
+        (ORPHAN, "S·01"),
+        (UNSERVED, "B·01"),
+    ]
+    assert [str(f.id) for f in admission_gates(graph)] == ["B·01", "B·01", "S·01"]
