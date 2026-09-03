@@ -14,3 +14,6 @@ delivery_policy.json
 
 # this unit's own private storage
 state/
+
+# not a uv project -- pip + pyproject only
+uv.lock
