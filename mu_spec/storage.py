@@ -330,13 +330,12 @@ class ProjectStore:
     def load_graph(self, project: str) -> Graph:
         return Graph(self.load_all(project))
 
-    # -- comments -----------------------------------------------------------
+    # -- inbox --------------------------------------------------------------
 
-    def comments_path(self, project: str) -> Path:
-        """Comments are annotations, not entries -- they never enter the
-        graph, so they live in their own append-only log rather than in any
-        layer's file."""
-        return self._project_dir(project) / "comments.jsonl"
+    def inbox_path(self) -> Path:
+        """One inbox for the whole unit, not per project: an `initiate`
+        message has no project yet by definition."""
+        return self._root / "inbox.jsonl"
 
     # -- slices -------------------------------------------------------------
 

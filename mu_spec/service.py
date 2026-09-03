@@ -1,11 +1,19 @@
 """The operations the unit actually offers, as plain functions over a store.
 
-Deliberately task-shaped, not data-shaped. There is no "create entry" here:
-the surface is the six things a caller genuinely wants to do -- start a
-project, add a feature, fix a defect, comment, retrieve work, review work --
-plus the machinery those need. Exposing raw CRUD over entries would let a
-caller build a graph that doesn't hold together, which is the thing this
-unit exists to prevent.
+Two doors, with deliberately different powers.
+
+**The inbox** is the outside world's only way in. It records requests, never
+writes. What a request may reach is decided by its type, so a caller cannot
+express "edit the spec" at all.
+
+**Amendments** are the pipeline's own write path, used by the agent doing
+propagation. They reach any layer -- but every amendment must cite the inbox
+message it serves, so nothing enters the graph that nobody asked for, and
+every entry traces out past the graph to the human who wanted it.
+
+Neither door is raw CRUD over entries. That would let a caller assemble a
+graph that does not hold together, which is the thing this unit exists to
+prevent.
 
 No HTTP in this module. Every function takes a store and returns a plain
 dict, so the whole surface is testable without a socket.
@@ -21,6 +29,7 @@ from typing import Any, Callable
 from mu_spec.gates import ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
+from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
 from mu_spec.storage import CROSS_CUTTING, ProjectStore
 
 COMMENTS_FILE = "comments.jsonl"
@@ -81,166 +90,103 @@ def _parse_ids(raw: Any, field: str) -> tuple[Identifier, ...]:
         raise ServiceError(f"{field}: {exc}") from exc
 
 
-# -- 1. initiate ------------------------------------------------------------
+# -- the single external door: the inbox ------------------------------------
 
 
-def initiate_project(store: ProjectStore, body: dict) -> dict:
-    """Start a project by stating intent. This is where requirements end from
-    the human side -- everything below is derived, never typed in here."""
+def post_to_inbox(inbox: Inbox, body: dict, now_fn: Callable[[], float]) -> dict:
+    """Record what someone wants. Nothing in the graph changes here."""
+    message = inbox.post(body, now_fn)
+    spec = TYPES[message.type]
+    return {
+        "message_id": message.id,
+        "status": message.status,
+        "type": message.type,
+        "may_originate_at": list(spec.originates_at),
+        "next": (
+            "an agent will read this from the inbox and decide what changes"
+            if spec.originates_at
+            else "recorded; this type never changes the graph on its own"
+        ),
+    }
+
+
+def list_inbox(inbox: Inbox, query: dict) -> dict:
+    messages = inbox.list(
+        status=query.get("status"),
+        project=query.get("project"),
+        kind=query.get("type"),
+        target=query.get("target"),
+    )
+    return {"messages": [m.to_json() for m in messages]}
+
+
+def get_message(inbox: Inbox, message_id: str) -> dict:
+    message = inbox.get(message_id)
+    if message is None:
+        raise ServiceError(f"unknown message {message_id!r}")
+    return message.to_json()
+
+
+def resolve_message(inbox: Inbox, message_id: str, body: dict) -> dict:
+    """Close a request: accepted (and here is what it produced) or rejected
+    (and here is why). Leaving it pending is what keeps the queue honest."""
+    try:
+        message = inbox.resolve(
+            message_id,
+            body.get("status", ACCEPTED),
+            body.get("note", ""),
+            body.get("produced", []),
+        )
+    except InboxError as exc:
+        raise ServiceError(str(exc)) from exc
+    return message.to_json()
+
+
+def create_project(store: ProjectStore, inbox: Inbox, body: dict) -> dict:
+    """Create an empty project. Only an `initiate` message authorises this,
+    and the intent entries themselves arrive as a normal amendment -- the
+    agent has to interview and derive them, not lift them verbatim out of
+    whatever the requester happened to type."""
     project = body.get("project")
     if not isinstance(project, str) or not project.strip():
         raise ServiceError("'project' is required")
-    items = body.get("intent") or []
-    if not isinstance(items, list) or not items:
-        raise ServiceError("'intent' must be a non-empty list of {title, body}")
-
+    message = _require_message(inbox, body, expected_types=("initiate",))
     store.create_project(project)
-    created = []
-    for item in items:
-        if not isinstance(item, dict) or not item.get("title"):
-            raise ServiceError("each intent item needs a 'title'")
-        ident = store.allocate(project, "I")
-        store.append(
-            project,
-            [Entry(id=ident, title=item["title"], body=item.get("body", ""))],
-        )
-        created.append(str(ident))
-
+    inbox.record_produced(message.id, [f"project:{project}"])
     return {
         "project": project,
-        "created": created,
-        "gates": _gate_report(store.load_graph(project)),
-        "next": "propagate intent into behaviour via submit_amendment",
+        "in_response_to": message.id,
+        "next": "submit intent entries as an amendment citing the same message",
     }
 
 
-# -- 2. add a feature -------------------------------------------------------
-
-
-def add_feature(store: ProjectStore, project: str, body: dict) -> dict:
-    """A new feature originates at intent and enters as an amendment -- a new
-    numbered entry, never an edit to existing text. It propagates downward
-    afterwards; this call only records the requirement."""
-    if not body.get("title"):
-        raise ServiceError("'title' is required")
-    ident = store.allocate(project, "I")
-    store.append(
-        project, [Entry(id=ident, title=body["title"], body=body.get("body", ""))]
-    )
-    return {
-        "id": str(ident),
-        "gates": _gate_report(store.load_graph(project)),
-        "next": "this intent entry is unserved until behaviour derives from it",
-    }
-
-
-# -- 3. fix an old one ------------------------------------------------------
-
-
-def report_defect(store: ProjectStore, project: str, body: dict) -> dict:
-    """A correction is classified *before* it is fixed: the caller states
-    which layer the error actually lives in, and the fix is applied there.
-
-    Patching the symptom at the layer where it was noticed leaves the layers
-    above still saying the wrong thing -- the artifacts then lie, and the next
-    session reads the lie and reintroduces the bug.
-    """
-    layer = body.get("layer")
-    if layer not in LAYERS:
-        raise ServiceError(f"'layer' must be one of {LAYERS} -- classify the defect")
-    if not body.get("title"):
-        raise ServiceError("'title' is required")
-
-    graph = store.load_graph(project)
-    supersedes = None
-    if body.get("supersedes"):
-        supersedes = _parse_ids([body["supersedes"]], "supersedes")[0]
-        if graph.get(supersedes) is None:
-            raise ServiceError(f"{supersedes} does not exist")
-
-    derives_from = _parse_ids(body.get("derives_from"), "derives_from")
-    if not derives_from and supersedes is not None:
-        # A replacement serves what the entry it retires served, unless the
-        # caller says otherwise. Re-typing the parents is how they drift.
-        derives_from = graph.parents(supersedes)
-
-    ident = store.allocate(project, layer)
-    slice_name = body.get("slice")
-    if layer != "I" and not slice_name and supersedes is not None:
-        slice_name = store.load_manifest(project).slice_of(supersedes)
-
-    store.append(
-        project,
-        [
-            Entry(
-                id=ident,
-                derives_from=derives_from,
-                title=body["title"],
-                body=body.get("body", ""),
-                supersedes=supersedes,
-            )
-        ],
-        slice_name=slice_name,
-    )
-
-    after = store.load_graph(project)
-    radius = after.blast_radius([ident] if supersedes is None else [supersedes, ident])
-    return {
-        "id": str(ident),
-        "supersedes": str(supersedes) if supersedes else None,
-        "blast_radius": [str(i) for i in radius],
-        "gates": _gate_report(after),
-        "next": "re-derive every entry in blast_radius",
-    }
-
-
-# -- 4. comment -------------------------------------------------------------
-
-
-def comment_on_entry(
-    store: ProjectStore, project: str, body: dict, now_fn: Callable[[], float]
-) -> dict:
-    """A comment is an annotation, never an amendment. It does not enter the
-    graph, does not derive from anything, and nothing derives from it -- so it
-    can never satisfy a requirement or silently become a decision. It is a
-    question or an observation attached to an entry."""
-    target = body.get("target")
-    if not target:
-        raise ServiceError("'target' is required")
-    ident = _parse_ids([target], "target")[0]
-    if store.load_graph(project).get(ident) is None:
-        raise ServiceError(f"{ident} does not exist")
-    if not body.get("body"):
-        raise ServiceError("'body' is required")
-
-    record = {
-        "target": str(ident),
-        "author": body.get("author", "unknown"),
-        "body": body["body"],
-        "at": now_fn(),
-    }
-    path = store.comments_path(project)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
-    return {"recorded": True, "target": str(ident)}
-
-
-def list_comments(store: ProjectStore, project: str, target: str | None) -> dict:
-    path = store.comments_path(project)
-    if not path.exists():
-        return {"comments": []}
-    records = [
-        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
-    if target:
-        records = [r for r in records if r["target"] == target]
-    return {"comments": records}
+def _require_message(inbox: Inbox, body: dict, expected_types=None):
+    """Every write cites the request that authorised it. An amendment nobody
+    asked for is refused -- this is the mechanical brake on an autonomous
+    agent quietly adding scope."""
+    message_id = body.get("in_response_to")
+    if not message_id:
+        raise ServiceError(
+            "'in_response_to' is required -- every change must cite the inbox "
+            "message that asked for it"
+        )
+    message = inbox.get(str(message_id))
+    if message is None:
+        raise ServiceError(f"unknown message {message_id!r}")
+    if expected_types and message.type not in expected_types:
+        raise ServiceError(
+            f"{message.id} is a {message.type!r} message; expected one of "
+            f"{expected_types}"
+        )
+    return message
 
 
 # -- the propagation write path ---------------------------------------------
 
 
-def submit_amendment(store: ProjectStore, project: str, body: dict) -> dict:
+def submit_amendment(
+    store: ProjectStore, inbox: Inbox, project: str, body: dict
+) -> dict:
     """Record a batch of derived entries -- the result of an agent
     propagating a change downward.
 
@@ -256,7 +202,16 @@ def submit_amendment(store: ProjectStore, project: str, body: dict) -> dict:
 
     Blocking on both would make every legitimate propagation illegal; blocking
     on neither would make the gate decorative.
+
+    Two further constraints, both about authority rather than structure. The
+    amendment must cite the inbox message it serves, so nothing enters the
+    graph that nobody asked for. And the FIRST entry created in response to a
+    message must sit within that message type's permitted origination depth:
+    a `correction` may start at intent or behaviour, never at spec. Once that
+    origin exists, propagating downward from it is unrestricted -- the
+    restriction is on where a change may *enter*, not how far it may travel.
     """
+    message = _require_message(inbox, body)
     items = body.get("entries")
     if not isinstance(items, list) or not items:
         raise ServiceError("'entries' must be a non-empty list")
@@ -291,31 +246,87 @@ def submit_amendment(store: ProjectStore, project: str, body: dict) -> dict:
             )
         )
 
+    spec_type = TYPES[message.type]
+    already = (message.resolution or {}).get("produced", [])
+    is_origination = not any(a[:1] in ("I", "B", "A", "S") and "·" in a for a in already)
+    if is_origination:
+        if not spec_type.originates_at:
+            raise ServiceError(
+                f"a {message.type!r} message never creates entries -- it "
+                "records something to consider, and changes nothing on its own"
+            )
+        topmost = min(staged, key=lambda e: e.id.depth).id
+        if topmost.layer not in spec_type.originates_at:
+            raise ServiceError(
+                f"a {message.type!r} message may only originate at "
+                f"{spec_type.originates_at}, but this amendment starts at "
+                f"{topmost.layer_name} ({topmost}). Fixing something lower "
+                "while the layers above still say the old thing is how the "
+                "artifacts start lying -- classify the defect upward first."
+            )
+
     prospective = Graph(existing + staged)
-    staged_ids = {e.id for e in staged}
     new_orphans = [
         f
         for f in admission_gates(prospective)
         if f.kind == ORPHAN and (f.kind, str(f.id)) not in before
     ]
-    if new_orphans:
+
+    # Retiring an entry necessarily strands whatever derived from it, and
+    # that is not a defect in the amendment -- it is the amendment doing its
+    # job. A correction to B*01 is *supposed* to leave the architecture and
+    # spec beneath it stale; the blast radius is how you learn what to
+    # re-derive, and the graph stays unsound until you do, which is what
+    # withholds work packages in the meantime.
+    #
+    # So the two kinds of new orphan are separated. Stranded-by-this-
+    # supersession is admitted and reported. Anything else -- a reference to
+    # something that never existed, or one pointing the wrong way -- is
+    # refused, because no amendment ever has a reason to introduce one.
+    retired = {str(e.supersedes) for e in staged if e.supersedes is not None}
+    stale, blocking = [], []
+    for finding in new_orphans:
+        reasons = finding.detail.split("; ")
+        if reasons and all(
+            any(f"{r} is superseded by" in reason for r in retired) for reason in reasons
+        ):
+            stale.append(finding)
+        else:
+            blocking.append(finding)
+
+    if blocking:
         return {
             "admitted": False,
             "reason": "amendment would introduce orphans",
             "findings": [
                 {"kind": f.kind, "id": str(f.id), "detail": f.detail}
-                for f in new_orphans
+                for f in blocking
             ],
         }
 
     for entry in staged:
         store.allocate(project, entry.id.layer)
     store.append(project, staged, slice_name=slice_name)
+    created = [str(e.id) for e in sorted(staged, key=lambda e: sort_key(e.id))]
+    inbox.record_produced(message.id, created)
 
     after = store.load_graph(project)
     return {
         "admitted": True,
-        "created": [str(e.id) for e in sorted(staged, key=lambda e: sort_key(e.id))],
+        "created": created,
+        "in_response_to": message.id,
+        # What this amendment stranded by retiring something. Each of these
+        # must be re-derived; until then the graph is unsound and no work
+        # package will be issued.
+        "stale_references": [
+            {"id": str(f.id), "detail": f.detail} for f in stale
+        ],
+        "blast_radius": [
+            str(i)
+            for i in after.blast_radius(
+                [e.supersedes for e in staged if e.supersedes is not None]
+            )
+        ],
         "gates": _gate_report(after),
     }
 
@@ -467,7 +478,11 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
 
 
 def review_layer(
-    store: ProjectStore, project: str, layer: str, slice_name: str | None
+    store: ProjectStore,
+    inbox: Inbox,
+    project: str,
+    layer: str,
+    slice_name: str | None,
 ) -> dict:
     """Read a layer with each entry's justification chain attached, so a
     reviewer sees the decision and what it claims to serve in one place
@@ -499,7 +514,14 @@ def review_layer(
                     if graph.get(i) is not None
                 ],
                 "served_by": [str(i) for i in graph.children(entry.id)],
-                "comments": list_comments(store, project, str(entry.id))["comments"],
+                # Comments are inbox messages, not a second store. A comment
+                # is a request that changes nothing, which is exactly what an
+                # annotation is -- a parallel log would have meant two places
+                # to look for "what did someone say about this".
+                "comments": [
+                    m.to_json()
+                    for m in inbox.list(kind="comment", target=str(entry.id))
+                ],
             }
         )
 

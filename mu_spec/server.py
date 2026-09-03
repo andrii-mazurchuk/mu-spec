@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from mu_spec import service
 from mu_spec.service import ServiceError
+from mu_spec.inbox import Inbox, InboxError
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
@@ -37,9 +38,14 @@ _P = r"(?P<project>[A-Za-z0-9_-]+)"
 
 
 def _tools() -> list[dict[str, Any]]:
-    """What a model sees. The six operations a caller actually wants, plus
-    the machinery those need: a write path for propagation, and the
-    retrieval primitives that make loading context cheap."""
+    """What a model sees. Hand-written, not derived from the route table --
+    every entry needs a description written for a model to read, and /health
+    and /tools are deliberately never declared.
+
+    Note what is NOT here: any way to write an entry directly. Everything
+    from outside goes through post_request, and the request's *type* is what
+    decides how deep a change may reach.
+    """
 
     def tool(name, desc, method, path, props, required=()):
         return {
@@ -55,63 +61,92 @@ def _tools() -> list[dict[str, Any]]:
         }
 
     s = {"type": "string"}
+    strings = {"type": "array", "items": s}
     return [
         tool(
-            "initiate_project",
-            "Start a project by stating intent -- the buyer's problem in their "
-            "own terms. This is where requirements end from the human side; "
-            "every lower layer is derived, never typed in here.",
+            "post_request",
+            "The only way to ask this unit for a change. `type` is one of: "
+            "initiate (start a project from a raw idea), feature (something "
+            "the product does not do yet), correction (something is wrong), "
+            "comment (an observation attached to part of the design), "
+            "question (needs an answer, not a change). You never name a layer "
+            "or write an entry -- the type decides how deep the change may "
+            "reach, and an agent decides what actually changes. `targets` is "
+            "optional and usually omitted: you are not expected to know how "
+            "the design is laid out.",
             "POST",
-            "/projects",
-            {"project": s, "intent": {"type": "array", "items": {"type": "object"}}},
-            ("project", "intent"),
-        ),
-        tool(
-            "add_feature",
-            "Request a new feature. Enters as an intent amendment -- a new "
-            "numbered entry, never an edit to existing text. Returns the new "
-            "identifier; propagating it downward is a separate step.",
-            "POST",
-            "/projects/{project}/features",
-            {"project": s, "title": s, "body": s},
-            ("project", "title"),
-        ),
-        tool(
-            "report_defect",
-            "Fix something that is wrong. You must classify which layer the "
-            "error actually lives in (I intent, B behaviour, A architecture, "
-            "S spec) -- patching the symptom where it was noticed leaves the "
-            "layers above still lying. Returns the blast radius that must now "
-            "be re-derived.",
-            "POST",
-            "/projects/{project}/defects",
+            "/inbox",
             {
+                "type": s,
                 "project": s,
-                "layer": s,
                 "title": s,
                 "body": s,
-                "supersedes": s,
-                "slice": s,
-                "derives_from": {"type": "array", "items": s},
+                "targets": strings,
+                "origin": s,
             },
-            ("project", "layer", "title"),
+            ("type", "title"),
         ),
         tool(
-            "comment_on_entry",
-            "Attach a question or observation to an entry. A comment is an "
-            "annotation, never an amendment: it does not enter the graph and "
-            "can never silently become a decision.",
+            "list_requests",
+            "The request queue. Filter by status (pending/accepted/rejected), "
+            "project, type, or target. This is what the processing agent "
+            "reads to find work.",
+            "GET",
+            "/inbox",
+            {"status": s, "project": s, "type": s, "target": s},
+        ),
+        tool(
+            "get_request",
+            "One request, with what it has produced so far.",
+            "GET",
+            "/inbox/{mid}",
+            {"mid": s},
+            ("mid",),
+        ),
+        tool(
+            "resolve_request",
+            "Close a request: accepted (with what it produced) or rejected "
+            "(with why). Leaving it pending is what keeps the queue honest.",
             "POST",
-            "/projects/{project}/comments",
-            {"project": s, "target": s, "body": s, "author": s},
-            ("project", "target", "body"),
+            "/inbox/{mid}/resolve",
+            {"mid": s, "status": s, "note": s, "produced": strings},
+            ("mid",),
+        ),
+        tool(
+            "create_project",
+            "Create an empty project. Requires an `initiate` request to cite. "
+            "The intent entries themselves arrive as a normal amendment, so "
+            "they are derived and interviewed for rather than lifted verbatim "
+            "from whatever the requester typed.",
+            "POST",
+            "/projects",
+            {"project": s, "in_response_to": s},
+            ("project", "in_response_to"),
+        ),
+        tool(
+            "submit_amendment",
+            "Record a batch of derived entries -- the pipeline's own write "
+            "path. Must cite the request it serves. Validated as one "
+            "transaction: an amendment that would introduce an orphan is "
+            "refused whole, and the first entry created for a request must "
+            "sit within that request type's permitted origination depth. "
+            "Entries left unserved are reported, not refused.",
+            "POST",
+            "/projects/{project}/amendments",
+            {
+                "project": s,
+                "slice": s,
+                "in_response_to": s,
+                "entries": {"type": "array", "items": {"type": "object"}},
+            },
+            ("project", "in_response_to", "entries"),
         ),
         tool(
             "get_work_package",
-            "Retrieve the bounded context for producing code for one slice: "
-            "the spec entries you may edit, the justification chain for each, "
+            "The bounded context for producing code for one slice: the spec "
+            "entries you may edit, the justification chain for each, "
             "read-only context from declared dependencies, and cross-cutting "
-            "entries. Refused if the graph does not pass its admission gates.",
+            "entries. Refused if the graph is unsound.",
             "GET",
             "/projects/{project}/work-package",
             {"project": s, "slice": s},
@@ -120,27 +155,12 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "review_layer",
             "Read one layer with each entry's justification chain, what "
-            "serves it, and its comments attached -- so a reviewer sees the "
-            "decision and what it claims to serve in one place.",
+            "serves it, and the comments attached to it -- so a reviewer sees "
+            "the decision and what it claims to serve in one place.",
             "GET",
             "/projects/{project}/review",
             {"project": s, "layer": s, "slice": s},
             ("project", "layer"),
-        ),
-        tool(
-            "submit_amendment",
-            "Record a batch of derived entries -- the result of propagating a "
-            "change into a lower layer. Validated as one transaction: an "
-            "amendment that would introduce an orphan is refused whole. "
-            "Entries left unserved are reported, not refused.",
-            "POST",
-            "/projects/{project}/amendments",
-            {
-                "project": s,
-                "slice": s,
-                "entries": {"type": "array", "items": {"type": "object"}},
-            },
-            ("project", "entries"),
         ),
         tool(
             "get_spine",
@@ -162,9 +182,10 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "check_gates",
-            "Run the mechanical admission gates: entries tracing to nothing "
-            "above (orphans), and entries nothing below serves (unserved). "
-            "An empty findings list means the graph holds together.",
+            "Soundness and completeness. Sound means no orphans -- nothing "
+            "derives from something missing, retired, or below it. Complete "
+            "means nothing is unserved -- knowledge has reached spec on every "
+            "branch. Unsound blocks work; incomplete is the to-do list.",
             "GET",
             "/projects/{project}/gates",
             {"project": s},
@@ -197,16 +218,19 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/stats$"), "stats"),
     ("GET", re.compile(r"^/tools$"), "tools"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
+    # The single external door.
+    ("POST", re.compile(r"^/inbox$"), "post_inbox"),
+    ("GET", re.compile(r"^/inbox$"), "list_inbox"),
+    ("GET", re.compile(r"^/inbox/(?P<mid>[A-Za-z0-9_-]+)$"), "get_message"),
+    ("POST", re.compile(r"^/inbox/(?P<mid>[A-Za-z0-9_-]+)/resolve$"), "resolve"),
+    # The pipeline's own write path.
+    ("POST", re.compile(r"^/projects$"), "create_project"),
+    ("POST", re.compile(rf"^/projects/{_P}/amendments$"), "amendment"),
+    # Reads.
     ("GET", re.compile(r"^/projects$"), "list_projects"),
-    ("POST", re.compile(r"^/projects$"), "initiate"),
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
     ("GET", re.compile(rf"^/projects/{_P}/gates$"), "gates"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
-    ("POST", re.compile(rf"^/projects/{_P}/features$"), "feature"),
-    ("POST", re.compile(rf"^/projects/{_P}/defects$"), "defect"),
-    ("POST", re.compile(rf"^/projects/{_P}/comments$"), "comment"),
-    ("GET", re.compile(rf"^/projects/{_P}/comments$"), "list_comments"),
-    ("POST", re.compile(rf"^/projects/{_P}/amendments$"), "amendment"),
     ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
     ("GET", re.compile(rf"^/projects/{_P}/review$"), "review"),
 ]
@@ -219,6 +243,7 @@ def handle(
     prompts_dir: Path,
     body: dict | None = None,
     now_fn: Callable[[], float] = time.time,
+    inbox: Inbox | None = None,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -243,6 +268,7 @@ def handle(
         return 404, JSON, json.dumps({"error": "not found"})
 
     project = params.get("project", "")
+    inbox = inbox or Inbox(store.inbox_path())
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
@@ -278,8 +304,24 @@ def handle(
         if name == "list_projects":
             return 200, JSON, json.dumps({"projects": store.list_projects()})
 
-        if name == "initiate":
-            return 201, JSON, json.dumps(service.initiate_project(store, body))
+        if name == "post_inbox":
+            return 201, JSON, json.dumps(service.post_to_inbox(inbox, body, now_fn))
+
+        if name == "list_inbox":
+            return 200, JSON, json.dumps(service.list_inbox(inbox, query))
+
+        if name == "get_message":
+            return 200, JSON, json.dumps(service.get_message(inbox, params["mid"]))
+
+        if name == "resolve":
+            return (
+                200,
+                JSON,
+                json.dumps(service.resolve_message(inbox, params["mid"], body)),
+            )
+
+        if name == "create_project":
+            return 201, JSON, json.dumps(service.create_project(store, inbox, body))
 
         if name == "spine":
             return (
@@ -298,28 +340,8 @@ def handle(
                 json.dumps(service.get_entry(store, project, params["id"])),
             )
 
-        if name == "feature":
-            return 201, JSON, json.dumps(service.add_feature(store, project, body))
-
-        if name == "defect":
-            return 201, JSON, json.dumps(service.report_defect(store, project, body))
-
-        if name == "comment":
-            return (
-                201,
-                JSON,
-                json.dumps(service.comment_on_entry(store, project, body, now_fn)),
-            )
-
-        if name == "list_comments":
-            return (
-                200,
-                JSON,
-                json.dumps(service.list_comments(store, project, query.get("target"))),
-            )
-
         if name == "amendment":
-            result = service.submit_amendment(store, project, body)
+            result = service.submit_amendment(store, inbox, project, body)
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
 
         if name == "work_package":
@@ -336,11 +358,13 @@ def handle(
                 JSON,
                 json.dumps(
                     service.review_layer(
-                        store, project, query["layer"], query.get("slice")
+                        store, inbox, project, query["layer"], query.get("slice")
                     )
                 ),
             )
 
+    except InboxError as exc:
+        return 400, JSON, json.dumps({"error": str(exc)})
     except UnknownProject:
         return 404, JSON, json.dumps({"error": f"unknown project {project!r}"})
     except FileExistsError as exc:

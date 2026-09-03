@@ -20,6 +20,33 @@ Every entry carries an identifier, a derives-from list, and a body. Two
 structural fields turn a pile of markdown into a directed graph, and the graph
 is the whole system.
 
+## Asking it for something
+
+**Everything from outside goes through one door: `POST /inbox`.** A request
+says what someone wants; it never writes an entry and never names a layer.
+The request's `type` decides how deep a change may reach:
+
+| type | may originate at | |
+|---|---|---|
+| `initiate` | intent | start a project from a raw idea |
+| `feature` | intent | something the product does not do yet |
+| `correction` | intent, behaviour | something is wrong |
+| `comment` | nothing | an observation attached to part of the design |
+| `question` | nothing | needs an answer, not a change |
+
+`targets` is optional and usually omitted — whoever is asking generally
+cannot know how the design is laid out, which is why they are asking.
+
+There is deliberately no way to edit the spec directly. Patching something
+low while the layers above still say the old thing is how the artifacts
+start lying, so a correction enters at intent or behaviour and is carried
+down from there.
+
+The pipeline's own write path is separate: `submit_amendment` reaches any
+layer, but must cite the request it serves. An amendment nobody asked for is
+refused, so every entry traces out past the graph to the person who wanted
+it.
+
 ## The boundary
 
 **mu-spec computes. It never reasons, and it never executes.**

@@ -31,15 +31,33 @@ def call(store, prompts, method, path, body=None):
     return status, parsed
 
 
+def post(store, prompts, kind, title, project="m", **kw):
+    """Ask for something. The only way in from outside."""
+    return call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {"type": kind, "title": title, "project": project, **kw},
+    )
+
+
 def seed(store, prompts):
     """A project with one intent entry, one behaviour serving it, one
-    architecture, and one spec -- a complete vertical column."""
+    architecture, and one spec -- a complete vertical column, built the way
+    the pipeline actually builds it: a request, then amendments citing it."""
+    _, msg = post(store, prompts, "initiate", "a marketplace", project="m")
+    mid = msg["message_id"]
+    call(store, prompts, "POST", "/projects", {"project": "m", "in_response_to": mid})
     call(
         store,
         prompts,
         "POST",
-        "/projects",
-        {"project": "m", "intent": [{"title": "Buyers can find sellers"}]},
+        "/projects/m/amendments",
+        {
+            "in_response_to": mid,
+            "entries": [{"layer": "I", "title": "Buyers can find sellers"}],
+        },
     )
     for layer, title, parent in (
         ("B", "A buyer can search listings", "I·01"),
@@ -53,6 +71,7 @@ def seed(store, prompts):
             "/projects/m/amendments",
             {
                 "slice": "listings",
+                "in_response_to": mid,
                 "entries": [
                     {
                         "layer": layer,
@@ -63,6 +82,7 @@ def seed(store, prompts):
                 ],
             },
         )
+    return mid
 
 
 # -- the standard unit contract ---------------------------------------------
@@ -87,13 +107,16 @@ def test_tools_manifest_declares_the_operations(store, prompts):
     assert status == 200
     assert payload["unit"] == UNIT_NAME
     assert {
-        "initiate_project",
-        "add_feature",
-        "report_defect",
-        "comment_on_entry",
+        "post_request",
+        "list_requests",
+        "resolve_request",
+        "create_project",
+        "submit_amendment",
         "get_work_package",
         "review_layer",
     } <= names
+    # No tool writes an entry directly, and none names a layer.
+    assert not any("defect" in n or "feature" in n for n in names)
 
 
 def test_tools_never_declares_health_or_itself(store, prompts):
@@ -119,8 +142,23 @@ def test_prompts_default_tier_returns_raw_text(store, prompts):
 
 
 def test_missing_prompt_file_404s_rather_than_raising(store, prompts):
+    """The fixture ships only a default tier."""
     status, _ = call(store, prompts, "GET", "/prompts/reference")
     assert status == 404
+
+
+def test_the_shipped_reference_tier_carries_the_intake_interview(store):
+    """The interview skill is served through the standard prompts mechanism,
+    so a finished version goes live without any new endpoint. Declared in
+    this unit's manifest entry and linked from the default prompt."""
+    status, body = call(store, Path("prompts"), "GET", "/prompts/reference")
+    assert status == 200
+    assert "intent entries" in body
+
+
+def test_the_default_prompt_points_at_the_reference_tier(store):
+    _, body = call(store, Path("prompts"), "GET", "/prompts/default")
+    assert "/prompts/reference" in body
 
 
 def test_unknown_prompt_tier_is_rejected_without_touching_the_filesystem(prompts):
@@ -146,164 +184,170 @@ def test_the_shipped_default_prompt_is_actually_servable(store):
     assert body.strip()
 
 
-# -- 1. initiate ------------------------------------------------------------
+# -- the inbox: the single external door ------------------------------------
 
 
-def test_initiate_creates_the_project_and_allocates_intent(store, prompts):
+def test_a_request_records_what_someone_wants_and_changes_nothing(store, prompts):
+    seed(store, prompts)
+    _, before = call(store, prompts, "GET", "/projects/m/spine")
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {"type": "feature", "project": "m", "title": "Saved searches"},
+    )
+    assert status == 201
+    assert payload["status"] == "pending"
+    _, after = call(store, prompts, "GET", "/projects/m/spine")
+    assert before == after
+
+
+def test_a_request_needs_a_known_type(store, prompts):
+    seed(store, prompts)
+    status, payload = call(
+        store, prompts, "POST", "/inbox", {"type": "patch_the_spec", "title": "x"}
+    )
+    assert status == 400
+    assert "type" in payload["error"]
+
+
+def test_targets_are_optional_because_the_asker_cannot_know_the_layout(store, prompts):
+    """Requiring a target would push this unit's internal structure onto the
+    outside world, which is the coupling the whole design avoids."""
+    status, _ = call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {"type": "feature", "project": "m", "title": "something, somewhere"},
+    )
+    assert status == 201
+
+
+def test_a_target_is_accepted_as_a_hint_when_the_asker_does_know(store, prompts):
+    seed(store, prompts)
+    _, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {
+            "type": "comment",
+            "project": "m",
+            "title": "why an index?",
+            "targets": ["A·01"],
+        },
+    )
+    _, msg = call(store, prompts, "GET", f"/inbox/{payload['message_id']}")
+    assert msg["targets"] == ["A·01"]
+
+
+def test_the_queue_can_be_filtered_by_status(store, prompts):
+    seed(store, prompts)
+    post(store, prompts, "feature", "one")
+    post(store, prompts, "feature", "two")
+    _, payload = call(store, prompts, "GET", "/inbox?status=pending&project=m")
+    assert [m["title"] for m in payload["messages"]] == ["a marketplace", "one", "two"]
+
+
+def test_a_request_is_resolved_with_what_it_produced(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        f"/inbox/{msg['message_id']}/resolve",
+        {"status": "accepted", "note": "shipped", "produced": ["I·02"]},
+    )
+    assert status == 200
+    assert payload["status"] == "accepted"
+    assert payload["resolution"]["produced"] == ["I·02"]
+
+
+def test_a_request_cannot_be_resolved_twice(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
+    call(store, prompts, "POST", f"/inbox/{msg['message_id']}/resolve", {})
+    status, _ = call(store, prompts, "POST", f"/inbox/{msg['message_id']}/resolve", {})
+    assert status == 400
+
+
+# -- authority: every write cites the request that asked for it -------------
+
+
+def test_an_amendment_must_cite_a_request(store, prompts):
+    """An amendment nobody asked for is refused. This is the mechanical brake
+    on an agent quietly adding scope."""
+    seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {"entries": [{"layer": "I", "title": "scope I invented"}]},
+    )
+    assert status == 400
+    assert "in_response_to" in payload["error"]
+
+
+def test_an_amendment_citing_an_unknown_request_is_refused(store, prompts):
+    seed(store, prompts)
+    status, _ = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {"in_response_to": "msg-9999", "entries": [{"layer": "I", "title": "x"}]},
+    )
+    assert status == 400
+
+
+def test_a_project_can_only_be_created_from_an_initiate_request(store, prompts):
+    _, msg = call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {"type": "feature", "project": "m", "title": "not an initiate"},
+    )
     status, payload = call(
         store,
         prompts,
         "POST",
         "/projects",
+        {"project": "m", "in_response_to": msg["message_id"]},
+    )
+    assert status == 400
+    assert "initiate" in payload["error"]
+
+
+# -- origination depth: how deep a request may reach ------------------------
+
+
+def test_a_feature_may_originate_at_intent(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
         {
-            "project": "m",
-            "intent": [{"title": "Buyers find sellers"}, {"title": "Sellers get paid"}],
+            "in_response_to": msg["message_id"],
+            "entries": [{"layer": "I", "title": "Buyers can save a search"}],
         },
     )
-    assert status == 201
-    assert payload["created"] == ["I·01", "I·02"]
-    assert call(store, prompts, "GET", "/projects")[1] == {"projects": ["m"]}
+    assert status == 200
+    assert payload["created"] == ["I·02"]
 
 
-def test_initiate_without_intent_is_refused(store, prompts):
-    assert call(store, prompts, "POST", "/projects", {"project": "m"})[0] == 400
-
-
-def test_initiating_the_same_project_twice_conflicts(store, prompts):
-    body = {"project": "m", "intent": [{"title": "x"}]}
-    call(store, prompts, "POST", "/projects", body)
-    assert call(store, prompts, "POST", "/projects", body)[0] == 409
-
-
-def test_operations_on_an_unknown_project_404(store, prompts):
-    assert call(store, prompts, "GET", "/projects/nope/spine")[0] == 404
-
-
-# -- 2. add a feature -------------------------------------------------------
-
-
-def test_add_feature_creates_an_intent_amendment(store, prompts):
+def test_a_feature_may_not_originate_at_behaviour(store, prompts):
+    """A new capability is a new requirement. Starting at behaviour would
+    leave intent silent about something the product now does."""
     seed(store, prompts)
-    status, payload = call(
-        store, prompts, "POST", "/projects/m/features", {"title": "Saved searches"}
-    )
-    assert status == 201
-    assert payload["id"] == "I·02"
-
-
-def test_a_new_feature_shows_up_as_unserved_until_it_is_propagated(store, prompts):
-    """The gate is how outstanding work becomes visible. A feature nobody has
-    derived behaviour from is a requirement nobody built."""
-    seed(store, prompts)
-    call(store, prompts, "POST", "/projects/m/features", {"title": "Saved searches"})
-    _, gates = call(store, prompts, "GET", "/projects/m/gates")
-    assert [(f["kind"], f["id"]) for f in gates["findings"]] == [("unserved", "I·02")]
-
-
-# -- 3. fix an old one ------------------------------------------------------
-
-
-def test_report_defect_supersedes_and_reports_the_blast_radius(store, prompts):
-    """Fixing the behaviour entry tells you architecture and spec below it now
-    have to be re-derived. That list is the entire point."""
-    seed(store, prompts)
-    status, payload = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/defects",
-        {
-            "layer": "B",
-            "title": "A buyer can search listings and saved searches",
-            "supersedes": "B·01",
-        },
-    )
-    assert status == 201
-    assert payload["id"] == "B·02"
-    assert payload["blast_radius"] == ["A·01", "S·01"]
-
-
-def test_a_replacement_inherits_the_parents_of_what_it_retires(store, prompts):
-    seed(store, prompts)
-    call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/defects",
-        {"layer": "B", "title": "revised", "supersedes": "B·01"},
-    )
-    _, entry = call(store, prompts, "GET", "/projects/m/entries/B·02")
-    assert entry["derives_from"] == ["I·01"]
-
-
-def test_a_defect_must_be_classified_to_a_layer(store, prompts):
-    seed(store, prompts)
-    status, payload = call(
-        store, prompts, "POST", "/projects/m/defects", {"title": "something is wrong"}
-    )
-    assert status == 400
-    assert "layer" in payload["error"]
-
-
-def test_superseding_an_entry_that_does_not_exist_is_refused(store, prompts):
-    seed(store, prompts)
-    status, _ = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/defects",
-        {"layer": "B", "title": "x", "supersedes": "B·99"},
-    )
-    assert status == 400
-
-
-# -- 4. comment -------------------------------------------------------------
-
-
-def test_a_comment_is_recorded_against_an_entry(store, prompts):
-    seed(store, prompts)
-    status, _ = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/comments",
-        {"target": "A·01", "body": "why an index rather than a scan?", "author": "a"},
-    )
-    assert status == 201
-    _, listed = call(store, prompts, "GET", "/projects/m/comments?target=A·01")
-    assert listed["comments"][0]["body"] == "why an index rather than a scan?"
-
-
-def test_a_comment_does_not_enter_the_graph(store, prompts):
-    """It cannot satisfy a requirement or become a decision -- the spine and
-    the gates are unchanged by it."""
-    seed(store, prompts)
-    _, before = call(store, prompts, "GET", "/projects/m/spine")
-    call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/comments",
-        {"target": "A·01", "body": "a question"},
-    )
-    _, after = call(store, prompts, "GET", "/projects/m/spine")
-    assert before == after
-
-
-def test_commenting_on_a_missing_entry_is_refused(store, prompts):
-    seed(store, prompts)
-    status, _ = call(
-        store, prompts, "POST", "/projects/m/comments", {"target": "A·99", "body": "x"}
-    )
-    assert status == 400
-
-
-# -- the propagation write path ---------------------------------------------
-
-
-def test_an_amendment_that_would_orphan_an_entry_is_refused_whole(store, prompts):
-    """Atomic: nothing is written, and no identifier is burned."""
-    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
     status, payload = call(
         store,
         prompts,
@@ -311,6 +355,149 @@ def test_an_amendment_that_would_orphan_an_entry_is_refused_whole(store, prompts
         "/projects/m/amendments",
         {
             "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {"layer": "B", "title": "sneaking in", "derives_from": ["I·01"]}
+            ],
+        },
+    )
+    assert status == 400
+    assert "originate" in payload["error"]
+
+
+def test_a_correction_may_originate_at_behaviour(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "correction", "ranking is wrong")
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "search results are ranked by rating",
+                    "derives_from": ["I·01"],
+                    "supersedes": "B·01",
+                }
+            ],
+        },
+    )
+    assert status == 200
+    assert payload["created"] == ["B·02"]
+
+
+def test_a_correction_may_not_originate_at_spec(store, prompts):
+    """The hole this closes: patching the spec while intent, behaviour and
+    architecture still say the old thing is how the artifacts start lying."""
+    seed(store, prompts)
+    _, msg = post(store, prompts, "correction", "just change the module name")
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "use a different module",
+                    "derives_from": ["A·01"],
+                    "supersedes": "S·01",
+                }
+            ],
+        },
+    )
+    assert status == 400
+    assert "spec" in payload["error"]
+
+
+def test_a_comment_may_never_create_entries(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "comment", "an observation", targets=["A·01"])
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "in_response_to": msg["message_id"],
+            "entries": [{"layer": "I", "title": "smuggled in as a comment"}],
+        },
+    )
+    assert status == 400
+    assert "never creates entries" in payload["error"]
+
+
+def test_propagation_below_the_origin_is_unrestricted(store, prompts):
+    """The restriction is on where a change may enter, not how far it may
+    travel. Once a feature has originated at intent, carrying it down to
+    behaviour, architecture and spec is the pipeline doing its job."""
+    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
+    mid = msg["message_id"]
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {"in_response_to": mid, "entries": [{"layer": "I", "title": "save searches"}]},
+    )
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "a buyer saves a search",
+                    "derives_from": ["I·02"],
+                }
+            ],
+        },
+    )
+    assert status == 200
+    assert payload["created"] == ["B·02"]
+
+
+def test_amendments_record_what_they_produced_against_the_request(store, prompts):
+    seed(store, prompts)
+    _, msg = post(store, prompts, "feature", "Saved searches")
+    mid = msg["message_id"]
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {"in_response_to": mid, "entries": [{"layer": "I", "title": "save searches"}]},
+    )
+    _, message = call(store, prompts, "GET", f"/inbox/{mid}")
+    assert message["resolution"]["produced"] == ["I·02"]
+
+
+# -- the propagation write path ---------------------------------------------
+
+
+def test_an_amendment_that_would_orphan_an_entry_is_refused_whole(store, prompts):
+    """Atomic: nothing is written, and no identifier is burned."""
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
             "entries": [
                 {"layer": "A", "title": "good", "derives_from": ["B·01"]},
                 {"layer": "A", "title": "bad", "derives_from": ["B·99"]},
@@ -324,7 +511,7 @@ def test_an_amendment_that_would_orphan_an_entry_is_refused_whole(store, prompts
 
 
 def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
-    seed(store, prompts)
+    mid = seed(store, prompts)
     call(
         store,
         prompts,
@@ -332,6 +519,7 @@ def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
         "/projects/m/amendments",
         {
             "slice": "listings",
+            "in_response_to": mid,
             "entries": [{"layer": "A", "title": "bad", "derives_from": ["B·99"]}],
         },
     )
@@ -342,6 +530,7 @@ def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
         "/projects/m/amendments",
         {
             "slice": "listings",
+            "in_response_to": mid,
             "entries": [{"layer": "A", "title": "good", "derives_from": ["B·01"]}],
         },
     )
@@ -351,12 +540,21 @@ def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
 def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompts):
     """Unserved is the normal state halfway through propagation. Blocking on
     it would make every legitimate amendment illegal."""
+    _, msg = call(
+        store,
+        prompts,
+        "POST",
+        "/inbox",
+        {"type": "initiate", "project": "m", "title": "a marketplace"},
+    )
+    mid = msg["message_id"]
+    call(store, prompts, "POST", "/projects", {"project": "m", "in_response_to": mid})
     call(
         store,
         prompts,
         "POST",
-        "/projects",
-        {"project": "m", "intent": [{"title": "Buyers find sellers"}]},
+        "/projects/m/amendments",
+        {"in_response_to": mid, "entries": [{"layer": "I", "title": "find sellers"}]},
     )
     status, payload = call(
         store,
@@ -365,7 +563,10 @@ def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompt
         "/projects/m/amendments",
         {
             "slice": "listings",
-            "entries": [{"layer": "B", "title": "search", "derives_from": ["I·01"]}],
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "search", "derives_from": ["I·01"]}
+            ],
         },
     )
     assert status == 200
@@ -407,18 +608,29 @@ def test_work_package_declares_what_may_be_edited(store, prompts):
 
 
 def test_work_package_is_refused_when_the_graph_is_unsound(store, prompts):
-    """The realistic path to unsound: fixing a behaviour retires B·01, and
-    A·01 is left pointing at a retired entry. The architecture is now a stale
+    """The realistic path to unsound: a correction retires B·01, and A·01
+    is left pointing at a retired entry. The architecture is now a stale
     reference, so no code may be produced from the spec beneath it until it
-    is re-derived. Handing an executor a package built from a broken chain
-    produces code derived from a lie, and the failure surfaces much later."""
+    is re-derived."""
     seed(store, prompts)
+    _, msg = post(store, prompts, "correction", "ranking is wrong")
     call(
         store,
         prompts,
         "POST",
-        "/projects/m/defects",
-        {"layer": "B", "title": "revised behaviour", "supersedes": "B·01"},
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "ranked by rating",
+                    "derives_from": ["I·01"],
+                    "supersedes": "B·01",
+                }
+            ],
+        },
     )
     status, payload = call(
         store, prompts, "GET", "/projects/m/work-package?slice=listings"
@@ -438,7 +650,17 @@ def test_work_package_is_still_issued_while_another_branch_is_incomplete(
     ready. Blocking on it would mean no slice could ship until every slice
     was finished."""
     seed(store, prompts)
-    call(store, prompts, "POST", "/projects/m/features", {"title": "not yet built"})
+    _, msg = post(store, prompts, "feature", "not yet built")
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "in_response_to": msg["message_id"],
+            "entries": [{"layer": "I", "title": "later"}],
+        },
+    )
     status, payload = call(
         store, prompts, "GET", "/projects/m/work-package?slice=listings"
     )
@@ -475,15 +697,9 @@ def test_review_shows_entries_with_their_justification_and_what_serves_them(
 
 def test_review_attaches_comments_to_the_entry_they_target(store, prompts):
     seed(store, prompts)
-    call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/comments",
-        {"target": "A·01", "body": "why an index?"},
-    )
+    post(store, prompts, "comment", "why an index?", targets=["A·01"])
     _, payload = call(store, prompts, "GET", "/projects/m/review?layer=A")
-    assert payload["entries"][0]["comments"][0]["body"] == "why an index?"
+    assert payload["entries"][0]["comments"][0]["title"] == "why an index?"
 
 
 def test_review_needs_a_layer(store, prompts):

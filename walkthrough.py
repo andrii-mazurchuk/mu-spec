@@ -93,16 +93,36 @@ def gates(project: str) -> dict:
     return payload
 
 
-def amend(project: str, slice_name: str, entries: list[dict]) -> dict:
-    status, payload = call(
-        "POST",
-        f"/projects/{project}/amendments",
-        {"slice": slice_name, "entries": entries},
+def request(kind: str, title: str, project=None, **kw) -> str:
+    """Ask for something. The only way in from outside."""
+    body = {"type": kind, "title": title, **kw}
+    if project:
+        body["project"] = project
+    status, payload = call("POST", "/inbox", body)
+    print(
+        f"  post_request({kind}) -> {status} {payload['message_id']} "
+        f"[may originate at {payload['may_originate_at'] or 'nothing'}]"
     )
+    return payload["message_id"]
+
+
+def amend(project: str, mid: str, entries: list[dict], slice_name=None) -> dict:
+    body = {"in_response_to": mid, "entries": entries}
+    if slice_name:
+        body["slice"] = slice_name
+    status, payload = call("POST", f"/projects/{project}/amendments", body)
     verb = "ADMITTED" if payload.get("admitted") else "REFUSED"
-    print(f"  submit_amendment({slice_name}) -> {status} {verb} {payload.get('created', '')}")
+    label = slice_name or "-"
+    print(
+        f"  submit_amendment({label}) -> {status} {verb} "
+        f"{payload.get('created', '')}"
+    )
     for f in payload.get("findings", []):
         print(f"    refused because: {f['kind']} {f['id']} -- {f['detail']}")
+    for f in payload.get("stale_references", []):
+        print(f"    stranded: {f['id']} -- {f['detail']}")
+    if payload.get("error"):
+        print(f"    refused because: {payload['error']}")
     return payload
 
 
@@ -133,27 +153,44 @@ def main(argv=None) -> int:
     P = "marketplace"
 
     # ---------------------------------------------------------------- 1
-    step("1.", "INITIATE — a human states intent, and stops there")
-    status, payload = call(
-        "POST",
-        "/projects",
-        {
-            "project": P,
-            "intent": [
-                {
-                    "title": "Buyers can find the right seller quickly",
-                    "body": "Buyers abandon the marketplace when search is slow "
-                    "or returns irrelevant sellers.",
-                },
-                {
-                    "title": "Sellers are paid within 24 hours of delivery",
-                    "body": "Late payment is the top reason sellers leave.",
-                },
-            ],
-        },
+    step("1.", "A REQUEST — the only way in from outside")
+    print("  Someone wants a marketplace. They do not name a layer, do not")
+    print("  name an entry, and are not expected to know how any of this is")
+    print("  laid out. They say what they want.\n")
+    init = request(
+        "initiate",
+        "a marketplace where buyers find sellers and sellers get paid",
+        project=P,
+        origin="andrey",
     )
-    show("status", status)
-    show("created", payload["created"])
+    _, queue = call("GET", "/inbox?status=pending")
+    show("pending requests", [m["id"] + " " + m["type"] for m in queue["messages"]])
+
+    step("1b.", "THE AGENT ACTS ON IT — project, then derived intent")
+    print("  The request body is a raw idea. Intent entries are derived from")
+    print("  it (in the real pipeline, after interviewing), never lifted")
+    print("  verbatim -- and every write cites the request that authorised it.\n")
+    status, payload = call(
+        "POST", "/projects", {"project": P, "in_response_to": init}
+    )
+    show("create_project", status)
+    amend(
+        P,
+        init,
+        [
+            {
+                "layer": "I",
+                "title": "Buyers can find the right seller quickly",
+                "body": "Buyers abandon the marketplace when search is slow "
+                "or returns irrelevant sellers.",
+            },
+            {
+                "layer": "I",
+                "title": "Sellers are paid within 24 hours of delivery",
+                "body": "Late payment is the top reason sellers leave.",
+            },
+        ],
+    )
     gates(P)
     print("\n  Both intent entries are unserved: stated, nothing built. That is")
     print("  the pipeline's to-do list, computed rather than tracked by hand.")
@@ -162,7 +199,7 @@ def main(argv=None) -> int:
     step("2.", "PROPAGATE — behaviour derived from intent, by slice")
     amend(
         P,
-        "discovery",
+        init,
         [
             {
                 "layer": "B",
@@ -178,10 +215,11 @@ def main(argv=None) -> int:
                 "derives_from": ["I·01"],
             },
         ],
+        slice_name="discovery",
     )
     amend(
         P,
-        "payouts",
+        init,
         [
             {
                 "layer": "B",
@@ -191,6 +229,7 @@ def main(argv=None) -> int:
                 "derives_from": ["I·02"],
             }
         ],
+        slice_name="payouts",
     )
     spine(P, "after behaviour")
     gates(P)
@@ -203,11 +242,16 @@ def main(argv=None) -> int:
     print("  does not exist. Nothing is written, and no identifier is burned.\n")
     amend(
         P,
-        "discovery",
+        init,
         [
             {"layer": "A", "title": "legitimate", "derives_from": ["B·01"]},
-            {"layer": "A", "title": "derives from nothing real", "derives_from": ["B·99"]},
+            {
+                "layer": "A",
+                "title": "derives from nothing real",
+                "derives_from": ["B·99"],
+            },
         ],
+        slice_name="discovery",
     )
     _, after = call("GET", f"/projects/{P}/spine?layer=A")
     show("architecture entries after the refusal", [r["id"] for r in after["spine"]])
@@ -216,7 +260,7 @@ def main(argv=None) -> int:
     step("4.", "PROPAGATE — architecture, then spec")
     amend(
         P,
-        "discovery",
+        init,
         [
             {
                 "layer": "A",
@@ -233,10 +277,11 @@ def main(argv=None) -> int:
                 "derives_from": ["B·02"],
             },
         ],
+        slice_name="discovery",
     )
     amend(
         P,
-        "payouts",
+        init,
         [
             {
                 "layer": "A",
@@ -245,10 +290,11 @@ def main(argv=None) -> int:
                 "derives_from": ["B·03"],
             }
         ],
+        slice_name="payouts",
     )
     amend(
         P,
-        "discovery",
+        init,
         [
             {
                 "layer": "S",
@@ -265,10 +311,11 @@ def main(argv=None) -> int:
                 "derives_from": ["A·02"],
             },
         ],
+        slice_name="discovery",
     )
     amend(
         P,
-        "payouts",
+        init,
         [
             {
                 "layer": "S",
@@ -278,20 +325,19 @@ def main(argv=None) -> int:
                 "derives_from": ["A·03"],
             }
         ],
+        slice_name="payouts",
     )
     spine(P, "fully propagated")
     gates(P)
 
     # ---------------------------------------------------------------- 5
     step("5.", "RETRIEVE THE FINAL LAYER — the coding agent's bounded context")
-    call(
-        "POST",
-        f"/projects/{P}/comments",
-        {
-            "target": "A·01",
-            "author": "andrey",
-            "body": "Is an inverted index overkill before we have 10k sellers?",
-        },
+    request(
+        "comment",
+        "Is an inverted index overkill before we have 10k sellers?",
+        project=P,
+        targets=["A·01"],
+        origin="andrey",
     )
     status, wp = call("GET", f"/projects/{P}/work-package?slice=discovery")
     show("status", status)
@@ -323,25 +369,46 @@ def main(argv=None) -> int:
             print(f"        serves    {parent['id']} {parent['title']}")
         print(f"        served by {', '.join(row['served_by']) or '(nothing yet)'}")
         for c in row["comments"]:
-            print(f"        comment   [{c['author']}] {c['body']}")
+            print(f"        comment   [{c['origin']}] {c['title']}")
 
     # ---------------------------------------------------------------- 7
-    step("7.", "CHANGE — a defect, classified to its layer")
-    print("  The buyer says ranking is wrong. That is not a code bug: the")
-    print("  behaviour entry never said what 'relevant' means. Fix it at B.\n")
-    status, defect = call(
-        "POST",
-        f"/projects/{P}/defects",
-        {
-            "layer": "B",
-            "title": "A buyer can search sellers by keyword, ranked by rating",
-            "body": "Relevance is keyword match, tie-broken by seller rating.",
-            "supersedes": "B·01",
-        },
+    step("7.", "CHANGE — a correction, and how deep it is allowed to reach")
+    print("  The buyer says ranking is wrong. First: what happens if someone")
+    print("  tries to fix it by editing the spec directly?\n")
+    fix = request("correction", "search ranking is wrong", project=P, origin="andrey")
+    amend(
+        P,
+        fix,
+        [
+            {
+                "layer": "S",
+                "title": "just sort the results differently",
+                "derives_from": ["A·01"],
+                "supersedes": "S·01",
+            }
+        ],
+        slice_name="discovery",
     )
-    show("new entry", defect["id"])
-    show("supersedes", defect["supersedes"])
-    show("blast radius (must be re-derived)", defect["blast_radius"])
+    print("\n  Refused. Patching the spec while intent, behaviour and")
+    print("  architecture still say the old thing is how artifacts start")
+    print("  lying. The defect has to be classified upward first.\n")
+
+    fix2 = request("correction", "search ranking is wrong", project=P, origin="andrey")
+    result = amend(
+        P,
+        fix2,
+        [
+            {
+                "layer": "B",
+                "title": "A buyer can search sellers by keyword, ranked by rating",
+                "body": "Relevance is keyword match, tie-broken by seller rating.",
+                "derives_from": ["I·01"],
+                "supersedes": "B·01",
+            }
+        ],
+        slice_name="discovery",
+    )
+    show("blast radius (must be re-derived)", result.get("blast_radius"))
     gates(P)
     print("\n  A·01 now points at a retired entry, so the graph is UNSOUND.")
     print("  The stale reference is visible instead of silently rotting.")
@@ -354,8 +421,9 @@ def main(argv=None) -> int:
 
     status, wp3 = call("GET", f"/projects/{P}/work-package?slice=payouts")
     print(f"\n  work_package(payouts)   -> {status} issued={wp3['issued']}")
-    print("    payouts is untouched by the defect, but soundness is a property")
-    print("    of the whole graph, so it is held back too. Worth questioning.")
+    print("    payouts is untouched by the correction, but soundness is a")
+    print("    property of the whole graph, so it is held back too. Open"
+          " question.")
 
     # ---------------------------------------------------------------- 8
     step("8.", "SPLIT A SLICE — membership moves, identifiers never do")
@@ -379,6 +447,16 @@ def main(argv=None) -> int:
     if sample.exists():
         print(f"\n  ---- {sample.relative_to(root)} ----")
         print("".join(f"  | {line}" for line in sample.read_text(encoding="utf-8").splitlines(True)))
+
+    step("10.", "THE REQUEST LOG")
+    _, all_msgs = call("GET", "/inbox")
+    for m in all_msgs["messages"]:
+        produced = (m.get("resolution") or {}).get("produced", [])
+        print(f"    {m['id']}  {m['type']:11} {m['status']:9} {m['title'][:44]}")
+        if produced:
+            print(f"              produced: {', '.join(produced)}")
+    print("\n  Every entry in the graph traces back through an amendment to a")
+    print("  request, and out to the person who asked for it.")
 
     print(f"\nstorage left at: {root.resolve()}")
     if server is not None:
