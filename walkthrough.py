@@ -4,11 +4,18 @@ Run it and read the output top to bottom:
 
     python walkthrough.py            # temporary project, cleaned up by the OS
     python walkthrough.py --keep DIR # leave the files behind to inspect
+    python walkthrough.py --http     # drive it over a real socket instead
 
-Every step is a real HTTP request to a real server on a real socket. Nothing
-is stubbed. The point is to make the pipeline legible: you should be able to
-watch knowledge enter as intent and arrive as a bounded work package, and
-see the gates refuse the things they are supposed to refuse.
+By default it calls the request handler directly rather than binding a port.
+Nothing is stubbed either way: `handle()` is the entire service, and the only
+thing --http adds is the ~40-line transport wrapper around it. In-process is
+the default because binding a listening socket is the one part of this that a
+firewall or endpoint-protection policy can refuse, and a verification tool
+that cannot run is worthless.
+
+The point is to make the pipeline legible: you should be able to watch
+knowledge enter as intent and arrive as a bounded work package, and see the
+gates refuse the things they are supposed to refuse.
 """
 
 from __future__ import annotations
@@ -27,9 +34,19 @@ from mu_spec.server import build_handler
 from mu_spec.storage import ProjectStore
 
 BASE = ""
+_STORE = None
+_PROMPTS = Path("prompts")
 
 
 def call(method: str, path: str, body: dict | None = None):
+    """Over a socket when BASE is set, otherwise straight into the handler.
+    Both return (status, parsed-json), so every step below is identical."""
+    if not BASE:
+        from mu_spec.server import handle
+
+        status, _, raw = handle(method, path, _STORE, _PROMPTS, body)
+        return status, json.loads(raw)
+
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         BASE + path,
@@ -90,22 +107,28 @@ def amend(project: str, slice_name: str, entries: list[dict]) -> dict:
 
 
 def main(argv=None) -> int:
-    global BASE
+    global BASE, _STORE
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep", default=None, help="write files here and leave them")
+    parser.add_argument("--http", action="store_true", help="bind a real socket")
     parser.add_argument("--port", type=int, default=9107)
     args = parser.parse_args(argv)
 
     root = Path(args.keep) if args.keep else Path(tempfile.mkdtemp()) / "projects"
     root.mkdir(parents=True, exist_ok=True)
     store = ProjectStore(root)
+    _STORE = store
 
-    server = ThreadingHTTPServer(
-        ("127.0.0.1", args.port), build_handler(store, Path("prompts"))
-    )
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    BASE = f"http://127.0.0.1:{args.port}"
-    print(f"server up on {BASE}, storage at {root.resolve()}")
+    server = None
+    if args.http:
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", args.port), build_handler(store, Path("prompts"))
+        )
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        BASE = f"http://127.0.0.1:{args.port}"
+        print(f"server up on {BASE}, storage at {root.resolve()}")
+    else:
+        print(f"in-process (no socket), storage at {root.resolve()}")
 
     P = "marketplace"
 
@@ -358,7 +381,8 @@ def main(argv=None) -> int:
         print("".join(f"  | {line}" for line in sample.read_text(encoding="utf-8").splitlines(True)))
 
     print(f"\nstorage left at: {root.resolve()}")
-    server.shutdown()
+    if server is not None:
+        server.shutdown()
     return 0
 
 
