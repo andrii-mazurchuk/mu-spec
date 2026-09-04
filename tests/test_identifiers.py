@@ -6,7 +6,7 @@ from mu_spec.identifiers import (
     LAYERS,
     Identifier,
     InvalidIdentifier,
-    is_upward,
+    derives_legally,
     parse,
     sort_key,
 )
@@ -72,23 +72,24 @@ def test_layers_run_from_intent_down_to_spec():
     assert LAYERS == ("I", "B", "A", "S")
 
 
-def test_is_upward_is_true_toward_intent():
-    assert is_upward(parse("S·01"), parse("A·01")) is True
-    assert is_upward(parse("A·01"), parse("B·01")) is True
-    assert is_upward(parse("B·01"), parse("I·01")) is True
+def test_derives_legally_is_true_one_layer_up():
+    assert derives_legally(parse("S·01"), parse("A·01")) is True
+    assert derives_legally(parse("A·01"), parse("B·01")) is True
+    assert derives_legally(parse("B·01"), parse("I·01")) is True
 
 
-def test_is_upward_allows_skipping_a_layer():
-    """A behaviour may derive straight from intent, and a spec entry may
-    serve an architecture entry two layers up. Requiring strictly adjacent
-    layers would force filler entries that say nothing."""
-    assert is_upward(parse("S·01"), parse("I·01")) is True
+def test_derives_legally_rejects_skipping_a_layer():
+    """A spec entry deriving straight from intent claims a derivation nobody
+    wrote down: the layer it jumped cannot be reviewed, and cannot be
+    re-derived when the intent changes."""
+    assert derives_legally(parse("S·01"), parse("I·01")) is False
+    assert derives_legally(parse("S·01"), parse("B·01")) is False
 
 
-def test_is_upward_is_false_downward_and_sideways():
-    assert is_upward(parse("I·01"), parse("B·01")) is False
-    assert is_upward(parse("B·01"), parse("B·02")) is False
-    assert is_upward(parse("B·01"), parse("B·01")) is False
+def test_derives_legally_is_false_downward_and_sideways():
+    assert derives_legally(parse("I·01"), parse("B·01")) is False
+    assert derives_legally(parse("B·01"), parse("B·02")) is False
+    assert derives_legally(parse("B·01"), parse("B·01")) is False
 
 
 # -- ordering ---------------------------------------------------------------

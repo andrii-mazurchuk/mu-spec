@@ -45,7 +45,14 @@ def test_intent_entries_are_never_orphans():
 def test_spec_entries_are_never_unserved():
     """Spec is the bottom layer of this graph; what serves it is code, which
     is tracked by module backlinks rather than by entries here."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _entry("S·01", "B·01")])
+    graph = Graph(
+        [
+            _entry("I·01"),
+            _entry("B·01", "I·01"),
+            _entry("A·01", "B·01"),
+            _entry("S·01", "A·01"),
+        ]
+    )
     assert admission_gates(graph) == []
 
 
@@ -73,10 +80,17 @@ def test_an_entry_deriving_from_a_missing_identifier_is_an_orphan():
 def test_an_entry_deriving_downward_is_an_orphan():
     """Derives-from must run toward intent. An architecture entry claiming to
     derive from a spec entry has the pipeline upside down."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _entry("A·01", "S·01"), _entry("S·01", "B·01")])
+    graph = Graph(
+        [
+            _entry("I·01"),
+            _entry("B·01", "I·01"),
+            _entry("A·01", "S·01"),
+            _entry("S·01", "A·01"),
+        ]
+    )
     findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
     assert [str(f.id) for f in findings] == ["A·01"]
-    assert "not upward" in findings[0].detail
+    assert "directly above" in findings[0].detail
 
 
 def test_an_entry_deriving_sideways_within_its_own_layer_is_an_orphan():
@@ -106,11 +120,15 @@ def test_an_entry_nothing_derives_from_is_unserved():
     assert [str(f.id) for f in findings] == ["I·02", "B·01"]
 
 
-def test_being_served_by_any_lower_layer_counts_not_just_the_adjacent_one():
-    """Skipping a layer is legal, so an intent entry served directly by a
-    spec entry is served."""
+def test_serving_must_come_from_the_adjacent_layer():
+    """A spec entry cannot serve intent directly. The edge is illegal, so the
+    spec entry is an orphan and the intent entry is still unserved -- there is
+    no way to satisfy a requirement by jumping the layers that explain how."""
     graph = Graph([_entry("I·01"), _entry("S·01", "I·01")])
-    assert admission_gates(graph) == []
+    assert _kinds(admission_gates(graph)) == [
+        (ORPHAN, "S·01"),
+        (UNSERVED, "I·01"),
+    ]
 
 
 # -- superseded entries do not participate ----------------------------------

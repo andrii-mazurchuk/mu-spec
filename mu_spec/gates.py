@@ -35,7 +35,7 @@ from __future__ import annotations
 import dataclasses
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import LAYERS, Identifier, is_upward, sort_key
+from mu_spec.identifiers import LAYERS, Identifier, derives_legally, sort_key
 
 ORPHAN = "orphan"
 UNSERVED = "unserved"
@@ -64,10 +64,11 @@ _BOTTOM_DEPTH = len(LAYERS) - 1
 
 def orphans(graph: Graph) -> list[Finding]:
     """An entry below the top layer must trace to something above it: at
-    least one derives-from edge that resolves to a live entry and runs
-    upward. One good parent is enough -- but a bad edge alongside it is
-    still reported, because a dangling or backwards reference is a defect
-    someone has to fix and must not vanish behind a valid sibling."""
+    least one derives-from edge that resolves to a live entry exactly one
+    layer up. One good parent is enough -- but a bad edge alongside it is
+    still reported, because a dangling, sideways or layer-skipping reference
+    is a defect someone has to fix and must not vanish behind a valid
+    sibling."""
     findings: list[Finding] = []
 
     for entry in graph.entries():
@@ -83,8 +84,11 @@ def orphans(graph: Graph) -> list[Finding]:
         problems: list[str] = []
         good = 0
         for parent in entry.derives_from:
-            if not is_upward(entry.id, parent):
-                problems.append(f"{parent} is not upward of {entry.id}")
+            if not derives_legally(entry.id, parent):
+                problems.append(
+                    f"{entry.id} must derive from the layer directly above; "
+                    f"{parent} is not there"
+                )
             elif graph.superseded_by(parent) is not None:
                 problems.append(
                     f"{parent} is superseded by {graph.superseded_by(parent)}"
@@ -103,11 +107,20 @@ def orphans(graph: Graph) -> list[Finding]:
 def unserved(graph: Graph) -> list[Finding]:
     """An entry above the bottom layer must have at least one live entry
     deriving from it. A requirement nothing serves is a requirement nobody
-    built."""
+    built.
+
+    Only a legal child counts. An entry two layers down claiming to serve
+    this one is an illegal edge, and if it silenced this gate you could
+    satisfy any requirement by jumping the layers that explain how -- the
+    orphan gate would object, but the requirement would read as met.
+    """
     return [
         Finding(UNSERVED, entry.id, "nothing derives from it")
         for entry in graph.entries()
-        if entry.id.depth != _BOTTOM_DEPTH and not graph.children(entry.id)
+        if entry.id.depth != _BOTTOM_DEPTH
+        and not any(
+            derives_legally(child, entry.id) for child in graph.children(entry.id)
+        )
     ]
 
 

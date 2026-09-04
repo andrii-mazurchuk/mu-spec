@@ -85,15 +85,18 @@ def parse(text: str) -> Identifier:
     return Identifier(layer=match.group(1), number=int(match.group(2)))
 
 
-def is_upward(source: Identifier, target: Identifier) -> bool:
-    """True when `target` sits strictly closer to intent than `source` --
-    i.e. `source` deriving from `target` runs in the legal direction.
+def derives_legally(source: Identifier, target: Identifier) -> bool:
+    """True when `source` may declare `target` as a parent: `target` must sit
+    exactly one layer closer to intent.
 
-    Skipping layers is allowed: a behaviour may derive straight from intent,
-    and a spec entry may serve an architecture entry two layers up. Demanding
-    strictly adjacent layers would force filler entries that say nothing.
+    Adjacent only -- skipping is refused. A spec entry deriving straight from
+    intent claims a derivation that was never written down, so the layer it
+    jumped over cannot be reviewed and cannot be re-derived when the intent
+    changes. It also keeps the two edge kinds unambiguous: `derives_from` is
+    exactly one layer up, `depends_on` is exactly the same layer, and nothing
+    else is expressible.
     """
-    return target.depth < source.depth
+    return target.depth == source.depth - 1
 
 
 def sort_key(identifier: Identifier) -> tuple[int, int]:
