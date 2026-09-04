@@ -40,6 +40,14 @@ class Entry:
     # dependency guesswork. Slice-level dependency is projected from these
     # and is never authored, so the manifest cannot drift from the truth.
     depends_on: tuple[Identifier, ...] = ()
+    # Also horizontal, and deliberately NOT a dependency: what this entry
+    # publishes into a cross-cutting slice. Fire-and-forget -- nothing is
+    # consumed back, so it imposes no order, which is what keeps a
+    # cross-cutting slice derivable before everything that emits into it.
+    # It is also the escape from a cycle involving a concern: flip the
+    # concern's outbound dependency into an inbound emission and it has no
+    # outbound edges left.
+    emits_into: tuple[Identifier, ...] = ()
     # The one-line title the spine carries. Stored explicitly rather than
     # inferred, because the spine is the thing agents read to decide what to
     # load, and a title that silently changes when someone reflows a
@@ -178,23 +186,27 @@ class Graph:
 
     # -- spine --------------------------------------------------------------
 
-    def spine(self) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...]]]:
-        """Identifier, one-line title, and both edge kinds -- nothing else.
+    def spine(self) -> list[dict]:
+        """Identifier, one-line title, and every edge -- nothing else.
 
         Roughly fifteen tokens an entry. This is what gets loaded
         unconditionally, with bodies pulled by identifier only once the agent
         knows from the spine which ones it actually needs. A spine carrying
         bodies would defeat the entire scheme.
 
-        Both edge kinds are here because the spine is what an agent decides
+        Every edge kind is here because the spine is what an agent decides
         from. If the horizontal edges only appeared inside bodies, it would
-        have to load bodies to work out which bodies it needs."""
+        have to load bodies to work out which bodies it needs.
+
+        Rows are dicts rather than tuples: this is the third edge kind, and a
+        positional row means every reader counts fields correctly forever."""
         return [
-            (
-                str(e.id),
-                e.display_title,
-                tuple(str(d) for d in e.derives_from),
-                tuple(str(d) for d in e.depends_on),
-            )
+            {
+                "id": str(e.id),
+                "title": e.display_title,
+                "derives_from": [str(d) for d in e.derives_from],
+                "depends_on": [str(d) for d in e.depends_on],
+                "emits_into": [str(d) for d in e.emits_into],
+            }
             for e in self.entries()
         ]

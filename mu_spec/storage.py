@@ -109,6 +109,7 @@ def parse_entries(text: str) -> list[Entry]:
                 id=identifier,
                 derives_from=_ids(raw.get("derives_from"), "derives_from", where),
                 depends_on=_ids(raw.get("depends_on"), "depends_on", where),
+                emits_into=_ids(raw.get("emits_into"), "emits_into", where),
                 title=str(raw.get("title", "")),
                 body=str(raw.get("body", "")),
                 supersedes=(
@@ -136,6 +137,8 @@ def render_entries(entries: list[Entry]) -> str:
             record["derives_from"] = [str(d) for d in entry.derives_from]
         if entry.depends_on:
             record["depends_on"] = [str(d) for d in entry.depends_on]
+        if entry.emits_into:
+            record["emits_into"] = [str(d) for d in entry.emits_into]
         if entry.title:
             record["title"] = entry.title
         if entry.body:

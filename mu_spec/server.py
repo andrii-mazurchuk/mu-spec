@@ -127,14 +127,19 @@ def _tools() -> list[dict[str, Any]]:
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
             "path. Must cite the request it serves. Each entry needs a "
-            "'layer' and a 'title', and may carry 'body', 'derives_from' "
-            "(identifiers exactly one layer up), 'depends_on' (identifiers "
-            "in the same layer) and 'supersedes'. Validated as one "
-            "transaction: an amendment that would introduce an orphan or a "
-            "broken same-layer dependency is refused whole, and the first "
-            "entry created for a request must sit within that request "
-            "type's permitted origination depth. Entries left unserved are "
-            "reported, not refused.",
+            "'layer' and a 'title', and may carry 'body', 'supersedes', and "
+            "three kinds of edge: 'derives_from' (identifiers exactly one "
+            "layer up -- what it serves), 'depends_on' (same layer -- what it "
+            "needs, and what imposes order), and 'emits_into' (same layer, "
+            "and only into a cross-cutting slice -- what it publishes, "
+            "fire-and-forget, imposing no order). Reaching a cross-cutting "
+            "slice with depends_on is refused: if you branch on what comes "
+            "back, it is not cross-cutting. Validated as one transaction: an "
+            "amendment introducing an orphan, a broken horizontal edge, a "
+            "slice cycle, or an outbound edge from a cross-cutting slice is "
+            "refused whole, and the first entry created for a request must "
+            "sit within that request type's permitted origination depth. "
+            "Entries left unserved are reported, not refused.",
             "POST",
             "/projects/{project}/amendments",
             {
@@ -186,7 +191,8 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "get_spine",
-            "Every entry's identifier, one-line title and derives-from, with "
+            "Every entry's identifier, one-line title and all three edge "
+            "lists, with "
             "no bodies. Load this first, decide from the structure what you "
             "need, then fetch those bodies by identifier.",
             "GET",

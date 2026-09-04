@@ -30,10 +30,14 @@ from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
-from mu_spec.slice_gates import slice_gates
+from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
 
 COMMENTS_FILE = "comments.jsonl"
+
+# Everything except `unserved`. Being incomplete is the ordinary state of a
+# project mid-propagation; everything else here means the graph is wrong now.
+_BLOCKING = (ORPHAN, BAD_DEPENDENCY, BAD_EMISSION)
 
 
 class ServiceError(ValueError):
@@ -51,17 +55,18 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
         "title": entry.display_title,
         "derives_from": [str(d) for d in entry.derives_from],
         "depends_on": [str(d) for d in entry.depends_on],
+        "emits_into": [str(d) for d in entry.emits_into],
     }
     if full:
         view["body"] = entry.body
     return view
 
 
-def _gate_report(graph: Graph, manifest: Manifest | None = None) -> dict[str, Any]:
+def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
     """Two different questions, reported separately because they have
     different consequences.
 
-    `sound` -- no orphans, no bad dependencies, and no slice-level finding.
+    `sound` -- no orphans, no broken horizontal edge, no slice-level finding.
     A graph containing a claim that derives from nothing, that needs
     something retired or nonexistent, or that is cut into slices which need
     each other, is broken now. This blocks: amendments are refused and work
@@ -77,10 +82,13 @@ def _gate_report(graph: Graph, manifest: Manifest | None = None) -> dict[str, An
     and flattening them would mean one of the two carried a null where the
     other carries the thing you need to go and fix.
     """
-    findings = admission_gates(graph)
-    slice_findings = slice_gates(manifest, graph) if manifest is not None else []
+    findings = sorted(
+        admission_gates(graph) + edge_gates(manifest, graph),
+        key=lambda f: (sort_key(f.id), f.kind),
+    )
+    slice_findings = slice_gates(manifest, graph)
     return {
-        "sound": not any(f.kind in (ORPHAN, BAD_DEPENDENCY) for f in findings)
+        "sound": not any(f.kind in _BLOCKING for f in findings)
         and not slice_findings,
         "complete": not findings,
         "clean": not findings and not slice_findings,
@@ -256,6 +264,7 @@ def submit_amendment(
                 id=Identifier(layer=layer, number=marks[layer]),
                 derives_from=_parse_ids(item.get("derives_from"), "derives_from"),
                 depends_on=_parse_ids(item.get("depends_on"), "depends_on"),
+                emits_into=_parse_ids(item.get("emits_into"), "emits_into"),
                 title=item["title"],
                 body=item.get("body", ""),
                 supersedes=(
@@ -286,10 +295,25 @@ def submit_amendment(
             )
 
     prospective = Graph(existing + staged)
+
+    # The manifest-aware checks need the membership this amendment would
+    # create, which does not exist yet -- membership is recorded on write,
+    # and the write is what is being decided. So they run against a copy of
+    # the manifest with the staged identifiers already filed. Deciding on the
+    # current manifest instead would mean an amendment could only ever be
+    # caught breaking the structure one write *after* it broke it.
+    prospective_manifest = Manifest.from_json(manifest.to_json())
+    if slice_name:
+        target = prospective_manifest.slices.setdefault(
+            slice_name, Slice(name=slice_name)
+        )
+        target.members.update(e.id for e in staged)
+
     new_orphans = [
         f
         for f in admission_gates(prospective)
-        if f.kind in (ORPHAN, BAD_DEPENDENCY) and (f.kind, str(f.id)) not in before
+        + edge_gates(prospective_manifest, prospective)
+        if f.kind in _BLOCKING and (f.kind, str(f.id)) not in before
     ]
 
     # Retiring an entry necessarily strands whatever derived from it, and
@@ -317,7 +341,7 @@ def submit_amendment(
     if blocking:
         return {
             "admitted": False,
-            "reason": "amendment would introduce orphans",
+            "reason": "amendment would introduce a broken edge",
             "findings": [
                 {"kind": f.kind, "id": str(f.id), "detail": f.detail}
                 for f in blocking
@@ -325,18 +349,6 @@ def submit_amendment(
             "slice_findings": [],
         }
 
-    # The slice-level checks need the membership this amendment would create,
-    # which does not exist yet -- membership is recorded on write, and the
-    # write is what is being decided. So they run against a copy of the
-    # manifest with the staged identifiers already filed. Deciding on the
-    # current manifest instead would mean an amendment could only ever be
-    # caught creating a cycle one write *after* it created one.
-    prospective_manifest = Manifest.from_json(manifest.to_json())
-    if slice_name:
-        target = prospective_manifest.slices.setdefault(
-            slice_name, Slice(name=slice_name)
-        )
-        target.members.update(e.id for e in staged)
     new_slice_findings = [
         f
         for f in slice_gates(prospective_manifest, prospective)
@@ -450,18 +462,11 @@ def get_spine(store: ProjectStore, project: str, layer: str | None) -> dict:
     if layer:
         if layer not in LAYERS:
             raise ServiceError(f"'layer' must be one of {LAYERS}")
-        rows = [r for r in rows if r[0].startswith(layer)]
+        rows = [r for r in rows if r["id"].startswith(layer)]
     return {
         "project": project,
         "spine": [
-            {
-                "id": ident,
-                "title": title,
-                "derives_from": list(df),
-                "depends_on": list(dep),
-                "slice": manifest.slice_of(parse(ident)),
-            }
-            for ident, title, df, dep in rows
+            {**row, "slice": manifest.slice_of(parse(row["id"]))} for row in rows
         ],
     }
 

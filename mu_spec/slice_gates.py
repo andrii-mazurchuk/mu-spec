@@ -1,15 +1,15 @@
-"""The two mechanical checks that need the manifest.
+"""The mechanical checks that need the manifest.
 
 `gates.py` deliberately knows nothing about slices -- it answers questions
-about entries and their edges. These two are about the *projected* slice
-graph, so they need to know which slice owns which identifier, and which
-slices are cross-cutting. They live here rather than there for that reason.
+about entries and their edges alone. Everything here needs to know which
+slice owns which identifier, and which slices are cross-cutting, so it lives
+here instead. Two of the checks are about the *projected* slice graph and
+name a slice; one is about an entry's edges and names an entry.
 
-Both are **blocking**, and that is a decision rather than a default. A cycle
-and a cross-cutting slice reaching into a feature slice are not conditions
-you propagate through and tidy up afterwards -- they mean the cut is wrong,
-and every entry derived while they stand is derived against a structure that
-does not hold. Blocking early is cheap: the fix is to reslice, and reslicing
+All are **blocking**, and that is a decision rather than a default. None of
+them is a condition you propagate through and tidy up afterwards -- they mean
+the structure is wrong, and every entry derived while one stands is derived
+against a structure that does not hold. Blocking early is cheap: reslicing
 before anything derives from a slice costs nothing.
 
 - **A cycle in the slice dependency graph.** A slice is the unit of work, so
@@ -25,6 +25,12 @@ before anything derives from a slice costs nothing.
   what its classification says it does not. Depending on another
   cross-cutting slice is fine; the cycle check still applies there.
 
+- **An edge of the wrong kind for what it points at.** An edge into a
+  cross-cutting slice is an emission, and an emission goes nowhere else.
+  This is what makes the classification enforceable rather than declarative:
+  once a slice is ruled cross-cutting, the only legal way to reach it stops
+  imposing order on it.
+
 There is no judgement here, and never will be. Whether a slice *is*
 cross-cutting is a call an agent argues and a human rules on. Once that
 ruling is recorded, whether the edges are legal is arithmetic.
@@ -34,11 +40,14 @@ from __future__ import annotations
 
 import dataclasses
 
+from mu_spec.gates import Finding
 from mu_spec.graph import Graph
+from mu_spec.identifiers import sort_key
 from mu_spec.storage import CROSS_CUTTING, Manifest
 
 DEPENDENCY_CYCLE = "dependency_cycle"
 CROSS_CUTTING_OUTBOUND = "cross_cutting_outbound"
+BAD_EMISSION = "bad_emission"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -112,6 +121,67 @@ def _path(edges: dict[str, tuple[str, ...]], members: list[str]) -> str:
             break
         current = nxt
     return " -> ".join(route)
+
+
+def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
+    """The entry-level checks that need to know what kind of slice an edge
+    lands in. Blocking, like every other soundness check.
+
+    Two rules, and they are the same rule seen from both ends -- an edge into
+    a cross-cutting slice is an emission, and an emission goes nowhere else.
+
+    - **`depends_on` may not point into a cross-cutting slice.** Depending on
+      something means branching on what it gives you back, and a concern
+      whose answer you branch on fails the first classification test. The two
+      claims cannot both be true, so the edge is a contradiction rather than
+      a style choice. The fix is to state it as an emission.
+    - **`emits_into` may only point into a cross-cutting slice**, in the same
+      layer, at a live entry. Emitting into an ordinary slice would be a
+      dependency with the ordering quietly filed off.
+    """
+    findings: list[Finding] = []
+    cross = set(manifest.cross_cutting())
+
+    for entry in graph.entries():
+        problems: list[str] = []
+
+        for target in entry.depends_on:
+            owner = manifest.slice_of(target)
+            if owner is not None and owner in cross:
+                problems.append(
+                    f"{target} is in {owner!r}, which is cross-cutting -- "
+                    "reach it with emits_into, not depends_on. Depending on "
+                    "it means branching on what it returns, and a concern "
+                    "you branch on is not cross-cutting"
+                )
+
+        for target in entry.emits_into:
+            owner = manifest.slice_of(target)
+            if target == entry.id:
+                problems.append(f"{target} emits into itself")
+            elif target.layer != entry.id.layer:
+                problems.append(
+                    f"{target} is not in the same layer -- an emission is "
+                    "horizontal, like a dependency"
+                )
+            elif graph.superseded_by(target) is not None:
+                problems.append(
+                    f"{target} is superseded by {graph.superseded_by(target)}"
+                )
+            elif target not in graph:
+                problems.append(f"{target} does not exist")
+            elif owner is None or owner not in cross:
+                problems.append(
+                    f"{target} is not cross-cutting -- an emission goes into "
+                    "a concern and is never consumed back. Into an ordinary "
+                    "slice it would be a dependency with the ordering filed "
+                    "off"
+                )
+
+        if problems:
+            findings.append(Finding(BAD_EMISSION, entry.id, "; ".join(problems)))
+
+    return sorted(findings, key=lambda f: sort_key(f.id))
 
 
 def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:

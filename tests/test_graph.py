@@ -156,22 +156,36 @@ def test_spine_carries_identifier_title_and_edges_only():
     unconditionally, then pulls bodies by identifier once it knows which it
     needs. A spine carrying bodies would defeat the entire scheme."""
     graph = Graph([_entry("I·01", body="# Sellers list items\n\nlong body...\n")])
-    assert graph.spine() == [("I·01", "Sellers list items", (), ())]
+    assert graph.spine() == [
+        {
+            "id": "I·01",
+            "title": "Sellers list items",
+            "derives_from": [],
+            "depends_on": [],
+            "emits_into": [],
+        }
+    ]
 
 
 def test_spine_title_is_the_first_line_stripped_of_heading_marks():
     graph = Graph([_entry("B·01", "I·01", body="## A buyer can search\n\nmore\n")])
-    assert graph.spine()[0][1] == "A buyer can search"
+    assert graph.spine()[0]["title"] == "A buyer can search"
 
 
 def test_spine_title_of_an_empty_body_is_empty_not_an_error():
     graph = Graph([_entry("B·01", "I·01", body="")])
-    assert graph.spine()[0][1] == ""
+    assert graph.spine()[0]["title"] == ""
 
 
 def test_spine_records_derives_from():
     graph = Graph([_entry("I·01"), _entry("B·01", "I·01")])
-    assert graph.spine()[1] == ("B·01", "B·01 title", ("I·01",), ())
+    assert graph.spine()[1] == {
+        "id": "B·01",
+        "title": "B·01 title",
+        "derives_from": ["I·01"],
+        "depends_on": [],
+        "emits_into": [],
+    }
 
 
 # -- same-layer dependency edges --------------------------------------------
@@ -224,6 +238,6 @@ def test_the_spine_carries_both_edge_kinds():
             _entry("A·02", "B·01"),
         ]
     )
-    row = [r for r in graph.spine() if r[0] == "A·01"][0]
-    assert row[2] == ("B·01",)
-    assert row[3] == ("A·02",)
+    row = [r for r in graph.spine() if r["id"] == "A·01"][0]
+    assert row["derives_from"] == ["B·01"]
+    assert row["depends_on"] == ["A·02"]

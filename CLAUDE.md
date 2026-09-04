@@ -31,7 +31,8 @@ architecture, and this section is only the orientation.
 
 Five layers — intent, behaviour, architecture, implementation spec, code —
 each entry carrying an identifier, a derives-from list (vertical, exactly one
-layer up), a depends-on list (horizontal, within its layer), and a body.
+layer up), a depends-on list (horizontal, within its layer), an emits-into
+list (horizontal, only into a cross-cutting slice), and a body.
 Those structural fields turn a pile of records into a directed graph, and that
 graph is the entire point: it makes the blast radius of any change
 mechanically computable, so human review can be scoped to the radius instead
@@ -86,6 +87,11 @@ is an error the caller sees, not a warning in a log.
 - **Slice dependency is projected from entry edges, never authored.** There is
   deliberately no field to declare it in; two statements of the same fact
   drift, and the authored one goes stale.
+- **An edge into a cross-cutting slice is `emits_into`, never `depends_on`;
+  a cross-cutting slice has no outbound dependency into a feature slice.**
+  An emission imposes no order, which is what keeps a concern derivable
+  before everything that emits into it -- and what makes a cycle involving
+  one impossible to express.
 
 ### Two decisions already made — do not reopen
 
@@ -204,7 +210,7 @@ formatter is configured — don't add one unprompted.
 - **Storage stays behind one module.** Exactly one module touches the backing
   store; every other caller goes through its functions. That is what makes
   the store swappable later.
-- **The graph core needs only `id`, `derives_from`, `depends_on`, `body`.** Per-layer field
+- **The graph core needs only `id`, the edge lists, and `body`.** Per-layer field
   shapes are still undesigned (`docs/DESIGN.md` §11) and constrain only what
   goes *inside* a body. Don't block on them, and don't bake a layer's fields
   into the graph layer.

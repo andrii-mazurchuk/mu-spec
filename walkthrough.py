@@ -73,15 +73,15 @@ def spine(project: str, note: str = "") -> None:
     _, payload = call("GET", f"/projects/{project}/spine")
     print(f"\n  SPINE {note}")
     print(
-        f"  {'id':7} {'layer':13} {'slice':12} {'derives from':13} "
-        f"{'depends on':11} title"
+        f"  {'id':6} {'slice':11} {'derives':8} {'depends':8} {'emits':7} title"
     )
     print(f"  {'-' * 80}")
     for row in payload["spine"]:
         print(
-            f"  {row['id']:7} {row['id'][0]:13} {str(row['slice'] or '-'):12} "
-            f"{','.join(row['derives_from']) or '-':13} "
-            f"{','.join(row['depends_on']) or '-':11} {row['title']}"
+            f"  {row['id']:6} {str(row['slice'] or '-'):11} "
+            f"{','.join(row['derives_from']) or '-':8} "
+            f"{','.join(row['depends_on']) or '-':8} "
+            f"{','.join(row['emits_into']) or '-':7} {row['title']}"
         )
 
 
@@ -376,6 +376,97 @@ def main(argv=None) -> int:
     print(f"    {wp['audit']['rule']}")
     print("\n  Note what is NOT here: the payouts slice. The executor cannot see")
     print("  it, so it cannot accidentally couple to it.")
+
+    # --------------------------------------------------------------- 5b
+    step("5b.", "A CROSS-CUTTING SLICE — a concern nobody declares")
+    print("  Audit logging is not a slice among the others. Nothing branches")
+    print("  on what it returns, and its contract names no domain object -- it")
+    print("  takes an actor, an action string and an opaque target. So it gets")
+    print("  a full column of its own, and a type saying what it is.\n")
+    audit_req = request(
+        "feature", "every action has to be auditable", project=P, origin="andrey"
+    )
+    amend(
+        P,
+        audit_req,
+        [
+            {
+                "layer": "I",
+                "title": "Every action taken in the system is auditable",
+                "body": "Disputes are unresolvable without a record of who did "
+                "what, when.",
+            }
+        ],
+    )
+    intent_id = call("GET", f"/projects/{P}/spine?layer=I")[1]["spine"][-1]["id"]
+    parent = intent_id
+    for layer, title, body in (
+        ("B", "Every state change is recorded with actor, action and time",
+         "Applies to every slice. Ranges over their behaviour rather than "
+         "owning a subject of its own."),
+        ("A", "An append-only event log, written to and never read back",
+         "Writers do not wait on it and never consume a result."),
+        ("S", "audit/log.py appends one record per action",
+         "Module audit/log.py. record(actor, action, target_id) -> None."),
+    ):
+        result = amend(
+            P,
+            audit_req,
+            [{"layer": layer, "title": title, "body": body,
+              "derives_from": [parent]}],
+            slice_name="audit",
+        )
+        parent = result["created"][0]
+    audit_spec = parent
+
+    status, ruling = call(
+        "POST", f"/projects/{P}/slices/audit/type", {"type": "cross_cutting"}
+    )
+    print(f"\n  classify_slice(audit) -> {status} {ruling.get('type')}")
+    show("cross-cutting slices", ruling["cross_cutting"])
+
+    print("\n  Now discovery emits into it. Fire-and-forget: no return value,")
+    print("  so no ordering, so audit stays derivable before its emitters.")
+    amend(
+        P,
+        audit_req,
+        [
+            {
+                "layer": "S",
+                "title": "search/index.py records every query it serves",
+                "body": "Calls audit.record on each query. Nothing is read back.",
+                "derives_from": ["A·01"],
+                "emits_into": [audit_spec],
+            }
+        ],
+        slice_name="discovery",
+    )
+    _, m = call("GET", f"/projects/{P}/spine?layer=S")
+    deps = store.load_manifest(P).dependency_graph(store.load_graph(P))
+    print("\n  SLICE DEPENDENCIES after the emission")
+    for name, d in deps.items():
+        print(f"    {name:12} -> {', '.join(d) or '(nothing)'}")
+    print("    discovery emits into audit and still depends on nothing. An")
+    print("    emission is not a dependency, which is the whole point of it.")
+
+    print("\n  And the other direction is refused outright:")
+    amend(
+        P,
+        audit_req,
+        [
+            {
+                "layer": "S",
+                "title": "search/index.py asks the audit log a question",
+                "derives_from": ["A·01"],
+                "depends_on": [audit_spec],
+            }
+        ],
+        slice_name="discovery",
+    )
+
+    _, wp_cc = call("GET", f"/projects/{P}/work-package?slice=payouts")
+    print("\n  payouts never mentioned audit. Its work package carries it anyway:")
+    show("cross_cutting", [e["id"] + " " + e["slice"] for e in wp_cc["cross_cutting"]])
 
     # ---------------------------------------------------------------- 6
     step("6.", "REVIEW THE FINAL LAYER")

@@ -1106,3 +1106,138 @@ def test_no_work_package_is_issued_while_slices_cycle(store, prompts):
     _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
     assert wp["issued"] is False
     assert wp["gates"]["slice_findings"][0]["kind"] == "dependency_cycle"
+
+
+# -- emissions, end to end ---------------------------------------------------
+
+
+def _audit_column(store, prompts, mid):
+    """A cross-cutting slice with a full column, classified as one."""
+    for layer, title, parent in (
+        ("B", "Every state change is recorded", "I·01"),
+        ("A", "An append-only event log", "B·02"),
+        ("S", "audit/log.py appends a record", "A·02"),
+    ):
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": "audit",
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": layer, "title": title, "derives_from": [parent]}
+                ],
+            },
+        )
+    call(store, prompts, "POST", "/projects/m/slices/audit/type",
+         {"type": "cross_cutting"})
+
+
+def test_a_slice_may_emit_into_a_cross_cutting_slice(store, prompts):
+    mid = seed(store, prompts)
+    _audit_column(store, prompts, mid)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "search/index.py records every query",
+                    "derives_from": ["A·01"],
+                    "emits_into": ["S·02"],
+                }
+            ],
+        },
+    )
+    assert (status, payload["admitted"]) == (200, True)
+    _, spine = call(store, prompts, "GET", "/projects/m/spine?layer=S")
+    row = [r for r in spine["spine"] if r["id"] == "S·03"][0]
+    assert row["emits_into"] == ["S·02"]
+    assert row["depends_on"] == []
+
+
+def test_an_emission_imposes_no_order_on_the_concern(store, prompts):
+    """listings emits into audit, and audit does not become a dependency of
+    listings. That is what lets the concern be derived first."""
+    mid = seed(store, prompts)
+    _audit_column(store, prompts, mid)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "search/index.py records every query",
+                    "derives_from": ["A·01"],
+                    "emits_into": ["S·02"],
+                }
+            ],
+        },
+    )
+    manifest = store.load_manifest("m")
+    assert manifest.dependency_graph(store.load_graph("m"))["listings"] == ()
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    assert wp["read_set"] == []
+    assert [e["id"] for e in wp["cross_cutting"]] == ["S·02"]
+
+
+def test_depending_on_a_cross_cutting_slice_is_refused_end_to_end(store, prompts):
+    mid = seed(store, prompts)
+    _audit_column(store, prompts, mid)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "search/index.py asks the log",
+                    "derives_from": ["A·01"],
+                    "depends_on": ["S·02"],
+                }
+            ],
+        },
+    )
+    assert (status, payload["admitted"]) == (409, False)
+    assert payload["findings"][0]["kind"] == "bad_emission"
+    assert "emits_into, not depends_on" in payload["findings"][0]["detail"]
+
+
+def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):
+    mid = _two_columns(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "search/index.py publishes to payouts",
+                    "derives_from": ["A·01"],
+                    "emits_into": ["S·02"],
+                }
+            ],
+        },
+    )
+    assert (status, payload["admitted"]) == (409, False)
+    assert "not cross-cutting" in payload["findings"][0]["detail"]

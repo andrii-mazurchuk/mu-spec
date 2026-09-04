@@ -74,10 +74,13 @@ Every entry at every layer carries:
 
 - **Identifier** — layer prefix plus a flat number. `B·14`, `A·07`, `S·31`.
 - **Derives-from** — *vertical*, exactly one layer up. What this entry serves.
-- **Depends-on** — *horizontal*, within its own layer. What this entry needs.
+- **Depends-on** — *horizontal*, within its own layer. What this entry needs, and the
+  only edge that imposes an order.
+- **Emits-into** — *horizontal*, and only into a cross-cutting slice. What this entry
+  publishes. Fire-and-forget: nothing is consumed back, so it imposes no order.
 - **Body** — the content, in that layer's idiom.
 
-The two edge lists answer different questions, and keeping them apart is what makes
+The three edge lists answer different questions, and keeping them apart is what makes
 slice dependency computable instead of guesswork.
 
 Rules:
@@ -93,8 +96,8 @@ Rules:
 - A derives-from edge may **not skip a layer**. Deriving straight from intent claims a
   derivation nobody wrote down: the layer jumped over cannot be reviewed, and cannot be
   re-derived when the intent changes.
-- Three fields — identifier and the two edge lists — turn a pile of records into a
-  directed graph. That graph is the whole system.
+- Identifier plus the edge lists turn a pile of records into a directed graph. That
+  graph is the whole system.
 
 ---
 
@@ -175,6 +178,19 @@ Read-only-from-another-slice is **not** a cross-cutting rule — it is universal
 entry belongs to exactly one slice, and slices define write ownership, so no slice may
 ever write into another.
 
+**The edges that are legal.** An edge *into* a cross-cutting slice is an `emits_into`,
+never a `depends_on` — depending on something means branching on what it returns, and a
+concern whose answer you branch on fails the first test. The two claims cannot both
+hold, so the unit refuses the edge rather than leaving it to convention. And a
+cross-cutting slice holds **no outbound dependency into a feature slice**: if it has to
+ask, it needs to know its caller.
+
+Those two rules together are what makes the classification enforceable rather than
+declarative, and they resolve the case that looks like a fourth kind of connection —
+two slices leaning on a concern while the concern reaches back at them. That is not a
+new shape, it is a cycle. Flip the concern's outbound dependency into an inbound
+emission and it has no outbound edges left, so the cycle cannot exist.
+
 ### 4.6 Splitting rule
 
 Slices can be **split** later. They can **never be merged** — merging destroys
@@ -246,6 +262,8 @@ split along one axis that matters: **sound** blocks, **complete** only reports.
 package is issued:*
 - Does every entry below trace to something exactly one layer above? (orphans)
 - Does every same-layer edge point at a live entry in the same layer? (bad dependencies)
+- Is every edge the right *kind* for what it points at — emissions into cross-cutting
+  slices, dependencies into everything else? (bad emissions)
 - Is the projected slice dependency graph acyclic? (bad slicing — see below)
 - Does any cross-cutting slice depend on a feature slice? (misclassification)
 
