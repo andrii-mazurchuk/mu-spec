@@ -73,8 +73,12 @@ bottom layer floats free of the structure and the whole scheme is decorative.
 Every entry at every layer carries:
 
 - **Identifier** — layer prefix plus a flat number. `B·14`, `A·07`, `S·31`.
-- **Derives-from** — the list of upstream identifiers it serves.
+- **Derives-from** — *vertical*, exactly one layer up. What this entry serves.
+- **Depends-on** — *horizontal*, within its own layer. What this entry needs.
 - **Body** — the content, in that layer's idiom.
+
+The two edge lists answer different questions, and keeping them apart is what makes
+slice dependency computable instead of guesswork.
 
 Rules:
 
@@ -86,8 +90,11 @@ Rules:
   the identifier it was born with.
 - Amendments are **append-only**, with a superseding marker. History is what makes the
   process auditable.
-- Two fields — identifier and derives-from — turn a pile of markdown into a directed
-  graph. That graph is the whole system.
+- A derives-from edge may **not skip a layer**. Deriving straight from intent claims a
+  derivation nobody wrote down: the layer jumped over cannot be reviewed, and cannot be
+  re-derived when the intent changes.
+- Three fields — identifier and the two edge lists — turn a pile of records into a
+  directed graph. That graph is the whole system.
 
 ---
 
@@ -118,10 +125,11 @@ match the org's mental model survive. Clever technical slices get abandoned.
 2. **Coupling test.** If a typical change touches basket A, does it also touch basket
    B? Constant mutual reference means they are one slice pretending to be two.
 3. **Direction test.** If the dependency runs one way only, they are two slices with a
-   declared one-directional dependency — which must be named in the manifest, not
-   inferred.
+   one-directional dependency — which is *projected from the entries' own edges*, never
+   authored beside them. Two statements of the same fact drift, and the one a human
+   maintains is the one that goes stale.
 4. **Ubiquity test.** If everything touches it and it owns almost no behaviour of its
-   own, it is not a slice. It is cross-cutting.
+   own, it is not a slice. It is cross-cutting — see §4.5 for the deciding test.
 5. **Size test.** A basket with forty behaviours and no internal structure is probably
    two slices.
 
@@ -130,20 +138,42 @@ These run pairwise across all candidate baskets before anything is proposed.
 Do **not** slice by technical layer — frontend, backend, database. That is the classic
 failure. Slice where changes land together.
 
-### 4.5 Cross-cutting concerns
+### 4.5 Cross-cutting slices
 
-Logging, error handling, auth middleware, notifications. Distinguished from slices by
-three tells:
+Cross-cutting is a **slice type, not a shared file and not a reserved name**. Audit
+logging deserves its own architecture and its own specs — it is as complex as any slice
+and needs its own column to work in. There can be several, each with a full column at
+every layer, stored exactly like everything else.
 
-- **Ownership** — delete it and no behaviour loses its subject; things just stop firing.
-- **Direction** — almost purely inbound from everywhere.
-- **Reverse change test** — a change to *any* slice tends to touch it, so it is not
-  parallel to the slices, it sits underneath them.
+**The deciding test.** Both must pass:
 
-Cross-cutting entries live in their own file at each layer. Any slice that touches them
-must declare it. From a slice's perspective the cross-cutting column is **read-only**:
-a slice declares that it emits into notifications; it never defines notification
-behaviour. Writing there requires a separate amendment.
+1. **Does the caller branch on what comes back?** If a slice calls it and then changes
+   what it does based on the answer, that answer is part of the caller's behaviour, and
+   this is an ordinary dependency.
+2. **Does its contract name a domain object someone else owns?** If it takes a user, an
+   invoice, a listing, it is a dependency, not cross-cutting.
+
+Tiebreak: would a slice added next year invoke this by default, without anyone deciding?
+
+The surviving category is narrow — roughly observability and ambient policy. Narrow is
+the correct outcome. Notifications fails test 2 (it takes a recipient, and accounts owns
+users). A permission check fails test 1 (it returns allow/deny and the caller branches).
+Both are slices.
+
+**Fan-in is not the criterion.** Many slices depending on one slice is a foundational
+slice, not a cross-cutting one — `listings` is depended on by everything and is
+unambiguously a slice. Fundamentality is topological; cross-cutting is semantic.
+
+**What the type actually changes** is whose context the slice lands in. A cross-cutting
+slice's spec spine is included in *every* other slice's work package, whether or not
+anything depends on it. That is the whole operational difference: its behaviour ranges
+over the other slices rather than naming a subject of its own, so requiring n identical
+declarations would fill the dependency graph with edges that are always true and carry
+no signal.
+
+Read-only-from-another-slice is **not** a cross-cutting rule — it is universal. One
+entry belongs to exactly one slice, and slices define write ownership, so no slice may
+ever write into another.
 
 ### 4.6 Splitting rule
 
@@ -190,12 +220,12 @@ a second copy of the edges that can drift from the first, and drift in the index
 one thing this whole design cannot tolerate. Nothing outside this unit reads the tree
 anyway — retrieval arrives over the API.
 
-Typical session load: manifest, all spines, target column's full entries, declared
-dependency columns' spines only, cross-cutting spine. Full bodies only for the blast
+Typical session load: manifest, all spines, target column's full entries, the spines of
+the columns it depends on, and every cross-cutting spine. Full bodies only for the blast
 radius.
 
 **No vector search, no embeddings.** Semantic retrieval is non-deterministic: same
-question, different chunks, different day. The derives-from graph is already a precise
+question, different chunks, different day. The edge graph is already a precise
 index, and traversing it is deterministic, cheap and explainable. "I loaded `A·14`
 because `B·22` derives from it" is auditable. "The retriever ranked it 0.83" is not.
 
@@ -350,8 +380,9 @@ Not yet designed. These need closing before implementation.
 3. Corrections are classified before they are fixed.
 4. Reconciliation runs upward before propagation runs downward.
 5. Amendments are append-only; identifiers are permanent.
-6. Slices are vertical and persist unchanged to code; cross-cutting concerns sit
-   underneath them and are read-only from a slice.
+6. Slices are vertical and persist unchanged to code. Slice-level dependency is
+   projected from the entries' own edges, never authored. Cross-cutting is a slice
+   type defined by legal edges and by landing in everyone's context — not by fan-in.
 7. Retrieval is graph traversal, not similarity search.
 8. The agent must declare what it could not derive.
 9. Spec is the source of truth for planning; code is the source of truth for audit.

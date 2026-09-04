@@ -146,6 +146,19 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "in_response_to", "entries"),
         ),
         tool(
+            "classify_slice",
+            "Record whether a slice is ordinary or cross-cutting. 'type' is "
+            "'slice' or 'cross_cutting'. A cross-cutting slice's spec spine "
+            "lands in every other slice's work package without anything "
+            "declaring a dependency on it, because its behaviour ranges over "
+            "the other slices rather than naming a subject of its own. The "
+            "unit records this ruling; it does not make it.",
+            "POST",
+            "/projects/{project}/slices/{slice}/type",
+            {"project": s, "slice": s, "type": s},
+            ("project", "slice", "type"),
+        ),
+        tool(
             "get_work_package",
             "The bounded context for producing code for one slice: the spec "
             "entries you may edit, the justification chain for each, "
@@ -232,6 +245,11 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # The pipeline's own write path.
     ("POST", re.compile(r"^/projects$"), "create_project"),
     ("POST", re.compile(rf"^/projects/{_P}/amendments$"), "amendment"),
+    (
+        "POST",
+        re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/type$"),
+        "classify_slice",
+    ),
     # Reads.
     ("GET", re.compile(r"^/projects$"), "list_projects"),
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
@@ -349,6 +367,17 @@ def handle(
         if name == "amendment":
             result = service.submit_amendment(store, inbox, project, body)
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
+
+        if name == "classify_slice":
+            return (
+                200,
+                JSON,
+                json.dumps(
+                    service.classify_slice(
+                        store, project, match.group("slice"), body or {}
+                    )
+                ),
+            )
 
         if name == "work_package":
             if not query.get("slice"):

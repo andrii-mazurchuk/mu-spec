@@ -30,8 +30,9 @@ what. Read `docs/DESIGN.md` before writing any code here — it is the full
 architecture, and this section is only the orientation.
 
 Five layers — intent, behaviour, architecture, implementation spec, code —
-each entry carrying an identifier, a derives-from list, and a body. Those two
-structural fields turn a pile of markdown into a directed graph, and that
+each entry carrying an identifier, a derives-from list (vertical, exactly one
+layer up), a depends-on list (horizontal, within its layer), and a body.
+Those structural fields turn a pile of records into a directed graph, and that
 graph is the entire point: it makes the blast radius of any change
 mechanically computable, so human review can be scoped to the radius instead
 of to whole documents.
@@ -75,8 +76,16 @@ is an error the caller sees, not a warning in a log.
 - **Amendments are append-only**, with a superseding marker. Nothing is
   edited in place; history is what makes the pipeline auditable.
 - **Slices split, never merge.** Merging destroys identifier locality.
-- **Cross-cutting entries are read-only from a slice.** A slice may declare
-  that it emits into one; it may never define one.
+- **No slice ever writes into another.** One entry belongs to exactly one
+  slice, and slices define write ownership. This is universal, not a
+  cross-cutting rule.
+- **Cross-cutting is a slice type, decided by two tests** — does the caller
+  branch on what comes back, and does the contract name a domain object
+  someone else owns. Both must pass. Fan-in is never the criterion: a slice
+  everything depends on is a foundational slice, not a cross-cutting one.
+- **Slice dependency is projected from entry edges, never authored.** There is
+  deliberately no field to declare it in; two statements of the same fact
+  drift, and the authored one goes stale.
 
 ### Two decisions already made — do not reopen
 
@@ -195,7 +204,7 @@ formatter is configured — don't add one unprompted.
 - **Storage stays behind one module.** Exactly one module touches the backing
   store; every other caller goes through its functions. That is what makes
   the store swappable later.
-- **The graph core needs only `id`, `derives_from`, `body`.** Per-layer field
+- **The graph core needs only `id`, `derives_from`, `depends_on`, `body`.** Per-layer field
   shapes are still undesigned (`docs/DESIGN.md` §11) and constrain only what
   goes *inside* a body. Don't block on them, and don't bake a layer's fields
   into the graph layer.

@@ -30,7 +30,7 @@ from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
-from mu_spec.storage import CROSS_CUTTING, ProjectStore
+from mu_spec.storage import ProjectStore
 
 COMMENTS_FILE = "comments.jsonl"
 
@@ -336,6 +336,30 @@ def submit_amendment(
     }
 
 
+def classify_slice(
+    store: ProjectStore, project: str, slice_name: str, body: dict
+) -> dict:
+    """Record whether a slice is ordinary or cross-cutting.
+
+    A judgement the unit does not make. The agent argues it from the two
+    tests -- does a caller branch on what comes back, and does the contract
+    name a domain object someone else owns -- and a human rules on it. What
+    the unit does is record the ruling and make it structural, because the
+    type is what decides whose context this slice's entries land in.
+    """
+    try:
+        store.set_slice_type(project, slice_name, body.get("type", ""))
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+    manifest = store.load_manifest(project)
+    return {
+        "project": project,
+        "slice": slice_name,
+        "type": manifest.slices[slice_name].type,
+        "cross_cutting": list(manifest.cross_cutting()),
+    }
+
+
 # -- reading ----------------------------------------------------------------
 
 
@@ -403,8 +427,10 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
       set is exactly what the work actually needs and cannot drift from it.
       This is what turns "peeking at related features" from the executor
       wandering the repo into a bounded, computed operation.
-    - **cross-cutting** -- spine only, and read-only by rule: a slice may
-      declare that it emits into logging or notifications, never define them.
+    - **cross-cutting** -- every cross-cutting slice's spec entries, spine
+      only, whether or not this slice depends on one. Their behaviour ranges
+      over other slices rather than naming a subject of its own, so the
+      dependency is real, universal, and never worth declaring n times.
 
     Refused when the graph is *unsound* -- when it contains an orphan.
     Handing an executor a package built from a broken chain produces code
@@ -457,13 +483,15 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
                 read_set.append(view)
 
     cross = []
-    cc = manifest.slices.get(CROSS_CUTTING)
-    if cc:
-        cross = [
-            _entry_view(e, full=False)
-            for e in graph.entries()
-            if e.id.layer == "S" and e.id in cc.members
-        ]
+    for name in manifest.cross_cutting():
+        if name == slice_name:
+            continue
+        members = manifest.slices[name].members
+        for entry in graph.entries():
+            if entry.id.layer == "S" and entry.id in members:
+                view = _entry_view(entry, full=False)
+                view["slice"] = name
+                cross.append(view)
 
     return {
         "project": project,

@@ -43,7 +43,15 @@ INTENT_LAYER = "I"
 LAYER_DIRS = {"B": "behaviour", "A": "architecture", "S": "spec"}
 INTENT_FILE = "intent.jsonl"
 MANIFEST_FILE = "manifest.json"
-CROSS_CUTTING = "cross-cutting"
+
+# Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
+# logging deserves its own architecture and its own specs, and is as complex
+# as any slice. There can be several, each with a full column at every layer,
+# stored exactly like everything else. What distinguishes one is which edges
+# are legal and whose context it lands in -- not where it is filed.
+SLICE = "slice"
+CROSS_CUTTING = "cross_cutting"
+SLICE_TYPES = (SLICE, CROSS_CUTTING)
 
 
 class MalformedEntryFile(ValueError):
@@ -149,6 +157,7 @@ class Slice:
     # and a gap is the ordinary case. This is what lets a slice split without
     # renumbering anything.
     members: set[Identifier] = dataclasses.field(default_factory=set)
+    type: str = SLICE
 
 
 @dataclasses.dataclass
@@ -165,6 +174,17 @@ class Manifest:
             if identifier in sl.members:
                 return name
         return None
+
+    def cross_cutting(self) -> tuple[str, ...]:
+        """Every cross-cutting slice, in name order. These land in every
+        slice's context whether or not anything declared a dependency on
+        them: their behaviour ranges over other slices rather than naming a
+        subject, so requiring n identical declarations would fill the
+        dependency graph with edges that are always true and carry no
+        signal."""
+        return tuple(
+            sorted(n for n, sl in self.slices.items() if sl.type == CROSS_CUTTING)
+        )
 
     def dependency_graph(self, graph: Graph) -> dict[str, tuple[str, ...]]:
         """Which slice depends on which, projected from the entries.
@@ -191,7 +211,10 @@ class Manifest:
             {
                 "project": self.project,
                 "slices": {
-                    name: {"members": sorted((str(m) for m in sl.members))}
+                    name: {
+                        "members": sorted((str(m) for m in sl.members)),
+                        "type": sl.type,
+                    }
                     for name, sl in sorted(self.slices.items())
                 },
                 "allocation": self.allocation,
@@ -208,6 +231,7 @@ class Manifest:
                 name: Slice(
                     name=name,
                     members={parse(m) for m in body.get("members", [])},
+                    type=body.get("type", SLICE),
                 )
                 for name, body in raw.get("slices", {}).items()
             },
@@ -275,6 +299,20 @@ class ProjectStore:
         manifest.allocation[layer] = nxt
         self.save_manifest(project, manifest)
         return Identifier(layer=layer, number=nxt)
+
+    def set_slice_type(self, project: str, slice_name: str, slice_type: str) -> None:
+        """Mark a slice as cross-cutting, or back to ordinary. A classification
+        the agent proposes and a human rules on -- the unit only records it,
+        and refuses a value that is not one of the two."""
+        if slice_type not in SLICE_TYPES:
+            raise ValueError(
+                f"unknown slice type {slice_type!r}, expected one of {SLICE_TYPES}"
+            )
+        manifest = self.load_manifest(project)
+        if slice_name not in manifest.slices:
+            raise ValueError(f"unknown slice {slice_name!r}")
+        manifest.slices[slice_name].type = slice_type
+        self.save_manifest(project, manifest)
 
     # -- entry files --------------------------------------------------------
 

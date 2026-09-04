@@ -7,6 +7,8 @@ import pytest
 from mu_spec.graph import Entry
 from mu_spec.identifiers import parse
 from mu_spec.storage import (
+    CROSS_CUTTING,
+    SLICE,
     MalformedEntryFile,
     ProjectStore,
     UnknownProject,
@@ -364,3 +366,42 @@ def test_depends_on_survives_a_write_and_read_round_trip(tmp_path):
     store = _built(tmp_path)
     entry = ProjectStore(tmp_path).load_graph("m").get(parse("S·02"))
     assert [str(d) for d in entry.depends_on] == ["S·01"]
+
+
+# -- cross-cutting is a slice type -------------------------------------------
+
+
+def test_a_slice_is_an_ordinary_slice_unless_told_otherwise(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("S·01"), title="a")], slice_name="listings")
+    assert store.load_manifest("m").slices["listings"].type == SLICE
+
+
+def test_a_slice_can_be_marked_cross_cutting_and_it_persists(tmp_path):
+    """A type, not a reserved name. There can be several, each with its own
+    full column at every layer, stored exactly like any other slice."""
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("S·01"), title="a")], slice_name="audit")
+    store.append("m", [Entry(id=parse("S·02"), title="b")], slice_name="telemetry")
+    store.set_slice_type("m", "audit", CROSS_CUTTING)
+    store.set_slice_type("m", "telemetry", CROSS_CUTTING)
+    reloaded = ProjectStore(tmp_path).load_manifest("m")
+    assert reloaded.cross_cutting() == ("audit", "telemetry")
+    assert (tmp_path / "m" / "spec" / "audit.jsonl").exists()
+
+
+def test_an_unknown_slice_type_is_refused(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("S·01"), title="a")], slice_name="audit")
+    with pytest.raises(ValueError):
+        store.set_slice_type("m", "audit", "sort-of-ambient")
+
+
+def test_setting_the_type_of_an_unknown_slice_is_refused(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    with pytest.raises(ValueError):
+        store.set_slice_type("m", "nope", CROSS_CUTTING)

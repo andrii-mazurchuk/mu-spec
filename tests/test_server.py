@@ -878,3 +878,101 @@ def test_no_work_package_is_issued_while_a_dependency_is_stale(store, prompts):
     assert wp["issued"] is False
     kinds = {f["kind"] for f in wp["gates"]["findings"]}
     assert "bad_dependency" in kinds
+
+
+# -- cross-cutting slices ----------------------------------------------------
+
+
+def test_cross_cutting_entries_arrive_undeclared(store, prompts):
+    """Nothing in listings depends on audit. It lands in the work package
+    anyway -- that is the entire operational difference between a
+    cross-cutting slice and an ordinary one."""
+    mid = seed(store, prompts)
+    for layer, title, parent in (
+        ("B", "Every state change is recorded", "I·01"),
+        ("A", "An append-only event log", "B·02"),
+        ("S", "audit/log.py appends a record", "A·02"),
+    ):
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": "audit",
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": layer, "title": title, "derives_from": [parent]}
+                ],
+            },
+        )
+    status, ruling = call(
+        store, prompts, "POST", "/projects/m/slices/audit/type",
+        {"type": "cross_cutting"},
+    )
+    assert (status, ruling["cross_cutting"]) == (200, ["audit"])
+
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    assert wp["read_set"] == []
+    assert [(e["id"], e["slice"]) for e in wp["cross_cutting"]] == [("S·02", "audit")]
+    assert "body" not in wp["cross_cutting"][0]
+
+
+def test_a_cross_cutting_slice_does_not_read_itself(store, prompts):
+    mid = seed(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "audit",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "Every state change is recorded",
+                 "derives_from": ["I·01"]},
+            ],
+        },
+    )
+    call(
+        store, prompts, "POST", "/projects/m/slices/audit/type",
+        {"type": "cross_cutting"},
+    )
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=audit")
+    assert wp["cross_cutting"] == []
+
+
+def test_several_slices_can_be_cross_cutting_at_once(store, prompts):
+    """A type, not a reserved name -- so audit and telemetry are two separate
+    columns, both ambient."""
+    mid = seed(store, prompts)
+    for name in ("audit", "telemetry"):
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": name,
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": "B", "title": f"{name} everywhere",
+                     "derives_from": ["I·01"]}
+                ],
+            },
+        )
+        call(
+            store, prompts, "POST", f"/projects/m/slices/{name}/type",
+            {"type": "cross_cutting"},
+        )
+    assert store.load_manifest("m").cross_cutting() == ("audit", "telemetry")
+
+
+def test_an_unknown_slice_type_is_a_caller_error(store, prompts):
+    seed(store, prompts)
+    status, payload = call(
+        store, prompts, "POST", "/projects/m/slices/listings/type",
+        {"type": "sort-of-ambient"},
+    )
+    assert status == 400
+    assert "unknown slice type" in payload["error"]
