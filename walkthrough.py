@@ -72,12 +72,16 @@ def show(label: str, value) -> None:
 def spine(project: str, note: str = "") -> None:
     _, payload = call("GET", f"/projects/{project}/spine")
     print(f"\n  SPINE {note}")
-    print(f"  {'id':7} {'layer':13} {'slice':12} {'derives from':14} title")
-    print(f"  {'-' * 68}")
+    print(
+        f"  {'id':7} {'layer':13} {'slice':12} {'derives from':13} "
+        f"{'depends on':11} title"
+    )
+    print(f"  {'-' * 80}")
     for row in payload["spine"]:
         print(
             f"  {row['id']:7} {row['id'][0]:13} {str(row['slice'] or '-'):12} "
-            f"{','.join(row['derives_from']) or '-':14} {row['title']}"
+            f"{','.join(row['derives_from']) or '-':13} "
+            f"{','.join(row['depends_on']) or '-':11} {row['title']}"
         )
 
 
@@ -321,8 +325,11 @@ def main(argv=None) -> int:
                 "layer": "S",
                 "title": "payouts/release.py releases a payment on confirmation",
                 "body": "Module payouts/release.py. on_delivery_confirmed(order) -> "
-                "Payment | None. Returns None while a dispute is open.",
+                "Payment | None. Returns None while a dispute is open. Resolves "
+                "the seller through search/index.py rather than keeping its own "
+                "lookup.",
                 "derives_from": ["A·03"],
+                "depends_on": ["S·01"],
             }
         ],
         slice_name="payouts",
@@ -352,8 +359,16 @@ def main(argv=None) -> int:
         for link in chain:
             depth = "full " if "body" in link else "spine"
             print(f"      [{depth}] {link['id']} {link['title']}")
-    print("\n  READ SET (declared dependencies -- context, not editable)")
-    print(f"    {wp['read_set'] or '(none: discovery declares no dependencies)'}")
+    print("\n  READ SET (what this slice depends on -- context, not editable)")
+    print(f"    {wp['read_set'] or '(none: nothing in discovery needs another slice)'}")
+
+    _m = store.load_manifest(P)
+    print("\n  SLICE DEPENDENCIES (projected from the entries, never authored)")
+    for name, deps in _m.dependency_graph(store.load_graph(P)).items():
+        print(f"    {name:12} -> {', '.join(deps) or '(nothing)'}")
+    print("    Nothing in the manifest says this. S·03 depends on S·01, so")
+    print("    payouts depends on discovery -- and the manifest has no field")
+    print("    to disagree with the entries in.")
     print("\n  AUDIT RULE")
     show("editable_ids", wp["audit"]["editable_ids"])
     print(f"    {wp['audit']['rule']}")

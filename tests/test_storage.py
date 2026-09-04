@@ -299,3 +299,68 @@ def test_slices_cannot_be_merged(tmp_path):
     store.append("m", [Entry(id=parse("B·02"), title="b")], slice_name="discovery")
     with pytest.raises(ValueError):
         store.split_slice("m", "listings", "discovery", {parse("B·01")})
+
+
+# -- slice dependency is projected, never authored ---------------------------
+
+
+def _built(tmp_path):
+    """A project where discovery's spec needs something from payouts', and
+    nothing declares that anywhere."""
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("I·01"), title="intent")])
+    store.append(
+        "m",
+        [Entry(id=parse("S·01"), title="payout ledger")],
+        slice_name="payouts",
+    )
+    store.append(
+        "m",
+        [
+            Entry(
+                id=parse("S·02"),
+                title="search index",
+                depends_on=(parse("S·01"),),
+            )
+        ],
+        slice_name="discovery",
+    )
+    return store
+
+
+def test_slice_dependency_is_projected_from_entry_edges(tmp_path):
+    store = _built(tmp_path)
+    deps = store.load_manifest("m").dependency_graph(store.load_graph("m"))
+    assert deps["discovery"] == ("payouts",)
+    assert deps["payouts"] == ()
+
+
+def test_a_dependency_within_one_slice_is_not_a_slice_dependency(tmp_path):
+    """A slice depending on itself is just internal structure."""
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append(
+        "m",
+        [
+            Entry(id=parse("S·01"), title="a"),
+            Entry(id=parse("S·02"), title="b", depends_on=(parse("S·01"),)),
+        ],
+        slice_name="discovery",
+    )
+    deps = store.load_manifest("m").dependency_graph(store.load_graph("m"))
+    assert deps["discovery"] == ()
+
+
+def test_the_manifest_holds_no_dependency_field_at_all(tmp_path):
+    """Not empty -- absent. There is no field to author, so the manifest
+    cannot state a dependency that the entries do not have."""
+    store = _built(tmp_path)
+    raw = json.loads((tmp_path / "m" / "manifest.json").read_text(encoding="utf-8"))
+    assert "depends_on" not in raw["slices"]["discovery"]
+
+
+def test_depends_on_survives_a_write_and_read_round_trip(tmp_path):
+    store = _built(tmp_path)
+    entry = ProjectStore(tmp_path).load_graph("m").get(parse("S·02"))
+    assert [str(d) for d in entry.depends_on] == ["S·01"]

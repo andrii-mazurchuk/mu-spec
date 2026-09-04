@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from mu_spec.gates import ORPHAN, admission_gates
+from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
@@ -49,6 +49,7 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
         "layer": entry.id.layer_name,
         "title": entry.display_title,
         "derives_from": [str(d) for d in entry.derives_from],
+        "depends_on": [str(d) for d in entry.depends_on],
     }
     if full:
         view["body"] = entry.body
@@ -59,9 +60,10 @@ def _gate_report(graph: Graph) -> dict[str, Any]:
     """Two different questions, reported separately because they have
     different consequences.
 
-    `sound` -- no orphans. A graph containing a claim that derives from
-    nothing, or from something retired or nonexistent, is broken now. This
-    blocks: amendments are refused and work packages are not issued.
+    `sound` -- no orphans, no bad dependencies. A graph containing a claim
+    that derives from nothing, or that needs something retired or
+    nonexistent, is broken now. This blocks: amendments are refused and work
+    packages are not issued.
 
     `complete` -- nothing unserved. Knowledge has been carried all the way
     down to spec on every branch. This does NOT block; being incomplete is
@@ -70,7 +72,9 @@ def _gate_report(graph: Graph) -> dict[str, Any]:
     """
     findings = admission_gates(graph)
     return {
-        "sound": not any(f.kind == ORPHAN for f in findings),
+        "sound": not any(
+            f.kind in (ORPHAN, BAD_DEPENDENCY) for f in findings
+        ),
         "complete": not findings,
         "clean": not findings,
         "findings": [
@@ -236,6 +240,7 @@ def submit_amendment(
             Entry(
                 id=Identifier(layer=layer, number=marks[layer]),
                 derives_from=_parse_ids(item.get("derives_from"), "derives_from"),
+                depends_on=_parse_ids(item.get("depends_on"), "depends_on"),
                 title=item["title"],
                 body=item.get("body", ""),
                 supersedes=(
@@ -269,7 +274,7 @@ def submit_amendment(
     new_orphans = [
         f
         for f in admission_gates(prospective)
-        if f.kind == ORPHAN and (f.kind, str(f.id)) not in before
+        if f.kind in (ORPHAN, BAD_DEPENDENCY) and (f.kind, str(f.id)) not in before
     ]
 
     # Retiring an entry necessarily strands whatever derived from it, and
@@ -351,9 +356,10 @@ def get_spine(store: ProjectStore, project: str, layer: str | None) -> dict:
                 "id": ident,
                 "title": title,
                 "derives_from": list(df),
+                "depends_on": list(dep),
                 "slice": manifest.slice_of(parse(ident)),
             }
-            for ident, title, df in rows
+            for ident, title, df, dep in rows
         ],
     }
 
@@ -391,10 +397,12 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
       full body; everything further up is spine only. An executor needs the
       architectural decision in full and merely needs to know the behaviour
       and intent above it exist.
-    - **read set** -- spec entries from slices this one *declares* a
-      dependency on, spine only. Read-only context. This is what turns
-      "peeking at related features" from the executor wandering the repo into
-      a bounded, declared operation.
+    - **read set** -- spec entries from the slices this one depends on,
+      spine only. Read-only context. Those dependencies are projected from
+      the entries' own edges rather than declared beside them, so the read
+      set is exactly what the work actually needs and cannot drift from it.
+      This is what turns "peeking at related features" from the executor
+      wandering the repo into a bounded, computed operation.
     - **cross-cutting** -- spine only, and read-only by rule: a slice may
       declare that it emits into logging or notifications, never define them.
 
@@ -438,12 +446,12 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
         justification[str(entry.id)] = chain
 
     read_set = []
-    for dep in manifest.slices[slice_name].depends_on:
-        dep_members = manifest.slices.get(dep)
-        if dep_members is None:
+    for dep in manifest.dependency_graph(graph).get(slice_name, ()):
+        dep_slice = manifest.slices.get(dep)
+        if dep_slice is None:
             continue
         for entry in graph.entries():
-            if entry.id.layer == "S" and entry.id in dep_members.members:
+            if entry.id.layer == "S" and entry.id in dep_slice.members:
                 view = _entry_view(entry, full=False)
                 view["slice"] = dep
                 read_set.append(view)

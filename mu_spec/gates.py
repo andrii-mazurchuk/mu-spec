@@ -5,12 +5,14 @@ failures." A mechanical check does not need an agent -- it needs a function.
 Keeping them here, in the unit, is what stops a session in a hurry from
 skipping them, which is the entire point of a gate.
 
-Two of the three live here, because both are answerable from the graph
-alone:
+Three live here, because all three are answerable from the graph alone:
 
 - orphans -- does every entry below trace to something above? This is a
   SOUNDNESS question: an orphan means the graph contains a claim that
   derives from nothing, which is never legitimate at any moment.
+- bad dependencies -- does every same-layer edge point at a live entry in
+  the same layer? Also a SOUNDNESS question, and the one that catches an
+  entry still holding a dependency on a meaning that has since moved.
 - unserved -- does every entry above have at least one entry below serving
   it? This is a COMPLETENESS question: it measures how far knowledge has
   actually been carried down, and being incomplete is the ordinary state of
@@ -21,10 +23,10 @@ Unsound blocks: an amendment that would introduce an orphan is refused, and
 no work package is issued from a graph containing one. Incomplete does not
 block -- it is the report of what is left to do.
 
-The third, backwards dependency arrows between slices, needs the manifest
-(which slice owns which identifiers, and which dependencies are declared).
-It lands with the manifest, not here -- this module deliberately knows
-nothing about slices.
+Cycles between slices, and the rule that a cross-cutting slice holds no
+outbound dependency, both need the manifest -- which slice owns which
+identifiers. They land with the manifest, not here: this module deliberately
+knows nothing about slices.
 
 Judgement gates are not here and never will be: an agent flagging what it
 could not derive is not a computation.
@@ -39,6 +41,7 @@ from mu_spec.identifiers import LAYERS, Identifier, derives_legally, sort_key
 
 ORPHAN = "orphan"
 UNSERVED = "unserved"
+BAD_DEPENDENCY = "bad_dependency"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,9 +127,46 @@ def unserved(graph: Graph) -> list[Finding]:
     ]
 
 
+def bad_dependencies(graph: Graph) -> list[Finding]:
+    """A same-layer edge must point at a live entry in the same layer, and
+    not at itself.
+
+    A SOUNDNESS question, like orphans. Each of these means an entry is
+    holding a dependency on something that is not there, is not what it
+    thinks, or is not the kind of thing a horizontal edge may name -- and an
+    entry that depends on a *retired* entry is precisely the case this edge
+    exists to make visible: it consumed a meaning that has since moved.
+
+    Cross-layer is refused rather than tolerated because it would be a
+    derivation wearing the wrong label, and the orphan gate -- which only
+    reads `derives_from` -- would never see it.
+    """
+    findings: list[Finding] = []
+    for entry in graph.entries():
+        problems: list[str] = []
+        for target in entry.depends_on:
+            if target == entry.id:
+                problems.append(f"{target} depends on itself")
+            elif target.layer != entry.id.layer:
+                problems.append(
+                    f"{target} is not in the same layer -- depends_on is "
+                    "horizontal, and a cross-layer edge belongs in "
+                    "derives_from where the orphan gate can see it"
+                )
+            elif graph.superseded_by(target) is not None:
+                problems.append(
+                    f"{target} is superseded by {graph.superseded_by(target)}"
+                )
+            elif target not in graph:
+                problems.append(f"{target} does not exist")
+        if problems:
+            findings.append(Finding(BAD_DEPENDENCY, entry.id, "; ".join(problems)))
+    return findings
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
     way the graph does."""
-    findings = orphans(graph) + unserved(graph)
+    findings = orphans(graph) + bad_dependencies(graph) + unserved(graph)
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

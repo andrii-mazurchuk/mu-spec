@@ -151,12 +151,12 @@ def test_superseded_entries_remain_retrievable_by_identifier():
 # -- spine ------------------------------------------------------------------
 
 
-def test_spine_carries_identifier_title_and_derives_from_only():
+def test_spine_carries_identifier_title_and_edges_only():
     """Roughly fifteen tokens an entry: the agent loads spines
     unconditionally, then pulls bodies by identifier once it knows which it
     needs. A spine carrying bodies would defeat the entire scheme."""
     graph = Graph([_entry("I·01", body="# Sellers list items\n\nlong body...\n")])
-    assert graph.spine() == [("I·01", "Sellers list items", ())]
+    assert graph.spine() == [("I·01", "Sellers list items", (), ())]
 
 
 def test_spine_title_is_the_first_line_stripped_of_heading_marks():
@@ -171,4 +171,59 @@ def test_spine_title_of_an_empty_body_is_empty_not_an_error():
 
 def test_spine_records_derives_from():
     graph = Graph([_entry("I·01"), _entry("B·01", "I·01")])
-    assert graph.spine()[1] == ("B·01", "B·01 title", ("I·01",))
+    assert graph.spine()[1] == ("B·01", "B·01 title", ("I·01",), ())
+
+
+# -- same-layer dependency edges --------------------------------------------
+
+
+def test_an_entry_can_declare_same_layer_dependencies():
+    """The horizontal edge. `derives_from` says what an entry serves one
+    layer up; `depends_on` says what it needs from its own layer."""
+    graph = Graph(
+        [
+            _entry("A·01"),
+            Entry(id=parse("A·02"), depends_on=(parse("A·01"),), title="b"),
+        ]
+    )
+    assert [str(i) for i in graph.dependencies(parse("A·02"))] == ["A·01"]
+    assert [str(i) for i in graph.dependents(parse("A·01"))] == ["A·02"]
+
+
+def test_dependencies_of_an_unknown_entry_are_empty():
+    assert Graph([]).dependencies(parse("A·01")) == ()
+    assert Graph([]).dependents(parse("A·01")) == ()
+
+
+def test_a_superseded_entry_does_not_depend_on_anything_live():
+    """Retired entries leave the live graph entirely, horizontally as well as
+    vertically -- otherwise a replaced entry keeps casting dependency votes."""
+    graph = Graph(
+        [
+            _entry("A·01"),
+            Entry(id=parse("A·02"), depends_on=(parse("A·01"),), title="old"),
+            Entry(id=parse("A·03"), title="new", supersedes=parse("A·02")),
+        ]
+    )
+    assert graph.dependents(parse("A·01")) == ()
+
+
+def test_the_spine_carries_both_edge_kinds():
+    """An agent decides what to load from the spine alone. If the horizontal
+    edges were only visible in the bodies, it would have to load bodies to
+    find out which bodies it needs."""
+    graph = Graph(
+        [
+            _entry("B·01"),
+            Entry(
+                id=parse("A·01"),
+                derives_from=(parse("B·01"),),
+                depends_on=(parse("A·02"),),
+                title="a",
+            ),
+            _entry("A·02", "B·01"),
+        ]
+    )
+    row = [r for r in graph.spine() if r[0] == "A·01"][0]
+    assert row[2] == ("B·01",)
+    assert row[3] == ("A·02",)

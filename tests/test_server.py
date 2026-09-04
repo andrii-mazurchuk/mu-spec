@@ -742,3 +742,139 @@ def test_get_entry_returns_the_body_and_both_directions(store, prompts):
 def test_get_entry_for_a_missing_identifier_is_refused(store, prompts):
     seed(store, prompts)
     assert call(store, prompts, "GET", "/projects/m/entries/A·99")[0] == 400
+
+
+# -- same-layer dependencies, end to end -------------------------------------
+
+
+def _second_slice(store, prompts, mid, depends_on=None):
+    """A second vertical column, whose spec optionally needs something from
+    the first slice's spec."""
+    for layer, title, parent in (
+        ("B", "A seller is paid out", "I·01"),
+        ("A", "Payouts run nightly", "B·02"),
+        ("S", "Use the ledger module", "A·02"),
+    ):
+        entry = {
+            "layer": layer,
+            "title": title,
+            "body": f"body for {title}",
+            "derives_from": [parent],
+        }
+        if layer == "S" and depends_on:
+            entry["depends_on"] = depends_on
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {"slice": "payouts", "in_response_to": mid, "entries": [entry]},
+        )
+
+
+def test_the_spine_shows_both_edge_kinds(store, prompts):
+    mid = seed(store, prompts)
+    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    _, payload = call(store, prompts, "GET", "/projects/m/spine?layer=S")
+    rows = {r["id"]: r for r in payload["spine"]}
+    assert rows["S·02"]["derives_from"] == ["A·02"]
+    assert rows["S·02"]["depends_on"] == ["S·01"]
+
+
+def test_the_read_set_follows_a_dependency_nobody_declared(store, prompts):
+    """The manifest has no field to declare a slice dependency in. payouts
+    lands in discovery's read set purely because an entry said so."""
+    mid = seed(store, prompts)
+    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    assert wp["issued"] is True
+    assert [(e["id"], e["slice"]) for e in wp["read_set"]] == [("S·01", "listings")]
+    assert "body" not in wp["read_set"][0]
+
+
+def test_a_slice_with_no_dependencies_gets_an_empty_read_set(store, prompts):
+    mid = seed(store, prompts)
+    _second_slice(store, prompts, mid)
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    assert wp["read_set"] == []
+
+
+def test_an_amendment_depending_across_layers_is_refused(store, prompts):
+    """depends_on is horizontal. A cross-layer edge is a derivation wearing
+    the wrong label, and the orphan gate would never see it."""
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "payouts",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "A seller is paid out",
+                    "derives_from": ["I·01"],
+                    "depends_on": ["A·01"],
+                }
+            ],
+        },
+    )
+    assert payload["admitted"] is False
+    assert payload["findings"][0]["kind"] == "bad_dependency"
+    assert "same layer" in payload["findings"][0]["detail"]
+
+
+def test_an_amendment_depending_on_nothing_that_exists_is_refused(store, prompts):
+    mid = seed(store, prompts)
+    _, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "payouts",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "A seller is paid out",
+                    "derives_from": ["I·01"],
+                    "depends_on": ["B·99"],
+                }
+            ],
+        },
+    )
+    assert payload["admitted"] is False
+    assert payload["findings"][0]["kind"] == "bad_dependency"
+
+
+def test_no_work_package_is_issued_while_a_dependency_is_stale(store, prompts):
+    """Superseding S·01 leaves payouts holding the old meaning. The graph is
+    unsound until payouts re-derives, and no executor is handed a package
+    built on it."""
+    mid = seed(store, prompts)
+    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "Use a different index module",
+                    "derives_from": ["A·01"],
+                    "supersedes": "S·01",
+                }
+            ],
+        },
+    )
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    assert wp["issued"] is False
+    kinds = {f["kind"] for f in wp["gates"]["findings"]}
+    assert "bad_dependency" in kinds

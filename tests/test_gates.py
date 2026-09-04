@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mu_spec.gates import ORPHAN, UNSERVED, admission_gates
+from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, UNSERVED, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 
@@ -179,3 +179,69 @@ def test_findings_are_sorted_in_spine_order():
         (UNSERVED, "B·01"),
     ]
     assert [str(f.id) for f in admission_gates(graph)] == ["B·01", "B·01", "S·01"]
+
+
+# -- same-layer dependency edges --------------------------------------------
+
+
+def _dep(ident: str, derives_from: str = "", depends_on: str = "") -> Entry:
+    return Entry(
+        id=parse(ident),
+        derives_from=tuple(parse(d) for d in derives_from.split() if d),
+        depends_on=tuple(parse(d) for d in depends_on.split() if d),
+        title=ident,
+    )
+
+
+def test_a_valid_same_layer_dependency_is_clean():
+    graph = Graph(
+        [
+            _entry("I·01"),
+            _entry("B·01", "I·01"),
+            _dep("A·01", "B·01"),
+            _dep("A·02", "B·01", depends_on="A·01"),
+            _entry("S·01", "A·01"),
+            _entry("S·02", "A·02"),
+        ]
+    )
+    assert admission_gates(graph) == []
+
+
+def test_depending_on_another_layer_is_a_bad_dependency():
+    """depends_on is horizontal by definition. An architecture entry that
+    depends on a behaviour entry is claiming a derivation, and it should have
+    said so with derives_from where the orphan gate can see it."""
+    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "B·01")])
+    findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
+    assert [str(f.id) for f in findings] == ["A·01"]
+    assert "same layer" in findings[0].detail
+
+
+def test_depending_on_something_that_does_not_exist_is_a_bad_dependency():
+    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "A·99")])
+    findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
+    assert "does not exist" in findings[0].detail
+
+
+def test_depending_on_a_superseded_entry_is_a_bad_dependency():
+    """The consumer is holding the old meaning. This is exactly the case the
+    horizontal edge exists to make visible."""
+    graph = Graph(
+        [
+            _entry("I·01"),
+            _entry("B·01", "I·01"),
+            _dep("A·01", "B·01"),
+            _dep("A·02", "B·01", depends_on="A·01"),
+            _dep("A·03", "B·01"),
+        ]
+        + [Entry(id=parse("A·04"), derives_from=(parse("B·01"),), title="x", supersedes=parse("A·01"))]
+    )
+    findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
+    assert [str(f.id) for f in findings] == ["A·02"]
+    assert "superseded" in findings[0].detail
+
+
+def test_an_entry_depending_on_itself_is_a_bad_dependency():
+    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "A·01")])
+    findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
+    assert "itself" in findings[0].detail

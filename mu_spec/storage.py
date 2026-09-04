@@ -7,7 +7,8 @@ Layout, per the design doc:
 
     <root>/<project>/
       manifest.json            slices, membership sets, and the identifier
-                               high-water marks
+                               high-water marks. Never dependencies -- those
+                               are projected from the entries themselves
       intent.jsonl             intent is not sliced -- short by nature,
                                everyone reads it
       behaviour/<slice>.jsonl  one file per slice per layer. Not one file per
@@ -99,6 +100,7 @@ def parse_entries(text: str) -> list[Entry]:
             Entry(
                 id=identifier,
                 derives_from=_ids(raw.get("derives_from"), "derives_from", where),
+                depends_on=_ids(raw.get("depends_on"), "depends_on", where),
                 title=str(raw.get("title", "")),
                 body=str(raw.get("body", "")),
                 supersedes=(
@@ -124,6 +126,8 @@ def render_entries(entries: list[Entry]) -> str:
         record: dict = {"id": str(entry.id)}
         if entry.derives_from:
             record["derives_from"] = [str(d) for d in entry.derives_from]
+        if entry.depends_on:
+            record["depends_on"] = [str(d) for d in entry.depends_on]
         if entry.title:
             record["title"] = entry.title
         if entry.body:
@@ -145,7 +149,6 @@ class Slice:
     # and a gap is the ordinary case. This is what lets a slice split without
     # renumbering anything.
     members: set[Identifier] = dataclasses.field(default_factory=set)
-    depends_on: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass
@@ -163,15 +166,32 @@ class Manifest:
                 return name
         return None
 
+    def dependency_graph(self, graph: Graph) -> dict[str, tuple[str, ...]]:
+        """Which slice depends on which, projected from the entries.
+
+        Slice A depends on slice B when some entry in A depends on some entry
+        in B. Never authored, and there is deliberately no field to author it
+        in: two statements of the same fact drift, and the one a human
+        maintains is the one that goes stale. Deriving it also means the
+        cycle check reads the same edges the executors do.
+        """
+        edges: dict[str, set[str]] = {name: set() for name in self.slices}
+        for entry in graph.entries():
+            owner = self.slice_of(entry.id)
+            if owner is None:
+                continue
+            for target in entry.depends_on:
+                other = self.slice_of(target)
+                if other is not None and other != owner:
+                    edges.setdefault(owner, set()).add(other)
+        return {name: tuple(sorted(deps)) for name, deps in sorted(edges.items())}
+
     def to_json(self) -> str:
         return json.dumps(
             {
                 "project": self.project,
                 "slices": {
-                    name: {
-                        "members": sorted((str(m) for m in sl.members)),
-                        "depends_on": list(sl.depends_on),
-                    }
+                    name: {"members": sorted((str(m) for m in sl.members))}
                     for name, sl in sorted(self.slices.items())
                 },
                 "allocation": self.allocation,
@@ -188,7 +208,6 @@ class Manifest:
                 name: Slice(
                     name=name,
                     members={parse(m) for m in body.get("members", [])},
-                    depends_on=tuple(body.get("depends_on", [])),
                 )
                 for name, body in raw.get("slices", {}).items()
             },

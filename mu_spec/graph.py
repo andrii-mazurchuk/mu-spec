@@ -32,7 +32,14 @@ class DuplicateIdentifier(ValueError):
 @dataclasses.dataclass(frozen=True)
 class Entry:
     id: Identifier
+    # Vertical: what this entry serves, exactly one layer up.
     derives_from: tuple[Identifier, ...] = ()
+    # Horizontal: what this entry needs from its own layer. The two edge
+    # kinds answer different questions -- derives_from is justification,
+    # depends_on is order -- and conflating them was what made slice
+    # dependency guesswork. Slice-level dependency is projected from these
+    # and is never authored, so the manifest cannot drift from the truth.
+    depends_on: tuple[Identifier, ...] = ()
     # The one-line title the spine carries. Stored explicitly rather than
     # inferred, because the spine is the thing agents read to decide what to
     # load, and a title that silently changes when someone reflows a
@@ -82,9 +89,12 @@ class Graph:
         # Reverse edges, live entries only, so children() is a lookup rather
         # than a scan of every entry on every call.
         self._children: dict[Identifier, list[Identifier]] = {}
+        self._dependents: dict[Identifier, list[Identifier]] = {}
         for entry in self._live.values():
             for parent in entry.derives_from:
                 self._children.setdefault(parent, []).append(entry.id)
+            for needed in entry.depends_on:
+                self._dependents.setdefault(needed, []).append(entry.id)
 
     # -- lookup -------------------------------------------------------------
 
@@ -111,6 +121,16 @@ class Graph:
 
     def children(self, identifier: Identifier) -> tuple[Identifier, ...]:
         return tuple(sorted(self._children.get(identifier, ()), key=sort_key))
+
+    def dependencies(self, identifier: Identifier) -> tuple[Identifier, ...]:
+        """What this entry needs from its own layer."""
+        entry = self._live.get(identifier)
+        return entry.depends_on if entry else ()
+
+    def dependents(self, identifier: Identifier) -> tuple[Identifier, ...]:
+        """Which entries need this one. The re-run scope of a change: if this
+        entry's meaning moved, exactly these consumed the old meaning."""
+        return tuple(sorted(self._dependents.get(identifier, ()), key=sort_key))
 
     def ancestors(self, identifier: Identifier) -> tuple[Identifier, ...]:
         return self._walk([identifier], self.parents)
@@ -158,14 +178,23 @@ class Graph:
 
     # -- spine --------------------------------------------------------------
 
-    def spine(self) -> list[tuple[str, str, tuple[str, ...]]]:
-        """Identifier, one-line title, derives-from -- and nothing else.
+    def spine(self) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...]]]:
+        """Identifier, one-line title, and both edge kinds -- nothing else.
 
         Roughly fifteen tokens an entry. This is what gets loaded
         unconditionally, with bodies pulled by identifier only once the agent
         knows from the spine which ones it actually needs. A spine carrying
-        bodies would defeat the entire scheme."""
+        bodies would defeat the entire scheme.
+
+        Both edge kinds are here because the spine is what an agent decides
+        from. If the horizontal edges only appeared inside bodies, it would
+        have to load bodies to work out which bodies it needs."""
         return [
-            (str(e.id), e.display_title, tuple(str(d) for d in e.derives_from))
+            (
+                str(e.id),
+                e.display_title,
+                tuple(str(d) for d in e.derives_from),
+                tuple(str(d) for d in e.depends_on),
+            )
             for e in self.entries()
         ]

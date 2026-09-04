@@ -126,11 +126,15 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
-            "path. Must cite the request it serves. Validated as one "
-            "transaction: an amendment that would introduce an orphan is "
-            "refused whole, and the first entry created for a request must "
-            "sit within that request type's permitted origination depth. "
-            "Entries left unserved are reported, not refused.",
+            "path. Must cite the request it serves. Each entry needs a "
+            "'layer' and a 'title', and may carry 'body', 'derives_from' "
+            "(identifiers exactly one layer up), 'depends_on' (identifiers "
+            "in the same layer) and 'supersedes'. Validated as one "
+            "transaction: an amendment that would introduce an orphan or a "
+            "broken same-layer dependency is refused whole, and the first "
+            "entry created for a request must sit within that request "
+            "type's permitted origination depth. Entries left unserved are "
+            "reported, not refused.",
             "POST",
             "/projects/{project}/amendments",
             {
@@ -145,8 +149,10 @@ def _tools() -> list[dict[str, Any]]:
             "get_work_package",
             "The bounded context for producing code for one slice: the spec "
             "entries you may edit, the justification chain for each, "
-            "read-only context from declared dependencies, and cross-cutting "
-            "entries. Refused if the graph is unsound.",
+            "read-only context from the slices this one depends on "
+            "(projected from the entries' own edges, never declared beside "
+            "them), and cross-cutting entries. Refused if the graph is "
+            "unsound.",
             "GET",
             "/projects/{project}/work-package",
             {"project": s, "slice": s},
