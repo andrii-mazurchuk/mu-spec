@@ -294,6 +294,39 @@ real. If it only ever reports confidence, the gates are theatre.
 
 ---
 
+## 6a. Waves
+
+The order slices may be worked in, **computed, never chosen**. A slice's wave is the
+*longest* path from it to a slice that depends on nothing.
+
+Longest, not shortest, and that is the whole trick. It guarantees a slice is scheduled
+strictly after everything it needs, however long the deepest chain beneath it happens to
+be. Shortest-path would put a slice in the same wave as something it depends on the
+moment a second, longer route existed.
+
+Two properties fall out, and they are why this is worth computing rather than ordering
+by hand:
+
+- **Two slices in the same wave have no edge between them** — structurally, not usually.
+  If A depends on B, A's longest path is at least one longer, so they cannot land
+  together. Agents working one wave never need to talk to each other, and there is
+  nothing to lock.
+- **Every earlier wave is complete before the next begins**, so a wave-N agent reads its
+  dependencies as frozen artifacts. No coordination, no consistency problem.
+
+A cross-cutting slice lands in **wave 0 by construction** — the edge rules leave it no
+outbound dependency to have, so it has no path to anything. Nothing arranges this, which
+is a useful sign the edge rules are doing real work.
+
+**Diagnostics.** Every wave one slice wide means the graph is a chain and nothing can be
+done in parallel — the slices are too coupled. Reported, never acted on.
+
+Cycles are not a scheduling problem. They are an admission failure, refused at the gate.
+The scheduler still has to survive one without hanging, so anything caught in a cycle
+comes back as unschedulable rather than looping.
+
+---
+
 ## 7. Change: adding a feature
 
 A new feature originates at intent. It enters as an **intent amendment** — a new

@@ -167,6 +167,22 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "slice", "type"),
         ),
         tool(
+            "get_waves",
+            "The order the slices may be worked in, computed from the "
+            "dependency graph rather than chosen. Slices in one wave have no "
+            "edge between them, so they can be worked in parallel with "
+            "nothing to coordinate; every earlier wave is complete before the "
+            "next begins, so each reads its dependencies as frozen. A "
+            "cross-cutting slice lands in wave 0. `chain: true` means every "
+            "wave is one slice wide -- nothing can be done in parallel, and "
+            "the slices are probably too coupled. `unschedulable` is only "
+            "non-empty when the gates have already refused the graph.",
+            "GET",
+            "/projects/{project}/waves",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "get_work_package",
             "The bounded context for producing code for one slice: the spec "
             "entries you may edit, the justification chain for each, "
@@ -263,6 +279,7 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/projects$"), "list_projects"),
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
     ("GET", re.compile(rf"^/projects/{_P}/gates$"), "gates"),
+    ("GET", re.compile(rf"^/projects/{_P}/waves$"), "waves"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
     ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
     ("GET", re.compile(rf"^/projects/{_P}/review$"), "review"),
@@ -362,6 +379,9 @@ def handle(
                 JSON,
                 json.dumps(service.get_spine(store, project, query.get("layer"))),
             )
+
+        if name == "waves":
+            return 200, JSON, json.dumps(service.get_waves(store, project))
 
         if name == "gates":
             return 200, JSON, json.dumps(service.check_gates(store, project))

@@ -32,6 +32,7 @@ from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, so
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
+from mu_spec.waves import schedule
 
 COMMENTS_FILE = "comments.jsonl"
 
@@ -483,6 +484,42 @@ def get_entry(store: ProjectStore, project: str, identifier: str) -> dict:
     )
     view["children"] = [str(i) for i in graph.children(ident)]
     return view
+
+
+def get_waves(store: ProjectStore, project: str) -> dict:
+    """The order the slices may be worked in, and what may be worked at once.
+
+    Computed from the projected dependency graph, never chosen. Slices in one
+    wave have no edge between them structurally, so they can be worked in
+    parallel with nothing to coordinate and nothing to lock -- and every wave
+    below is finished before the next begins, so each agent reads its
+    dependencies as frozen.
+
+    `unschedulable` is only ever non-empty on a graph the admission gates
+    have already refused; it is reported rather than raised so the caller can
+    see which slices are caught rather than just that something is wrong.
+    """
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    sched = schedule(manifest, graph)
+    return {
+        "project": project,
+        "waves": [
+            {
+                "wave": number,
+                "slices": list(wave),
+                # Repeated per wave because this is what a scheduler acts on:
+                # how many agents it may run at once, right here.
+                "width": len(wave),
+            }
+            for number, wave in enumerate(sched.waves)
+        ],
+        "wave_of": sched.wave_of(),
+        "unschedulable": list(sched.unschedulable),
+        # Every wave one slice wide means nothing can be done in parallel --
+        # the slices are too coupled. Reported, never acted on.
+        "chain": sched.chain,
+    }
 
 
 def check_gates(store: ProjectStore, project: str) -> dict:

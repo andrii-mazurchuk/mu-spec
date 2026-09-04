@@ -1241,3 +1241,36 @@ def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):
     )
     assert (status, payload["admitted"]) == (409, False)
     assert "not cross-cutting" in payload["findings"][0]["detail"]
+
+
+# -- waves -------------------------------------------------------------------
+
+
+def test_waves_are_computed_from_the_dependency_graph(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    _, payload = call(store, prompts, "GET", "/projects/m/waves")
+    assert payload["waves"] == [
+        {"wave": 0, "slices": ["listings"], "width": 1},
+        {"wave": 1, "slices": ["payouts"], "width": 1},
+    ]
+    assert payload["wave_of"] == {"listings": 0, "payouts": 1}
+    assert payload["unschedulable"] == []
+    assert payload["chain"] is True
+
+
+def test_independent_slices_share_a_wave(store, prompts):
+    _two_columns(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/waves")
+    assert payload["waves"] == [
+        {"wave": 0, "slices": ["listings", "payouts"], "width": 2}
+    ]
+    assert payload["chain"] is False
+
+
+def test_a_cross_cutting_slice_is_in_wave_zero(store, prompts):
+    mid = seed(store, prompts)
+    _audit_column(store, prompts, mid)
+    _, payload = call(store, prompts, "GET", "/projects/m/waves")
+    assert payload["wave_of"]["audit"] == 0

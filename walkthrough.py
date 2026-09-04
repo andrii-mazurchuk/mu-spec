@@ -468,6 +468,25 @@ def main(argv=None) -> int:
     print("\n  payouts never mentioned audit. Its work package carries it anyway:")
     show("cross_cutting", [e["id"] + " " + e["slice"] for e in wp_cc["cross_cutting"]])
 
+    # --------------------------------------------------------------- 5c
+    step("5c.", "WAVES — the order, computed rather than chosen")
+    _, w = call("GET", f"/projects/{P}/waves")
+    for row in w["waves"]:
+        print(
+            f"    wave {row['wave']}  width {row['width']}  "
+            f"{', '.join(row['slices'])}"
+        )
+    print("\n  audit is in wave 0 and nothing put it there. The edge rules")
+    print("  leave a concern no outbound dependency to have, so it has no path")
+    print("  to anything -- wave 0 falls out rather than being arranged.")
+    print("\n  Slices in one wave have no edge between them, structurally, so")
+    print("  agents working a wave never need to talk to each other and there")
+    print("  is nothing to lock. Every earlier wave is finished first, so each")
+    print("  one reads its dependencies as frozen artifacts.")
+    if w["chain"]:
+        print("\n  chain=true: every wave is one slice wide, so nothing can be")
+        print("  done in parallel. A signal that the slices are too coupled.")
+
     # ---------------------------------------------------------------- 6
     step("6.", "REVIEW THE FINAL LAYER")
     _, review = call("GET", f"/projects/{P}/review?layer=A&slice=discovery")

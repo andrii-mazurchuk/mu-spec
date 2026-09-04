@@ -52,6 +52,7 @@ which calls this one.
 | Spine generation; retrieval of bodies by identifier | Deciding which entries a task needs |
 | Admission gates: orphans, broken same-layer edges, slice cycles, cross-cutting reaching into a feature slice, unserved requirements | Judgement gates: flagging what could not be derived |
 | Blast radius; spec-diff → write set / read set | Classifying a correction to its layer |
+| Wave assignment: the order slices may be worked in, from the projected graph | Deciding a slice is worth working at all |
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |
 
 The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
