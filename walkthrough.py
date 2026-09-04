@@ -443,7 +443,7 @@ def main(argv=None) -> int:
     for path in sorted(root.rglob("*")):
         if path.is_file():
             print(f"    {path.relative_to(root)}  ({path.stat().st_size} bytes)")
-    sample = root / P / "spec" / "discovery.md"
+    sample = root / P / "spec" / "discovery.jsonl"
     if sample.exists():
         print(f"\n  ---- {sample.relative_to(root)} ----")
         print("".join(f"  | {line}" for line in sample.read_text(encoding="utf-8").splitlines(True)))

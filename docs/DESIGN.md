@@ -158,32 +158,37 @@ Plain filesystem is correct, but only because there is an index on top of it. Th
 is storage; it is not retrieval.
 
 ```
-manifest.md                  slices, identifier membership set, declared dependencies
-intent.md
-spine/
-  behaviour.md               id · one-line title · derives-from
-  architecture.md
-  spec.md
+manifest.json                slices, identifier membership sets
+intent.jsonl
 behaviour/
-  listings.md
-  discovery.md
-  messaging.md
-  cross-cutting.md
+  listings.jsonl
+  discovery.jsonl
+  messaging.jsonl
+  audit.jsonl                a cross-cutting slice is filed like any other
 architecture/
-  listings.md  …
+  listings.jsonl  …
 spec/
-  listings.md  …
+  listings.jsonl  …
 history/
-  amendments-*.md            never loaded by default
+  amendments-*.jsonl         never loaded by default
 ```
 
 **One file per slice per layer.** Not one file per entry — per-file overhead in a read
 tool kills you at fifty reads. Not one file per layer — large systems drown the context.
 
-**Spines are the load-bearing idea.** One file per layer listing only identifier,
-one-line title and derives-from. Roughly fifteen tokens per entry. The agent loads
-spines unconditionally, then pulls full entry bodies **by identifier, on demand**, once
-it knows from the spine which ones it needs.
+**Entries are JSON Lines, not prose.** An entry is a record with a fixed set of
+structural fields, and the edges are the load-bearing part. A prose format makes every
+new structural field a new regex and a new way to be silently misparsed.
+
+**Spines are the load-bearing idea.** Per layer: identifier, one-line title and edges,
+roughly fifteen tokens per entry. The agent loads spines unconditionally, then pulls
+full entry bodies **by identifier, on demand**, once it knows from the spine which ones
+it needs.
+
+Spines are **computed from the entries on every read, never stored**. A stored spine is
+a second copy of the edges that can drift from the first, and drift in the index is the
+one thing this whole design cannot tolerate. Nothing outside this unit reads the tree
+anyway — retrieval arrives over the API.
 
 Typical session load: manifest, all spines, target column's full entries, declared
 dependency columns' spines only, cross-cutting spine. Full bodies only for the blast

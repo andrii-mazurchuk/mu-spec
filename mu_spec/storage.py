@@ -6,27 +6,27 @@ thing: the on-disk *format* of an entry, and the *layout* of a project.
 Layout, per the design doc:
 
     <root>/<project>/
-      manifest.json          slices, membership sets, declared dependencies,
-                             and the identifier high-water marks
-      intent.md              intent is not sliced -- short by nature, everyone
-                             reads it
-      behaviour/<slice>.md   one file per slice per layer. Not one file per
-      architecture/<slice>.md  entry (per-file overhead kills you at fifty
-      spec/<slice>.md          reads); not one file per layer (large systems
-                               drown the context)
+      manifest.json            slices, membership sets, and the identifier
+                               high-water marks
+      intent.jsonl             intent is not sliced -- short by nature,
+                               everyone reads it
+      behaviour/<slice>.jsonl  one file per slice per layer. Not one file per
+      architecture/<slice>.jsonl  entry (per-file overhead kills you at fifty
+      spec/<slice>.jsonl          reads); not one file per layer (large
+                                  systems drown the context)
       history/               amendment log, never loaded by default
 
-The manifest is JSON rather than the design doc's markdown: it is the unit's
-own bookkeeping -- membership sets and high-water marks it maintains and
-must parse exactly -- not human prose. Everything a human reads or edits
-stays markdown.
+Entries are JSON Lines: one object per line, one file per slice per layer.
+Not markdown. An entry is a record with a fixed set of structural fields --
+identifier, edges, title, body -- and the edges are the load-bearing part.
+A prose format makes every new structural field a new regex and a new way to
+be silently misparsed, and the field list is still growing.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
-import re
 from pathlib import Path
 
 from mu_spec.graph import Entry, Graph
@@ -40,13 +40,9 @@ from mu_spec.identifiers import (
 
 INTENT_LAYER = "I"
 LAYER_DIRS = {"B": "behaviour", "A": "architecture", "S": "spec"}
-INTENT_FILE = "intent.md"
+INTENT_FILE = "intent.jsonl"
 MANIFEST_FILE = "manifest.json"
 CROSS_CUTTING = "cross-cutting"
-
-# "## B·14 · A buyer can search listings"
-_HEADING = re.compile(r"^##\s+(\S+)\s+·\s+(.+?)\s*$")
-_META = re.compile(r"^(derives-from|supersedes):\s*(.*?)\s*$")
 
 
 class MalformedEntryFile(ValueError):
@@ -62,89 +58,80 @@ class UnknownProject(KeyError):
 # -- the file format --------------------------------------------------------
 
 
+def _ids(raw, field: str, where: str) -> tuple[Identifier, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise MalformedEntryFile(f"{where}: {field} must be a list")
+    try:
+        return tuple(parse(str(x)) for x in raw)
+    except InvalidIdentifier as exc:
+        raise MalformedEntryFile(f"{where}: {field}: {exc}") from exc
+
+
 def parse_entries(text: str) -> list[Entry]:
-    """Parse every entry in one file. Content before the first heading is
-    ignored -- files carry a human-facing title line, and it is not an
-    entry."""
+    """Parse every entry in one file: one JSON object per line.
+
+    Blank lines are skipped; anything else that is not a well-formed entry is
+    a hard error. Storage never silently drops an entry, because a dropped
+    entry means the graph comes back missing an edge.
+    """
     entries: list[Entry] = []
-    current: dict | None = None
-    body: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        where = f"line {number}"
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise MalformedEntryFile(f"{where}: not valid JSON: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise MalformedEntryFile(f"{where}: expected an object")
+        if "id" not in raw:
+            raise MalformedEntryFile(f"{where}: entry has no 'id'")
+        try:
+            identifier = parse(str(raw["id"]))
+        except InvalidIdentifier as exc:
+            raise MalformedEntryFile(f"{where}: {exc}") from exc
 
-    def flush() -> None:
-        if current is not None:
-            entries.append(
-                Entry(
-                    id=current["id"],
-                    derives_from=current["derives_from"],
-                    title=current["title"],
-                    body="\n".join(body).strip() + "\n" if body else "",
-                    supersedes=current["supersedes"],
-                )
+        supersedes = raw.get("supersedes")
+        entries.append(
+            Entry(
+                id=identifier,
+                derives_from=_ids(raw.get("derives_from"), "derives_from", where),
+                title=str(raw.get("title", "")),
+                body=str(raw.get("body", "")),
+                supersedes=(
+                    _ids([supersedes], "supersedes", where)[0]
+                    if supersedes is not None
+                    else None
+                ),
             )
-
-    for line in text.splitlines():
-        heading = _HEADING.match(line)
-        if heading:
-            flush()
-            body = []
-            try:
-                identifier = parse(heading.group(1))
-            except InvalidIdentifier as exc:
-                raise MalformedEntryFile(str(exc)) from exc
-            current = {
-                "id": identifier,
-                "title": heading.group(2),
-                "derives_from": (),
-                "supersedes": None,
-            }
-            continue
-
-        if current is None:
-            # Preamble: a human-facing file title, notes. Not an entry.
-            if line.startswith("## "):
-                raise MalformedEntryFile(f"heading without a title separator: {line!r}")
-            continue
-
-        meta = _META.match(line) if not body else None
-        if meta:
-            key, raw = meta.group(1), meta.group(2)
-            try:
-                if key == "derives-from":
-                    current["derives_from"] = tuple(
-                        parse(p.strip()) for p in raw.split(",") if p.strip()
-                    )
-                else:
-                    current["supersedes"] = parse(raw) if raw else None
-            except InvalidIdentifier as exc:
-                raise MalformedEntryFile(f"in {current['id']}: {exc}") from exc
-            continue
-
-        if line.strip() or body:
-            body.append(line)
-
-    if current is None and "## " in text:
-        raise MalformedEntryFile("heading without a title separator")
-    flush()
+        )
     return entries
 
 
-def render_entries(entries: list[Entry], header: str = "") -> str:
+def render_entries(entries: list[Entry]) -> str:
     """Serialise entries back to the file format. Round-trips with
-    parse_entries."""
-    out: list[str] = [f"# {header}\n"] if header else []
+    parse_entries.
+
+    Defaulted fields are omitted rather than written as empty, so a file
+    stays readable and a new field arriving later does not rewrite every
+    existing line.
+    """
+    out: list[str] = []
     for entry in sorted(entries, key=lambda e: sort_key(e.id)):
-        out.append(f"## {entry.id} · {entry.display_title}")
+        record: dict = {"id": str(entry.id)}
         if entry.derives_from:
-            out.append(
-                "derives-from: " + ", ".join(str(d) for d in entry.derives_from)
-            )
+            record["derives_from"] = [str(d) for d in entry.derives_from]
+        if entry.title:
+            record["title"] = entry.title
+        if entry.body:
+            record["body"] = entry.body
         if entry.supersedes is not None:
-            out.append(f"supersedes: {entry.supersedes}")
-        out.append("")
-        if entry.body.strip():
-            out.append(entry.body.strip())
-            out.append("")
-    return "\n".join(out)
+            record["supersedes"] = str(entry.supersedes)
+        out.append(json.dumps(record, ensure_ascii=False))
+    return "\n".join(out) + "\n" if out else ""
 
 
 # -- the manifest -----------------------------------------------------------
@@ -240,9 +227,7 @@ class ProjectStore:
             raise FileExistsError(f"project {project!r} already exists")
         for sub in ("behaviour", "architecture", "spec", "history"):
             (path / sub).mkdir(parents=True, exist_ok=True)
-        (path / INTENT_FILE).write_text(
-            f"# intent — {project}\n", encoding="utf-8"
-        )
+        (path / INTENT_FILE).write_text("", encoding="utf-8")
         self._write_manifest(path, Manifest(project=project))
 
     # -- manifest -----------------------------------------------------------
@@ -280,7 +265,7 @@ class ProjectStore:
             return path / INTENT_FILE
         if not slice_name:
             raise ValueError(f"layer {layer!r} is sliced -- a slice name is required")
-        return path / LAYER_DIRS[layer] / f"{slice_name}.md"
+        return path / LAYER_DIRS[layer] / f"{slice_name}.jsonl"
 
     def _read_file(self, path: Path) -> list[Entry]:
         if not path.exists():
@@ -307,9 +292,7 @@ class ProjectStore:
         for path, new in by_file.items():
             merged = self._read_file(path) + new
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                render_entries(merged, header=path.stem), encoding="utf-8"
-            )
+            path.write_text(render_entries(merged), encoding="utf-8")
 
         if slice_name:
             manifest = self.load_manifest(project)
@@ -323,7 +306,7 @@ class ProjectStore:
         for layer_dir in LAYER_DIRS.values():
             directory = path / layer_dir
             if directory.exists():
-                for file in sorted(directory.glob("*.md")):
+                for file in sorted(directory.glob("*.jsonl")):
                     entries.extend(self._read_file(file))
         return entries
 
@@ -378,6 +361,4 @@ class ProjectStore:
                 path = self._file_for(project, layer, name)
                 if members or path.exists():
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(
-                        render_entries(members, header=path.stem), encoding="utf-8"
-                    )
+                    path.write_text(render_entries(members), encoding="utf-8")

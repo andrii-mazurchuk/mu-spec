@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mu_spec.graph import Entry
@@ -12,19 +14,30 @@ from mu_spec.storage import (
     render_entries,
 )
 
-SAMPLE = """\
-## B·14 · A buyer can search listings
-derives-from: I·01, I·03
-
-Given a query string, the system returns matching listings
-ranked by relevance.
-
-## B·15 · A buyer can filter by price
-derives-from: I·01
-supersedes: B·09
-
-Filters narrow an existing result set.
-"""
+SAMPLE = "\n".join(
+    [
+        json.dumps(
+            {
+                "id": "B·14",
+                "derives_from": ["I·01", "I·03"],
+                "title": "A buyer can search listings",
+                "body": "Given a query string, the system returns matching "
+                "listings\nranked by relevance.",
+            },
+            ensure_ascii=False,
+        ),
+        json.dumps(
+            {
+                "id": "B·15",
+                "derives_from": ["I·01"],
+                "title": "A buyer can filter by price",
+                "body": "Filters narrow an existing result set.",
+                "supersedes": "B·09",
+            },
+            ensure_ascii=False,
+        ),
+    ]
+) + "\n"
 
 
 # -- the file format --------------------------------------------------------
@@ -35,7 +48,7 @@ def test_parses_multiple_entries_from_one_file():
     assert [str(e.id) for e in entries] == ["B·14", "B·15"]
 
 
-def test_parses_title_from_the_heading():
+def test_parses_the_title():
     assert parse_entries(SAMPLE)[0].title == "A buyer can search listings"
 
 
@@ -49,17 +62,19 @@ def test_parses_supersedes_when_present_and_none_when_absent():
     assert str(entries[1].supersedes) == "B·09"
 
 
-def test_body_excludes_the_heading_and_the_metadata_lines():
+def test_body_carries_only_the_body():
     body = parse_entries(SAMPLE)[0].body
     assert body.startswith("Given a query string")
-    assert "derives-from" not in body
+    assert "derives_from" not in body
     assert "B·14" not in body
 
 
-def test_an_entry_with_no_derives_from_line_parses_with_no_parents():
-    """Intent entries derive from nothing, so the line is absent entirely
+def test_an_entry_with_no_derives_from_parses_with_no_parents():
+    """Intent entries derive from nothing, so the field is absent entirely
     rather than present and empty."""
-    entries = parse_entries("## I·01 · Buyers can find sellers\n\nThe problem.\n")
+    entries = parse_entries(
+        '{"id": "I·01", "title": "Buyers can find sellers", "body": "The problem."}\n'
+    )
     assert entries[0].derives_from == ()
 
 
@@ -74,10 +89,10 @@ def test_round_trips_through_render():
     ]
 
 
-def test_content_outside_any_entry_heading_is_ignored():
-    """Files carry a human-facing title line at the top. It is not an entry
-    and must not become one."""
-    text = "# behaviour — listings\n\nNotes for humans.\n\n" + SAMPLE
+def test_blank_lines_are_skipped():
+    """A trailing newline, or padding between records, must not become a
+    parse failure."""
+    text = "\n" + SAMPLE.replace("\n", "\n\n")
     assert [str(e.id) for e in parse_entries(text)] == ["B·14", "B·15"]
 
 
@@ -88,10 +103,13 @@ def test_an_empty_file_yields_no_entries():
 @pytest.mark.parametrize(
     "text",
     [
-        "## B·14\n\nno title separator\n",
-        "## not-an-identifier · title\n\nbody\n",
-        "## B·14 · title\nderives-from: nonsense\n\nbody\n",
-        "## B·14 · title\nsupersedes: nonsense\n\nbody\n",
+        "not json at all\n",
+        '["B·14", "a list, not an object"]\n',
+        '{"title": "no id"}\n',
+        '{"id": "not-an-identifier"}\n',
+        '{"id": "B·14", "derives_from": "I·01"}\n',
+        '{"id": "B·14", "derives_from": ["nonsense"]}\n',
+        '{"id": "B·14", "supersedes": "nonsense"}\n',
     ],
 )
 def test_a_malformed_entry_is_a_hard_error(text):
@@ -110,7 +128,7 @@ def test_creating_a_project_lays_out_its_directories(tmp_path):
     store.create_project("marketplace")
     root = tmp_path / "marketplace"
     assert (root / "manifest.json").exists()
-    assert (root / "intent.md").exists()
+    assert (root / "intent.jsonl").exists()
     assert store.list_projects() == ["marketplace"]
 
 
@@ -190,7 +208,7 @@ def test_intent_lives_in_one_unsliced_file(tmp_path):
     store = ProjectStore(tmp_path)
     store.create_project("m")
     store.append("m", [Entry(id=parse("I·01"), title="Buyers find sellers")])
-    assert "I·01" in (tmp_path / "m" / "intent.md").read_text(encoding="utf-8")
+    assert "I·01" in (tmp_path / "m" / "intent.jsonl").read_text(encoding="utf-8")
 
 
 def test_sliced_layers_write_one_file_per_slice_per_layer(tmp_path):
@@ -200,8 +218,8 @@ def test_sliced_layers_write_one_file_per_slice_per_layer(tmp_path):
     store.create_project("m")
     store.append("m", [Entry(id=parse("B·01"), title="a")], slice_name="listings")
     store.append("m", [Entry(id=parse("B·02"), title="b")], slice_name="discovery")
-    assert (tmp_path / "m" / "behaviour" / "listings.md").exists()
-    assert (tmp_path / "m" / "behaviour" / "discovery.md").exists()
+    assert (tmp_path / "m" / "behaviour" / "listings.jsonl").exists()
+    assert (tmp_path / "m" / "behaviour" / "discovery.jsonl").exists()
 
 
 def test_appending_preserves_entries_already_in_the_file(tmp_path):
