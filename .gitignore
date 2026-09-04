@@ -12,8 +12,12 @@ peers.json
 cost_policy.json
 delivery_policy.json
 
-# this unit's own private storage
+# this unit's own private storage -- projects, entries, the inbox log
 state/
+
+# what `walkthrough.py --keep ./demo` leaves behind: a generated project
+# tree, rebuilt on every run and never worth committing
+demo/
 
 # not a uv project -- pip + pyproject only
 uv.lock
