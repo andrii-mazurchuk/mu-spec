@@ -976,3 +976,133 @@ def test_an_unknown_slice_type_is_a_caller_error(store, prompts):
     )
     assert status == 400
     assert "unknown slice type" in payload["error"]
+
+
+# -- slice-level gates, end to end -------------------------------------------
+
+
+def _spec_in(store, prompts, mid, slice_name, title, parent, depends_on=None):
+    entry = {"layer": "S", "title": title, "derives_from": [parent]}
+    if depends_on:
+        entry["depends_on"] = depends_on
+    return call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {"slice": slice_name, "in_response_to": mid, "entries": [entry]},
+    )
+
+
+def _two_columns(store, prompts):
+    """listings (S·01) and payouts (S·02), no dependency between them yet."""
+    mid = seed(store, prompts)
+    for layer, title, parent in (
+        ("B", "A seller is paid out", "I·01"),
+        ("A", "Payouts run nightly", "B·02"),
+        ("S", "Use the ledger module", "A·02"),
+    ):
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": "payouts",
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": layer, "title": title, "derives_from": [parent]}
+                ],
+            },
+        )
+    return mid
+
+
+def test_an_amendment_closing_a_slice_cycle_is_refused(store, prompts):
+    """payouts already depends on listings. A listings entry that depends
+    back on payouts would leave neither derivable first."""
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    status, payload = _spec_in(
+        store, prompts, mid, "listings", "index reads the ledger", "A·01",
+        depends_on=["S·02"],
+    )
+    assert (status, payload["admitted"]) == (409, False)
+    finding = payload["slice_findings"][0]
+    assert finding["kind"] == "dependency_cycle"
+    assert "listings -> payouts -> listings" in finding["detail"]
+    assert "pull the shared part out" in finding["detail"]
+
+
+def test_a_one_way_dependency_between_slices_is_admitted(store, prompts):
+    mid = _two_columns(store, prompts)
+    status, payload = _spec_in(
+        store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+        depends_on=["S·01"],
+    )
+    assert (status, payload["admitted"]) == (200, True)
+    assert payload["gates"]["slice_findings"] == []
+
+
+def test_a_cross_cutting_slice_reaching_into_a_feature_slice_is_refused(store, prompts):
+    mid = seed(store, prompts)
+    for layer, title, parent in (
+        ("B", "Every state change is recorded", "I·01"),
+        ("A", "An append-only event log", "B·02"),
+    ):
+        call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": "audit",
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": layer, "title": title, "derives_from": [parent]}
+                ],
+            },
+        )
+    call(store, prompts, "POST", "/projects/m/slices/audit/type",
+         {"type": "cross_cutting"})
+    status, payload = _spec_in(
+        store, prompts, mid, "audit", "audit/log.py reads the listing", "A·02",
+        depends_on=["S·01"],
+    )
+    assert (status, payload["admitted"]) == (409, False)
+    assert payload["slice_findings"][0]["kind"] == "cross_cutting_outbound"
+
+
+def test_classifying_a_slice_that_already_reaches_out_is_refused(store, prompts):
+    """The same rule, through the other door. payouts depends on listings, so
+    it cannot be declared cross-cutting after the fact."""
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    status, payload = call(
+        store, prompts, "POST", "/projects/m/slices/payouts/type",
+        {"type": "cross_cutting"},
+    )
+    assert status == 409
+    assert payload["slice_findings"][0]["kind"] == "cross_cutting_outbound"
+    assert store.load_manifest("m").cross_cutting() == ()
+
+
+def test_no_work_package_is_issued_while_slices_cycle(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    # Build the cycle behind the gate's back, the way a bad import would.
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse as pid
+
+    store.append(
+        "m",
+        [Entry(id=pid("S·09"), derives_from=(pid("A·01"),), title="back-edge",
+               depends_on=(pid("S·02"),))],
+        slice_name="listings",
+    )
+    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    assert wp["issued"] is False
+    assert wp["gates"]["slice_findings"][0]["kind"] == "dependency_cycle"

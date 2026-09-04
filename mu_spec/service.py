@@ -30,7 +30,8 @@ from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
-from mu_spec.storage import ProjectStore
+from mu_spec.slice_gates import slice_gates
+from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
 
 COMMENTS_FILE = "comments.jsonl"
 
@@ -56,29 +57,39 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
     return view
 
 
-def _gate_report(graph: Graph) -> dict[str, Any]:
+def _gate_report(graph: Graph, manifest: Manifest | None = None) -> dict[str, Any]:
     """Two different questions, reported separately because they have
     different consequences.
 
-    `sound` -- no orphans, no bad dependencies. A graph containing a claim
-    that derives from nothing, or that needs something retired or
-    nonexistent, is broken now. This blocks: amendments are refused and work
+    `sound` -- no orphans, no bad dependencies, and no slice-level finding.
+    A graph containing a claim that derives from nothing, that needs
+    something retired or nonexistent, or that is cut into slices which need
+    each other, is broken now. This blocks: amendments are refused and work
     packages are not issued.
 
     `complete` -- nothing unserved. Knowledge has been carried all the way
     down to spec on every branch. This does NOT block; being incomplete is
     the ordinary state of a project mid-propagation, and it is the report of
     what is left to do rather than a defect.
+
+    The two lists stay apart because they are about different things: an
+    entry-level finding names an identifier, a slice-level one names a slice,
+    and flattening them would mean one of the two carried a null where the
+    other carries the thing you need to go and fix.
     """
     findings = admission_gates(graph)
+    slice_findings = slice_gates(manifest, graph) if manifest is not None else []
     return {
-        "sound": not any(
-            f.kind in (ORPHAN, BAD_DEPENDENCY) for f in findings
-        ),
+        "sound": not any(f.kind in (ORPHAN, BAD_DEPENDENCY) for f in findings)
+        and not slice_findings,
         "complete": not findings,
-        "clean": not findings,
+        "clean": not findings and not slice_findings,
         "findings": [
             {"kind": f.kind, "id": str(f.id), "detail": f.detail} for f in findings
+        ],
+        "slice_findings": [
+            {"kind": f.kind, "slice": f.slice, "detail": f.detail}
+            for f in slice_findings
         ],
     }
 
@@ -223,7 +234,11 @@ def submit_amendment(
 
     existing = store.load_all(project)
     manifest = store.load_manifest(project)
-    before = {(f["kind"], f["id"]) for f in _gate_report(Graph(existing))["findings"]}
+    report_before = _gate_report(Graph(existing), manifest)
+    before = {(f["kind"], f["id"]) for f in report_before["findings"]}
+    before_slices = {
+        (f["kind"], f["slice"]) for f in report_before["slice_findings"]
+    }
 
     # Allocate against a copy of the high-water marks first, so a rejected
     # amendment does not burn identifiers.
@@ -307,6 +322,35 @@ def submit_amendment(
                 {"kind": f.kind, "id": str(f.id), "detail": f.detail}
                 for f in blocking
             ],
+            "slice_findings": [],
+        }
+
+    # The slice-level checks need the membership this amendment would create,
+    # which does not exist yet -- membership is recorded on write, and the
+    # write is what is being decided. So they run against a copy of the
+    # manifest with the staged identifiers already filed. Deciding on the
+    # current manifest instead would mean an amendment could only ever be
+    # caught creating a cycle one write *after* it created one.
+    prospective_manifest = Manifest.from_json(manifest.to_json())
+    if slice_name:
+        target = prospective_manifest.slices.setdefault(
+            slice_name, Slice(name=slice_name)
+        )
+        target.members.update(e.id for e in staged)
+    new_slice_findings = [
+        f
+        for f in slice_gates(prospective_manifest, prospective)
+        if (f.kind, f.slice) not in before_slices
+    ]
+    if new_slice_findings:
+        return {
+            "admitted": False,
+            "reason": "amendment would break the slice structure",
+            "findings": [],
+            "slice_findings": [
+                {"kind": f.kind, "slice": f.slice, "detail": f.detail}
+                for f in new_slice_findings
+            ],
         }
 
     for entry in staged:
@@ -332,7 +376,7 @@ def submit_amendment(
                 [e.supersedes for e in staged if e.supersedes is not None]
             )
         ],
-        "gates": _gate_report(after),
+        "gates": _gate_report(after, store.load_manifest(project)),
     }
 
 
@@ -346,15 +390,49 @@ def classify_slice(
     name a domain object someone else owns -- and a human rules on it. What
     the unit does is record the ruling and make it structural, because the
     type is what decides whose context this slice's entries land in.
+
+    Checked before it is written, and refused if the ruling would contradict
+    edges that already exist. A slice already reaching into a feature slice
+    cannot be declared cross-cutting after the fact -- otherwise this is a
+    back door to the state the amendment path refuses to create, reached by
+    building the edges first and relabelling afterwards.
     """
-    try:
-        store.set_slice_type(project, slice_name, body.get("type", ""))
-    except ValueError as exc:
-        raise ServiceError(str(exc)) from exc
+    requested = body.get("type", "")
+    manifest = store.load_manifest(project)
+    if requested not in SLICE_TYPES:
+        raise ServiceError(
+            f"unknown slice type {requested!r}, expected one of {SLICE_TYPES}"
+        )
+    if slice_name not in manifest.slices:
+        raise ServiceError(f"unknown slice {slice_name!r}")
+
+    graph = store.load_graph(project)
+    before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
+    prospective = Manifest.from_json(manifest.to_json())
+    prospective.slices[slice_name].type = requested
+    conflicts = [
+        f
+        for f in slice_gates(prospective, graph)
+        if (f.kind, f.slice) not in before
+    ]
+    if conflicts:
+        return {
+            "project": project,
+            "slice": slice_name,
+            "recorded": False,
+            "reason": "the ruling contradicts edges that already exist",
+            "slice_findings": [
+                {"kind": f.kind, "slice": f.slice, "detail": f.detail}
+                for f in conflicts
+            ],
+        }
+
+    store.set_slice_type(project, slice_name, requested)
     manifest = store.load_manifest(project)
     return {
         "project": project,
         "slice": slice_name,
+        "recorded": True,
         "type": manifest.slices[slice_name].type,
         "cross_cutting": list(manifest.cross_cutting()),
     }
@@ -403,7 +481,10 @@ def get_entry(store: ProjectStore, project: str, identifier: str) -> dict:
 
 
 def check_gates(store: ProjectStore, project: str) -> dict:
-    return {"project": project, **_gate_report(store.load_graph(project))}
+    return {
+        "project": project,
+        **_gate_report(store.load_graph(project), store.load_manifest(project)),
+    }
 
 
 # -- 5. retrieve the final layer, for producing code ------------------------
@@ -446,7 +527,7 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
         raise ServiceError(f"unknown slice {slice_name!r}")
 
     graph = store.load_graph(project)
-    gates = _gate_report(graph)
+    gates = _gate_report(graph, manifest)
     if not gates["sound"]:
         return {
             "project": project,
@@ -566,5 +647,5 @@ def review_layer(
         "layer": layer,
         "slice": slice_name,
         "entries": rows,
-        "gates": _gate_report(graph),
+        "gates": _gate_report(graph, manifest),
     }

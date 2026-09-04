@@ -152,7 +152,10 @@ def _tools() -> list[dict[str, Any]]:
             "lands in every other slice's work package without anything "
             "declaring a dependency on it, because its behaviour ranges over "
             "the other slices rather than naming a subject of its own. The "
-            "unit records this ruling; it does not make it.",
+            "unit records this ruling; it does not make it -- but it refuses "
+            "one that contradicts edges that already exist, so a slice "
+            "already reaching into a feature slice cannot be relabelled "
+            "cross-cutting after the fact.",
             "POST",
             "/projects/{project}/slices/{slice}/type",
             {"project": s, "slice": s, "type": s},
@@ -369,15 +372,10 @@ def handle(
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
 
         if name == "classify_slice":
-            return (
-                200,
-                JSON,
-                json.dumps(
-                    service.classify_slice(
-                        store, project, match.group("slice"), body or {}
-                    )
-                ),
+            result = service.classify_slice(
+                store, project, match.group("slice"), body or {}
             )
+            return (200 if result["recorded"] else 409), JSON, json.dumps(result)
 
         if name == "work_package":
             if not query.get("slice"):

@@ -239,11 +239,30 @@ If history lives alongside live entries, every read pays for every past mistake.
 A gate is not "human approves layer" — that produces rubber-stamping within days. A
 gate is a decision on a specific question about a specific node.
 
-**Admission gates** — mechanical, run by the agent, human sees only failures:
-- Does every entry below trace to something above? (orphans)
+**Admission gates** — mechanical, run by the agent, human sees only failures. They
+split along one axis that matters: **sound** blocks, **complete** only reports.
+
+*Sound — a graph in this state is broken now, so amendments are refused and no work
+package is issued:*
+- Does every entry below trace to something exactly one layer above? (orphans)
+- Does every same-layer edge point at a live entry in the same layer? (bad dependencies)
+- Is the projected slice dependency graph acyclic? (bad slicing — see below)
+- Does any cross-cutting slice depend on a feature slice? (misclassification)
+
+*Complete — the report of what is left to do, never a blocker:*
 - Does every entry above have at least one entry below serving it? (unserved
   requirements)
-- Does any dependency arrow point backwards against a declared direction? (bad slicing)
+
+Blocking on completeness too would make every legitimate propagation illegal, because a
+half-propagated layer is always incomplete. Blocking on neither makes the gate
+decorative.
+
+**A slice cycle is not a scheduling problem.** The entry graph can never cycle —
+`derives_from` runs strictly one layer up and `depends_on` strictly within a layer — so
+a cycle at slice level is always about how entries were *grouped*. The cut is wrong.
+The remedy is to pull the shared part out into a slice they both depend on; merging is
+not available, because slices split and never merge. Caught while the slicing is still
+a proposal, that remedy is free.
 
 **Judgement gates** — the agent must flag, *as it works*, every call it could not
 derive: a tradeoff, an ambiguity in intent, a decision with more than one defensible

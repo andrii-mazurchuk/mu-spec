@@ -91,8 +91,10 @@ def gates(project: str) -> dict:
     state += " / COMPLETE" if payload["complete"] else " / incomplete"
     print(f"\n  GATES: {state}")
     for f in payload["findings"]:
-        print(f"    - {f['kind']:9} {f['id']:7} {f['detail']}")
-    if not payload["findings"]:
+        print(f"    - {f['kind']:14} {f['id']:7} {f['detail']}")
+    for f in payload.get("slice_findings", []):
+        print(f"    - {f['kind']:14} {f['slice']:7} {f['detail']}")
+    if not payload["findings"] and not payload.get("slice_findings"):
         print("    (no findings)")
     return payload
 

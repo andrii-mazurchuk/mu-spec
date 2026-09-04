@@ -49,7 +49,7 @@ which calls this one.
 |---|---|
 | Storing entries; enforcing identifier permanence and append-only history | Authoring entry bodies |
 | Spine generation; retrieval of bodies by identifier | Deciding which entries a task needs |
-| Admission gates: orphans, unserved requirements, backwards arrows | Judgement gates: flagging what could not be derived |
+| Admission gates: orphans, broken same-layer edges, slice cycles, cross-cutting reaching into a feature slice, unserved requirements | Judgement gates: flagging what could not be derived |
 | Blast radius; spec-diff → write set / read set | Classifying a correction to its layer |
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |
 
