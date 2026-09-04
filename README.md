@@ -133,9 +133,9 @@ Add to the gateway's `units.yaml`:
 ```yaml
   - name: mu-spec
     source:
-      git_url: https://github.com/lainiwakuraagent-lgtm/mu-spec.git
+      git_url: https://github.com/andrii-mazurchuk/mu_spec.git
       ref: main
-    local_path: units/mu-spec
+    local_path: ../units/mu-spec
     lifecycle: persistent
     base_url: http://127.0.0.1:9006
     unit_type: memory
