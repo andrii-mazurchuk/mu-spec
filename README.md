@@ -155,7 +155,7 @@ Add to the gateway's `units.yaml`:
 ```yaml
   - name: mu-spec
     source:
-      git_url: https://github.com/andrii-mazurchuk/mu_spec.git
+      git_url: https://github.com/andrii-mazurchuk/mu-spec.git
       ref: main
     local_path: ../units/mu-spec
     lifecycle: persistent
