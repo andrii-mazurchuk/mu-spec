@@ -681,6 +681,93 @@ def main(argv=None) -> int:
 
     # ---------------------------------------------------------------- 9
     # ---------------------------------------------------------------- 9
+    step("8c.", "WHAT CAN BE LEARNED — reported, never enforced")
+    print("  Nothing in this step gates anything. Every existing gate blocks")
+    print("  on something definitionally broken; everything here is a proxy")
+    print("  for a question nobody can answer yet, and baking a proxy into")
+    print("  the one place the system is certain would be the worst trade in")
+    print("  the design.\n")
+
+    _, ins = call("GET", f"/projects/{P}/insights")
+    cl = ins["change_locality"]
+    print("  CHANGE LOCALITY — the primary score, and not a proxy")
+    print(f"    {cl['changes']} changes · {cl['single_slice']} landed in one slice "
+          f"· mean {cl['mean']}")
+    for row in cl["worst"]:
+        print(f"    {row['message']}  [{row['type']:10}] touched "
+              f"{row['count']}: {', '.join(row['slices'])}")
+    print("\n    A good slicing is one where a typical change lands inside a")
+    print("    single slice. That is the definition, not a stand-in for it --")
+    print("    and every request already recorded which entries it produced.")
+
+    print("\n  CORRECTIONS — where defects entered (DESIGN.md §9)")
+    print(f"    {ins['corrections']['by_layer'] or '(none yet)'}")
+    print("    Clustered at intent means the interview was too shallow to")
+    print("    derive from. Clustered lower means the prompting is weak.")
+    print("    Once a fix has propagated the graph just looks correct, so")
+    print("    this has to be recorded at the moment it happens.")
+
+    print("\n  STRUCTURE")
+    for row in ins["slices"]:
+        print(f"    {row['slice']:11} size {row['size']}  in {row['internal_edges']}"
+              f"  out {row['outbound_edges']}  emits {row['emissions']}"
+              f"  cohesion {row['cohesion']}")
+
+    print("\n  TRIAL A DIFFERENT CUT — scored, and nothing created")
+    _m = store.load_manifest(P)
+    merged = sorted(
+        str(i)
+        for name in ("discovery", "filtering", "payouts")
+        for i in _m.slices[name].members
+    )
+    status, sc = call(
+        "POST",
+        f"/projects/{P}/slicing/score",
+        {
+            "proposal": {
+                "product": merged,
+                "audit": sorted(str(i) for i in _m.slices["audit"].members),
+            },
+            "types": {"audit": "cross_cutting"},
+        },
+    )
+    print("    what if discovery, filtering and payouts were one slice?")
+    print(f"    score -> {status} legal={sc.get('legal', sc.get('error'))}")
+    for row in sc["slices"]:
+        print(f"      {row['slice']:9} size {row['size']}  out "
+              f"{row['outbound_edges']}  cohesion {row['cohesion']}")
+    for w in sc["warnings"]:
+        print(f"      warning: {w}")
+    print("    payouts' one outbound edge became internal — the cut that")
+    print("    contains it scores better on coupling, and costs more in size.")
+    after = store.load_manifest(P)
+    print(f"    slices actually on disk, unchanged: {sorted(after.slices)}")
+    print("\n    Slices split and never merge, so a ratified cut is expensive")
+    print("    to undo. Scoring moves the argument to where the remedy is free.")
+
+    print("\n  THE LIFECYCLE — what the graph cannot tell you")
+    _, ev = call("GET", f"/projects/{P}/events")
+    for e in ev["events"][:12]:
+        detail = ""
+        if e["kind"] == "correction":
+            detail = f"entered at {e['facts'].get('entered_at')}"
+        elif e["kind"] == "refusal":
+            detail = e["facts"].get("reason", "")
+        elif e["kind"] == "request":
+            detail = f"{e['facts'].get('type')}: {e['facts'].get('title','')[:38]}"
+        elif e["kind"] == "issue_raised":
+            detail = f"assumed: {e['facts'].get('assumption','')[:34]}"
+        elif e["kind"] == "derivation":
+            detail = ",".join(e["refs"][:4])
+        print(f"    {e['seq']:>3}  {e['kind']:14} {detail}")
+    if len(ev["events"]) > 12:
+        print(f"    … {len(ev['events']) - 12} more")
+    print("\n    A gate that failed and was then fixed leaves no trace in the")
+    print("    fixed graph. A correction's layer of origin disappears once it")
+    print("    has propagated. What an agent could not derive is nowhere in")
+    print("    the state at all. That is what this log is for.")
+
+    # ---------------------------------------------------------------- 9
     step("9.", "WHAT IS ON DISK")
     for path in sorted(root.rglob("*")):
         if path.is_file():

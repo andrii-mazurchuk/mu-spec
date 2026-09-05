@@ -439,6 +439,16 @@ class ProjectStore:
 
     # -- issues -------------------------------------------------------------
 
+    def root(self) -> Path:
+        """Where the gateway writes peers.json and the delivery policy. The
+        only reason anything outside this module needs the path."""
+        return self._root
+
+    def events_path(self) -> Path:
+        """The lifecycle log. Alongside the other two and never loaded during
+        ordinary work -- reading it is analysis, not operation."""
+        return self._root / "lifecycle.jsonl"
+
     def issues_path(self) -> Path:
         """The internal queue, alongside the inbox and deliberately separate
         from it. The inbox is what the outside world wants; this is what one

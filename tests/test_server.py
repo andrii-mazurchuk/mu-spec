@@ -98,7 +98,22 @@ def test_stats_envelope_is_the_standard_shape(store, prompts):
     assert status == 200
     assert payload["unit"] == UNIT_NAME
     assert payload["computed_at"] == 1234.5
-    assert payload["metrics"] == {"projects": 1, "entries": 4}
+    metrics = payload["metrics"]
+    assert metrics["projects"] == 1
+    assert metrics["entries"] == 4
+    assert metrics["entries_by_layer"] == {
+        "architecture": 1,
+        "behaviour": 1,
+        "intent": 1,
+        "spec": 1,
+    }
+    # Already-processed, per the standard: an analytical unit reads these
+    # without knowing anything about how this unit works.
+    assert metrics["change_locality_mean"] == 1.0
+    assert metrics["corrections_by_layer"] == {}
+    assert "unimplemented_spec" in metrics
+    # No text and no per-item detail -- that is what logs are for.
+    assert not any(isinstance(v, list) for v in metrics.values())
 
 
 def test_tools_manifest_declares_the_operations(store, prompts):
@@ -118,6 +133,10 @@ def test_tools_manifest_declares_the_operations(store, prompts):
         "list_issues",
         "close_issue",
         "get_reconciliation",
+        "propose_slicing",
+        "score_slicing",
+        "get_insights",
+        "list_events",
         "declare_module",
         "list_modules",
         "get_plan",
@@ -1561,3 +1580,146 @@ def test_the_audit_can_derive_the_write_set_itself(store, prompts):
         {"touched": ["search/index.py", "payouts/ledger.py"], "since": 0},
     )
     assert payload["clean"] is True
+
+
+# -- lifecycle and analysis, end to end --------------------------------------
+
+
+def test_the_raw_request_is_recorded_as_it_was_worded(store, prompts):
+    """The only unprocessed human signal in the system. Everything below it
+    is something an agent derived."""
+    seed(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/events?kind=request")
+    first = payload["events"][0]
+    assert first["facts"]["title"] == "a marketplace"
+    assert first["facts"]["type"] == "initiate"
+
+
+def test_a_correction_records_the_layer_it_entered_at(store, prompts):
+    """DESIGN.md §9's diagnostic. Once the fix has propagated the graph just
+    looks correct and the evidence is gone."""
+    seed(store, prompts)
+    _, msg = post(store, prompts, "correction", "search ranking is wrong")
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "ranked by recency, not relevance",
+                    "derives_from": ["I·01"],
+                    "supersedes": "B·01",
+                }
+            ],
+        },
+    )
+    _, payload = call(store, prompts, "GET", "/projects/m/events?kind=correction")
+    assert payload["events"][0]["facts"]["entered_at"] == "behaviour"
+    assert payload["events"][0]["refs"] == ["B·01"]
+
+
+def test_a_refusal_is_recorded_even_though_it_changed_nothing(store, prompts):
+    """A refusal leaves no trace in the graph it was refused from. If it is
+    not recorded here it never happened."""
+    mid = seed(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "A", "title": "orphan", "derives_from": ["B·99"]}
+            ],
+        },
+    )
+    _, payload = call(store, prompts, "GET", "/projects/m/events?kind=refusal")
+    assert payload["events"][0]["facts"]["reason"] == "broken edge"
+
+
+def test_an_assumption_is_kept_where_analysis_can_find_it(store, prompts):
+    """§6 calls declaring what you could not derive the thing that makes
+    gates real. Across projects these map where the pipeline is too thin."""
+    _two_columns(store, prompts)
+    _issue(store, prompts, "S·01", "additive", "no way to ask for its size")
+    _, payload = call(store, prompts, "GET", "/projects/m/events?kind=issue_raised")
+    assert payload["events"][0]["facts"]["assumption"] == "assumed the old shape holds"
+
+
+def test_events_page_by_sequence(store, prompts):
+    seed(store, prompts)
+    _, first = call(store, prompts, "GET", "/projects/m/events")
+    mark = first["next_since"]
+    _, again = call(store, prompts, "GET", f"/projects/m/events?since={mark}")
+    assert again["events"] == []
+
+
+def test_insights_report_change_locality(store, prompts):
+    seed(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/insights")
+    assert payload["change_locality"]["mean"] == 1.0
+    assert payload["change_locality"]["single_slice"] == 1
+
+
+def test_insights_are_inputs_never_a_verdict(store, prompts):
+    seed(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/insights")
+    assert "verdict" not in payload
+    assert "not a judgement" in payload["note"]
+
+
+def test_candidates_expose_shared_parentage(store, prompts):
+    mid = seed(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "filter", "derives_from": ["I·01"]}
+            ],
+        },
+    )
+    _, payload = call(store, prompts, "GET", "/projects/m/slicing/candidates")
+    assert payload["shared_parentage"][0]["pair"] == ["B·01", "B·02"]
+
+
+def test_a_proposal_can_be_scored_without_creating_it(store, prompts):
+    _two_columns(store, prompts)
+    before = set(store.load_manifest("m").slices)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slicing/score",
+        {"proposal": {"everything": ["S·01", "S·02"]}},
+    )
+    assert (status, payload["legal"]) == (200, True)
+    assert set(store.load_manifest("m").slices) == before
+
+
+def test_a_proposal_that_would_be_illegal_says_so_without_refusing(store, prompts):
+    """Scoring never gates. It reports that the cut is illegal and returns
+    200 -- refusing would make trialling impossible."""
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slicing/score",
+        {"proposal": {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]}},
+    )
+    assert status == 200
+    assert any("probably not a slice" in w for w in payload["warnings"])

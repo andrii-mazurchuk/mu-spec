@@ -26,6 +26,8 @@ from mu_spec import service
 from mu_spec.service import ServiceError
 from mu_spec.inbox import Inbox, InboxError
 from mu_spec.issues import IssueError, IssueLog
+from mu_spec.lifecycle import Lifecycle
+from mu_spec.shipping import ship
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
@@ -244,6 +246,68 @@ def _tools() -> list[dict[str, Any]]:
             ("project",),
         ),
         tool(
+            "propose_slicing",
+            "The graph half of the grouping problem, before any slice "
+            "exists: which behaviours share an intent parent, and how far "
+            "each parent spreads. A parent whose children scatter widely is "
+            "either constraint-shaped (a cross-cutting tell) or evidence the "
+            "cut runs across the grain of intent -- two opposite readings, "
+            "which is why it is reported rather than acted on. Grouping by "
+            "shared nouns is YOUR job: this unit never looks inside a body.",
+            "GET",
+            "/projects/{project}/slicing/candidates",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
+            "score_slicing",
+            "Score a proposed partition WITHOUT creating it. `proposal` maps "
+            "slice name to a list of entry ids; `types` optionally marks one "
+            "cross_cutting. Runs every gate and every structural metric as "
+            "though the cut were real, and commits nothing -- which is what "
+            "makes trialling several slicings possible, since slices split "
+            "and never merge. `legal` is computed; good is not. Nothing here "
+            "gates or refuses anything.",
+            "POST",
+            "/projects/{project}/slicing/score",
+            {
+                "project": s,
+                "proposal": {"type": "object"},
+                "types": {"type": "object"},
+            },
+            ("project", "proposal"),
+        ),
+        tool(
+            "get_insights",
+            "Everything measurable about how a project has gone. "
+            "`change_locality` is the primary score and is not a proxy: a "
+            "good slicing is one where a typical change lands inside one "
+            "slice, and every request already records exactly which entries "
+            "it produced. `corrections` is where defects entered, which "
+            "reads as a pipeline diagnostic -- clustered at intent means the "
+            "interview was shallow. Issue pairs measure co-change, but are "
+            "endogenous: that history was produced under one particular cut. "
+            "Inputs to a judgement, never a judgement.",
+            "GET",
+            "/projects/{project}/insights",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
+            "list_events",
+            "The project lifecycle in order -- requests as they were "
+            "actually worded, derivations, corrections and the layer each "
+            "entered at, refusals, and every assumption an agent had to make "
+            "because it could not derive something. This is what the graph "
+            "cannot tell you: a gate that failed and was then fixed leaves "
+            "no trace in the fixed graph. Pass `since` (a seq) to page. "
+            "Analysis, not operation -- never load this during ordinary work.",
+            "GET",
+            "/projects/{project}/events",
+            {"project": s, "kind": s, "since": {"type": "integer"}},
+            ("project",),
+        ),
+        tool(
             "get_work_package",
             "The bounded context for producing code for one slice: the spec "
             "entries you may edit, the justification chain for each, "
@@ -407,6 +471,11 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
         "close_issue",
     ),
     ("GET", re.compile(rf"^/projects/{_P}/reconcile$"), "reconcile"),
+    # Analysis. Reported, never enforced -- no gate fires on any of it.
+    ("GET", re.compile(rf"^/projects/{_P}/slicing/candidates$"), "candidates"),
+    ("POST", re.compile(rf"^/projects/{_P}/slicing/score$"), "score_slicing"),
+    ("GET", re.compile(rf"^/projects/{_P}/insights$"), "insights"),
+    ("GET", re.compile(rf"^/projects/{_P}/events$"), "events"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
     ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
     # Spec to code.
@@ -427,6 +496,7 @@ def handle(
     now_fn: Callable[[], float] = time.time,
     inbox: Inbox | None = None,
     issues: IssueLog | None = None,
+    events: Lifecycle | None = None,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -453,13 +523,17 @@ def handle(
     project = params.get("project", "")
     inbox = inbox or Inbox(store.inbox_path())
     issues = issues or IssueLog(store.issues_path())
+    # A copy of every recorded event goes to whichever unit holds the logs
+    # role, addressed by role and best-effort. The local log is the durable
+    # record; this is for whoever aggregates across units.
+    events = events or Lifecycle(
+        store.events_path(), sink=lambda e: ship(store.root(), e)
+    )
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
 
         if name == "stats":
-            projects = store.list_projects()
-            entries = sum(len(store.load_all(p)) for p in projects)
             return (
                 200,
                 JSON,
@@ -467,7 +541,7 @@ def handle(
                     {
                         "unit": UNIT_NAME,
                         "computed_at": now_fn(),
-                        "metrics": {"projects": len(projects), "entries": entries},
+                        "metrics": service.unit_metrics(store, inbox, issues),
                     }
                 ),
             )
@@ -489,7 +563,7 @@ def handle(
             return 200, JSON, json.dumps({"projects": store.list_projects()})
 
         if name == "post_inbox":
-            return 201, JSON, json.dumps(service.post_to_inbox(inbox, body, now_fn))
+            return 201, JSON, json.dumps(service.post_to_inbox(inbox, body, now_fn, events))
 
         if name == "list_inbox":
             return 200, JSON, json.dumps(service.list_inbox(inbox, query))
@@ -514,12 +588,40 @@ def handle(
                 json.dumps(service.get_spine(store, project, query.get("layer"))),
             )
 
+        if name == "candidates":
+            return (
+                200,
+                JSON,
+                json.dumps(service.propose_slicing(store, project)),
+            )
+
+        if name == "score_slicing":
+            return (
+                200,
+                JSON,
+                json.dumps(service.score_slicing(store, project, body or {})),
+            )
+
+        if name == "insights":
+            return (
+                200,
+                JSON,
+                json.dumps(service.get_insights(store, inbox, issues, project)),
+            )
+
+        if name == "events":
+            return (
+                200,
+                JSON,
+                json.dumps(service.list_events(events, project, query)),
+            )
+
         if name == "raise_issue":
             return (
                 201,
                 JSON,
                 json.dumps(
-                    service.raise_issue(store, issues, project, body or {}, now_fn)
+                    service.raise_issue(store, issues, project, body or {}, now_fn, events)
                 ),
             )
 
@@ -556,12 +658,14 @@ def handle(
             )
 
         if name == "amendment":
-            result = service.submit_amendment(store, inbox, project, body)
+            result = service.submit_amendment(
+                store, inbox, project, body, events, now_fn
+            )
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
 
         if name == "classify_slice":
             result = service.classify_slice(
-                store, project, params["slice"], body or {}
+                store, project, params["slice"], body or {}, events, now_fn
             )
             return (200 if result["recorded"] else 409), JSON, json.dumps(result)
 

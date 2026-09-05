@@ -31,9 +31,13 @@ from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
 from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
+from mu_spec import lifecycle as lc
+from mu_spec.lifecycle import Lifecycle
+from mu_spec.metrics import change_locality, corrections_by_layer, structural
 from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
+from mu_spec.slicing import candidates, score
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
 
@@ -120,10 +124,28 @@ def _parse_ids(raw: Any, field: str) -> tuple[Identifier, ...]:
 # -- the single external door: the inbox ------------------------------------
 
 
-def post_to_inbox(inbox: Inbox, body: dict, now_fn: Callable[[], float]) -> dict:
+def post_to_inbox(
+    inbox: Inbox,
+    body: dict,
+    now_fn: Callable[[], float],
+    events: Lifecycle | None = None,
+) -> dict:
     """Record what someone wants. Nothing in the graph changes here."""
     message = inbox.post(body, now_fn)
     spec = TYPES[message.type]
+    if events is not None:
+        # The only unprocessed human signal in the system. Everything below
+        # this point is something an agent derived.
+        events.record(
+            lc.REQUEST,
+            message.project,
+            now_fn,
+            refs=[message.id],
+            type=message.type,
+            origin=message.origin,
+            title=message.title,
+            may_originate_at=list(spec.originates_at),
+        )
     return {
         "message_id": message.id,
         "status": message.status,
@@ -212,7 +234,12 @@ def _require_message(inbox: Inbox, body: dict, expected_types=None):
 
 
 def submit_amendment(
-    store: ProjectStore, inbox: Inbox, project: str, body: dict
+    store: ProjectStore,
+    inbox: Inbox,
+    project: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
 ) -> dict:
     """Record a batch of derived entries -- the result of an agent
     propagating a change downward.
@@ -343,6 +370,19 @@ def submit_amendment(
             blocking.append(finding)
 
     if blocking:
+        if events is not None:
+            # A refusal leaves no trace in the graph it was refused from, so
+            # if it is not recorded here it never happened.
+            events.record(
+                lc.REFUSAL,
+                project,
+                now_fn,
+                refs=[message.id],
+                reason="broken edge",
+                findings=[
+                    {"kind": f.kind, "id": str(f.id)} for f in blocking
+                ],
+            )
         return {
             "admitted": False,
             "reason": "amendment would introduce a broken edge",
@@ -359,6 +399,18 @@ def submit_amendment(
         if (f.kind, f.slice) not in before_slices
     ]
     if new_slice_findings:
+        if events is not None:
+            events.record(
+                lc.REFUSAL,
+                project,
+                now_fn,
+                refs=[message.id],
+                reason="slice structure",
+                findings=[
+                    {"kind": f.kind, "slice": f.slice}
+                    for f in new_slice_findings
+                ],
+            )
         return {
             "admitted": False,
             "reason": "amendment would break the slice structure",
@@ -376,6 +428,33 @@ def submit_amendment(
     inbox.record_produced(message.id, created)
 
     after = store.load_graph(project)
+    retired = [str(e.supersedes) for e in staged if e.supersedes is not None]
+    if events is not None:
+        events.record(
+            lc.DERIVATION,
+            project,
+            now_fn,
+            refs=created,
+            in_response_to=message.id,
+            request_type=message.type,
+            slice=slice_name,
+            layers=sorted({e.id.layer_name for e in staged}),
+        )
+        if retired:
+            # The layer a correction entered at is §9's whole diagnostic,
+            # and once the fix has propagated the graph just looks correct.
+            topmost = min(staged, key=lambda e: e.id.depth).id
+            events.record(
+                lc.CORRECTION,
+                project,
+                now_fn,
+                refs=retired,
+                in_response_to=message.id,
+                request_type=message.type,
+                entered_at=topmost.layer_name,
+                replaced_by=created,
+                stranded=[str(f.id) for f in stale],
+            )
     return {
         "admitted": True,
         "created": created,
@@ -397,7 +476,12 @@ def submit_amendment(
 
 
 def classify_slice(
-    store: ProjectStore, project: str, slice_name: str, body: dict
+    store: ProjectStore,
+    project: str,
+    slice_name: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
 ) -> dict:
     """Record whether a slice is ordinary or cross-cutting.
 
@@ -445,6 +529,15 @@ def classify_slice(
 
     store.set_slice_type(project, slice_name, requested)
     manifest = store.load_manifest(project)
+    if events is not None:
+        events.record(
+            lc.CLASSIFICATION,
+            project,
+            now_fn,
+            refs=[slice_name],
+            type=requested,
+            argument=body.get("argument", ""),
+        )
     return {
         "project": project,
         "slice": slice_name,
@@ -498,6 +591,7 @@ def raise_issue(
     project: str,
     body: dict,
     now_fn: Callable[[], float],
+    events: Lifecycle | None = None,
 ) -> dict:
     """File a request against an artifact.
 
@@ -524,6 +618,22 @@ def raise_issue(
         )
     except IssueError as exc:
         raise ServiceError(str(exc)) from exc
+    if events is not None:
+        # The assumption is the point. §6 calls declaring what you could not
+        # derive the thing that makes gates real, and across projects the
+        # distribution of these is a map of where the pipeline is too thin.
+        events.record(
+            lc.ISSUE_RAISED,
+            project,
+            now_fn,
+            refs=[issue.id, issue.target],
+            kind=issue.kind,
+            raised_by=issue.raised_by,
+            target_slice=issue.target_slice,
+            claim=issue.claim,
+            assumption=issue.assumption,
+            round=issue.round,
+        )
     return {
         **issue.to_json(),
         "next": "proceed on your assumption; this is repaired in the next "
@@ -856,6 +966,175 @@ def audit_diff(store: ProjectStore, project: str, body: dict) -> dict:
     if not isinstance(editable, list):
         raise ServiceError("'editable_paths' must be a list of file paths")
     return {"project": project, **audit(touched, editable)}
+
+
+def unit_metrics(
+    store: ProjectStore, inbox: Inbox, issues: IssueLog
+) -> dict[str, Any]:
+    """The `/stats` payload: already-processed numbers, no text, no per-item
+    detail.
+
+    An analytical unit reads this to decide whether the pipeline is healthy
+    without knowing anything about how this one works. So everything here is
+    an aggregate across projects, and the two that matter most are computed
+    rather than left for the reader to derive: mean change locality, and
+    where corrections entered.
+    """
+    projects = store.list_projects()
+    by_layer: dict[str, int] = {}
+    slices = cross = sound = complete = unimplemented = modules = 0
+    depths: list[int] = []
+    chains = 0
+    locality: list[float] = []
+    corrections: dict[str, int] = {}
+
+    for project in projects:
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
+        for entry in graph.entries():
+            by_layer[entry.id.layer_name] = by_layer.get(entry.id.layer_name, 0) + 1
+        slices += len(manifest.slices)
+        cross += len(manifest.cross_cutting())
+        modules += len(manifest.modules)
+        unimplemented += sum(
+            1
+            for e in graph.entries()
+            if e.id.layer == "S" and not manifest.implementers(e.id)
+        )
+        report = _gate_report(graph, manifest)
+        sound += 1 if report["sound"] else 0
+        complete += 1 if report["complete"] else 0
+
+        sched = schedule(manifest, graph)
+        depths.append(len(sched.waves))
+        chains += 1 if sched.chain else 0
+
+        mean = change_locality(manifest, inbox, project)["mean"]
+        if mean is not None:
+            locality.append(mean)
+        for layer, count in corrections_by_layer(graph, inbox, project)[
+            "by_layer"
+        ].items():
+            corrections[layer] = corrections.get(layer, 0) + count
+
+    all_issues = issues.list()
+    return {
+        "projects": len(projects),
+        "entries": sum(by_layer.values()),
+        "entries_by_layer": dict(sorted(by_layer.items())),
+        "slices": slices,
+        "cross_cutting_slices": cross,
+        "modules": modules,
+        "unimplemented_spec": unimplemented,
+        "projects_sound": sound,
+        "projects_complete": complete,
+        "max_wave_depth": max(depths, default=0),
+        "chain_projects": chains,
+        "open_issues": sum(1 for i in all_issues if i.status == OPEN),
+        "semantic_issues": sum(1 for i in all_issues if i.kind == "semantic"),
+        # The primary score, precomputed. One is perfect.
+        "change_locality_mean": (
+            round(sum(locality) / len(locality), 2) if locality else None
+        ),
+        # DESIGN.md §9's debug signal for the pipeline itself.
+        "corrections_by_layer": dict(sorted(corrections.items())),
+    }
+
+
+# -- analysis: reported, never enforced -------------------------------------
+
+
+def propose_slicing(store: ProjectStore, project: str) -> dict:
+    """The graph half of the grouping problem, before any slice exists."""
+    return {
+        "project": project,
+        **candidates(store.load_graph(project)),
+    }
+
+
+def score_slicing(store: ProjectStore, project: str, body: dict) -> dict:
+    """Score a proposed partition without creating it.
+
+    Slices split and never merge, so a ratified cut is expensive to undo.
+    This moves the argument to the point where the remedy is still free.
+    """
+    try:
+        result = score(
+            store.load_manifest(project),
+            store.load_graph(project),
+            body.get("proposal"),
+            body.get("types"),
+        )
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+    return {"project": project, **result}
+
+
+def get_insights(
+    store: ProjectStore, inbox: Inbox, issues: IssueLog, project: str
+) -> dict:
+    """Everything measurable about how this project has gone.
+
+    `verdict_inputs`, never a verdict: a slicing that scores badly may still
+    be the right cut, and this unit has no way to know. Nothing here gates.
+    """
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    open_issues = issues.list(project=project, status=OPEN)
+    all_issues = issues.list(project=project)
+    return {
+        "project": project,
+        # The primary score. Not a proxy: a good slicing is one where a
+        # typical change lands inside one slice, and this measures exactly
+        # that from what every request already recorded.
+        "change_locality": change_locality(manifest, inbox, project),
+        # §9's debug signal for the pipeline itself.
+        "corrections": corrections_by_layer(graph, inbox, project),
+        **structural(manifest, graph),
+        "issues": {
+            "open": len(open_issues),
+            "total": len(all_issues),
+            "semantic": sum(1 for i in all_issues if i.kind == "semantic"),
+            # Co-change between slices, measured rather than guessed. Read
+            # knowing it is endogenous: this history was produced under one
+            # particular cut, so it partly measures that cut.
+            "pairs": _issue_pairs(all_issues),
+        },
+        "waves": get_waves(store, project)["waves"],
+        "note": "inputs to a judgement, not a judgement. Nothing here blocks "
+        "anything, and no gate ever fires on these numbers",
+    }
+
+
+def _issue_pairs(issues_list) -> list[dict]:
+    pairs: dict[tuple, dict] = {}
+    for issue in issues_list:
+        if not issue.raised_by or not issue.target_slice:
+            continue
+        key = (issue.raised_by, issue.target_slice)
+        row = pairs.setdefault(
+            key,
+            {"from": key[0], "to": key[1], "total": 0, "semantic": 0},
+        )
+        row["total"] += 1
+        if issue.kind == "semantic":
+            row["semantic"] += 1
+    return sorted(pairs.values(), key=lambda r: (-r["total"], r["from"]))
+
+
+def list_events(events: Lifecycle, project: str, query: dict) -> dict:
+    """The lifecycle, in order. Analysis, not operation -- this is never
+    loaded during ordinary work."""
+    try:
+        since = int(query.get("since") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ServiceError("'since' must be a number") from exc
+    rows = events.list(project=project, kind=query.get("kind"), since=since)
+    return {
+        "project": project,
+        "events": [e.to_json() for e in rows],
+        "next_since": rows[-1].seq if rows else since,
+    }
 
 
 # -- 6. review the final layer ----------------------------------------------
