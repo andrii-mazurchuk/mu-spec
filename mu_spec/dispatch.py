@@ -116,6 +116,7 @@ def select(
     pending: Sequence[str] = (),
     unchecked: Sequence[str] = (),
     batches: Sequence[Any] = (),
+    can_build: bool = True,
 ) -> Dispatch | None:
     """The next session to run, or `None` when nothing is eligible.
 
@@ -181,6 +182,13 @@ def select(
         return pick
 
     # 6. Spec that no module implements.
+    #
+    # Skipped entirely when there is nowhere to write. A build session runs
+    # with cwd inside this unit's own repository, so dispatching one with no
+    # target configured means writing the target project's code into
+    # mu-spec. Refusing to dispatch is the only safe default.
+    if not can_build:
+        return None
     implemented = {i for ids in manifest.modules.values() for i in ids}
     for name in _slice_order(manifest, graph):
         spec = {i for i in manifest.slices[name].members if i.layer == "S"}

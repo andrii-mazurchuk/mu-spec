@@ -36,6 +36,11 @@ MODELS: dict[str, str | None] = {
 
 TYPE_FILE = "CLAUDE.md"
 
+# How long one session may run before it is killed. Not a cost control --
+# it is what stops a hung session holding the loop's lock forever, which
+# would make every later trigger report the lock instead of doing work.
+DEFAULT_TIMEOUT = float(os.environ.get("MU_SPEC_SESSION_TIMEOUT", 1800))
+
 
 @dataclasses.dataclass(frozen=True)
 class SessionResult:
@@ -71,9 +76,15 @@ def argv_for(prompt: str, model: str | None) -> list[str]:
     return argv
 
 
-def _spawn(argv: Sequence[str], cwd: Path) -> tuple[int, str]:
+def _spawn(
+    argv: Sequence[str], cwd: Path, timeout: float = DEFAULT_TIMEOUT
+) -> tuple[int, str]:
     done = subprocess.run(
-        list(argv), cwd=str(cwd), capture_output=True, text=True
+        list(argv),
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
     return done.returncode, (done.stderr or done.stdout or "").strip()
 
@@ -101,7 +112,18 @@ def run(
 
     model = (MODELS if models is None else models).get(dispatch.session_type)
     started = now_fn()
-    code, detail = spawn(argv_for(prompt, model), cwd)
+    try:
+        code, detail = spawn(argv_for(prompt, model), cwd)
+    except subprocess.TimeoutExpired:
+        # A killed session is a failed result like any other. Raising here
+        # would take the loop down with it and leave the lock behind.
+        return SessionResult(
+            dispatch.session_type,
+            dispatch.project,
+            False,
+            now_fn() - started,
+            "timed out and was killed",
+        )
     return SessionResult(
         dispatch.session_type,
         dispatch.project,

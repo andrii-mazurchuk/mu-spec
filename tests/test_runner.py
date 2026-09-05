@@ -177,3 +177,18 @@ def test_every_prompt_points_at_the_shared_contract():
 
 def test_the_shared_contract_is_not_itself_a_session_type():
     assert "SHARED" not in discover(_REPO_TYPES)
+
+
+def test_a_session_that_overruns_is_killed_and_reported(tmp_path):
+    """No timeout means one hung session holds the lock forever and every
+    later trigger reports the lock instead of doing work."""
+    import subprocess
+
+    _types(tmp_path, DERIVATION)
+
+    def hang(argv, cwd):
+        raise subprocess.TimeoutExpired(argv, 0.01)
+
+    result = run(_dispatch(), "prompt", root=tmp_path, spawn=hang)
+    assert result.ok is False
+    assert "timed out" in result.detail.lower()

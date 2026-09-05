@@ -205,3 +205,66 @@ def test_trigger_is_a_post_only_route(store, tmp_path):
     prompts.mkdir()
     status, _ct, _raw = handle("GET", "/trigger", store, prompts)
     assert status == 405
+
+
+# -- readiness for a live run ------------------------------------------------
+
+
+def test_a_failed_back_check_does_not_clear_the_correction(parts, tmp_path):
+    """The session exists to stop an unvalidated correction flowing down. If
+    a crashed run counted as validation it would do the opposite."""
+    from mu_spec.dispatch import BACK_CHECK
+    from mu_spec.lifecycle import SESSION
+
+    store, inbox, _issues, events = parts
+    store.create_project("m")
+    events.record(
+        SESSION, "m", lambda: 1.0, refs=["msg-0001"], session_type=BACK_CHECK, ok=False
+    )
+    assert service._unchecked_back_checked(events, "m") == set()
+
+    events.record(
+        SESSION, "m", lambda: 2.0, refs=["msg-0001"], session_type=BACK_CHECK, ok=True
+    )
+    assert service._unchecked_back_checked(events, "m") == {"msg-0001"}
+
+
+def test_build_is_not_dispatched_without_a_target_repository(parts, tmp_path):
+    """A build session runs with cwd inside mu-spec. Dispatching one with
+    nowhere to write means writing the target project's code into this unit."""
+    from mu_spec.dispatch import select
+    from mu_spec.graph import Entry, Graph
+    from mu_spec.identifiers import parse
+    from mu_spec.storage import Manifest, Slice
+
+    graph = Graph(
+        [
+            Entry(id=parse("I·01"), title="i"),
+            Entry(id=parse("B·01"), derives_from=(parse("I·01"),), title="b"),
+            Entry(id=parse("A·01"), derives_from=(parse("B·01"),), title="a"),
+            Entry(id=parse("S·01"), derives_from=(parse("A·01"),), title="s"),
+        ]
+    )
+    manifest = Manifest(
+        project="m",
+        slices={"listings": Slice(name="listings", members={parse(i) for i in ("B·01", "A·01", "S·01")})},
+    )
+    assert select(manifest, graph, can_build=False) is None
+    assert select(manifest, graph, can_build=True).session_type == "build"
+
+
+def test_a_dry_run_reports_the_dispatch_and_launches_nothing(parts, tmp_path):
+    """So a brief can be read before it costs anything."""
+    store, inbox, _, _ = parts
+    _seed_request(store, inbox)
+    runner = _Runner()
+    out = _run(parts, runner, tmp_path, dry_run=True)
+    assert out["ran"] is False
+    assert out["would_run"] == TRIAGE
+    assert "Session brief" in out["brief"]
+    assert runner.calls == []
+
+
+def test_a_dry_run_with_nothing_eligible_says_so(parts, tmp_path):
+    out = _run(parts, _Runner(), tmp_path, dry_run=True)
+    assert out["ran"] is False and out.get("would_run") is None

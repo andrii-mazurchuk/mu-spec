@@ -15,6 +15,7 @@ deliberately allowed to differ -- /health and /tools are never declared.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -435,11 +436,13 @@ def _tools() -> list[dict[str, Any]]:
             "a waiting request, then unsliced behaviour, then anything "
             "unserved, then unbuilt spec -- launches it, and reports what "
             "happened. Runs nothing and reports why when nothing is "
-            "eligible or another run holds the lock. Takes no arguments: "
-            "what runs next is computed, never chosen.",
+            "eligible or another run holds the lock. What runs next is "
+            "computed, never chosen -- the only argument is dry_run, which "
+            "selects and renders the session's exact prompt without "
+            "launching anything.",
             "POST",
             "/trigger",
-            {},
+            {"dry_run": {"type": "boolean"}},
         ),
     ]
 
@@ -568,6 +571,8 @@ def handle(
                         session_root=Path(session_root or SESSION_TYPES_DIR),
                         base_url=base_url,
                         now_fn=now_fn,
+                        build_root=os.environ.get("MU_SPEC_BUILD_ROOT") or None,
+                        dry_run=bool(body.get("dry_run")),
                     )
                 ),
             )

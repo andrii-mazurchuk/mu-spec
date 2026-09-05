@@ -21,6 +21,7 @@ dict, so the whole surface is testable without a socket.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 from pathlib import Path
@@ -1203,17 +1204,28 @@ def review_layer(
 # -- the pipeline loop -------------------------------------------------------
 
 
-def _unchecked_corrections(inbox: Inbox, events: Lifecycle, project: str) -> list[str]:
-    """Corrections that have been placed but never checked against the layer
-    above. A correction must not flow downward until that question has an
-    answer, so this is the top rung of the ladder.
+def _unchecked_back_checked(events: Lifecycle, project: str) -> set[str]:
+    """Requests whose back-check actually succeeded.
+
+    `ok` is load-bearing. A crashed back-check that counted as validation
+    would let an unvalidated correction flow downward -- the precise thing
+    that session exists to prevent -- and it would do so silently, because a
+    failed run leaves exactly the same event behind as a successful one.
     """
-    checked = {
+    return {
         ref
         for e in events.list(project=project, kind=lc.SESSION)
-        if e.facts.get("session_type") == BACK_CHECK
+        if e.facts.get("session_type") == BACK_CHECK and e.facts.get("ok") is True
         for ref in e.refs
     }
+
+
+def _unchecked_corrections(inbox: Inbox, events: Lifecycle, project: str) -> list[str]:
+    """Corrections that have been placed but never successfully checked
+    against the layer above. A correction must not flow downward until that
+    question has an answer, so this is the top rung of the ladder.
+    """
+    checked = _unchecked_back_checked(events, project)
     return [
         m.id
         for m in inbox.list(kind="correction", project=project, status=ACCEPTED)
@@ -1222,7 +1234,11 @@ def _unchecked_corrections(inbox: Inbox, events: Lifecycle, project: str) -> lis
 
 
 def _choose(
-    store: ProjectStore, inbox: Inbox, issues: IssueLog, events: Lifecycle
+    store: ProjectStore,
+    inbox: Inbox,
+    issues: IssueLog,
+    events: Lifecycle,
+    can_build: bool = False,
 ) -> Dispatch | None:
     """The first eligible thing across every project, or None.
 
@@ -1251,6 +1267,7 @@ def _choose(
             pending=[m.id for m in inbox.list(status=PENDING, project=project)],
             unchecked=_unchecked_corrections(inbox, events, project),
             batches=batches,
+            can_build=can_build,
         )
         if chosen is not None:
             return chosen
@@ -1269,6 +1286,8 @@ def run_pipeline(
     now_fn: Callable[[], float] = time.time,
     lock: Path | None = None,
     shipper: Callable[..., bool] | None = None,
+    build_root: str | None = None,
+    dry_run: bool = False,
 ) -> dict:
     """Advance the pipeline by exactly one session.
 
@@ -1276,6 +1295,15 @@ def run_pipeline(
     shape every session in this system has, and a loop that ran until the
     graph was finished would hold the lock for hours and be impossible to
     reason about when it failed halfway.
+
+    `dry_run` selects and renders the brief but launches nothing, so the
+    exact prompt a session would receive can be read before it costs
+    anything.
+
+    `build_root` is where implemented code goes. Without it no build session
+    is dispatched at all: a build session runs with `cwd` inside this unit,
+    so one with nowhere to write would write the target project's code into
+    mu-spec. Per-project targeting is undesigned -- see `docs/DESIGN.md` 11.
 
     Returns what happened. It never raises -- a session that fails is a
     reported result, because the caller is a trigger endpoint and a failed
@@ -1288,14 +1316,35 @@ def run_pipeline(
         if not acquired:
             return {"ran": False, "reason": "another run holds the lock"}
 
-        chosen = _choose(store, inbox, issues, events)
+        chosen = _choose(store, inbox, issues, events, can_build=bool(build_root))
         if chosen is None:
-            return {"ran": False, "reason": "nothing eligible"}
+            return {
+                "ran": False,
+                "reason": "nothing eligible",
+                **({"would_run": None} if dry_run else {}),
+            }
+
+        if build_root:
+            chosen = dataclasses.replace(
+                chosen, scope={**chosen.scope, "target_repository": build_root}
+            )
+
+        brief = chosen.brief(base_url)
+        if dry_run:
+            return {
+                "ran": False,
+                "reason": "dry run -- nothing was launched",
+                "would_run": chosen.session_type,
+                "project": chosen.project,
+                "scope": chosen.scope,
+                "why": chosen.reason,
+                "brief": brief,
+            }
 
         launch = runner or (
-            lambda d, brief: rn.run(d, brief, root=Path(session_root))
+            lambda d, text: rn.run(d, text, root=Path(session_root))
         )
-        result = launch(chosen, chosen.brief(base_url))
+        result = launch(chosen, brief)
 
         # Collect. The local record lands first and unconditionally; the copy
         # for whoever aggregates is best-effort and never changes the answer.
