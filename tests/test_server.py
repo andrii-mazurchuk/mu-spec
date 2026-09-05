@@ -1783,6 +1783,7 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "entry": "get_entry",
         "gates": "check_gates",
         "list_projects": "list_projects",
+        "trigger": "run_pipeline",
         "stats": None,
     }
     for _, _, name in _ROUTES:

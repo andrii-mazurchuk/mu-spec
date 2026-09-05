@@ -26,16 +26,19 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from mu_spec.dispatch import BACK_CHECK, TRIAGE, Dispatch, select
 from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
-from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
+from mu_spec.inbox import ACCEPTED, PENDING, TYPES, Inbox, InboxError
 from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
 from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
 from mu_spec.metrics import change_locality, corrections_by_layer, structural
 from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
+from mu_spec import runner as rn
+from mu_spec.shipping import SESSION_RUN, ship
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.slicing import candidates, score
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
@@ -1195,3 +1198,147 @@ def review_layer(
         "entries": rows,
         "gates": _gate_report(graph, manifest),
     }
+
+
+# -- the pipeline loop -------------------------------------------------------
+
+
+def _unchecked_corrections(inbox: Inbox, events: Lifecycle, project: str) -> list[str]:
+    """Corrections that have been placed but never checked against the layer
+    above. A correction must not flow downward until that question has an
+    answer, so this is the top rung of the ladder.
+    """
+    checked = {
+        ref
+        for e in events.list(project=project, kind=lc.SESSION)
+        if e.facts.get("session_type") == BACK_CHECK
+        for ref in e.refs
+    }
+    return [
+        m.id
+        for m in inbox.list(kind="correction", project=project, status=ACCEPTED)
+        if m.id not in checked
+    ]
+
+
+def _choose(
+    store: ProjectStore, inbox: Inbox, issues: IssueLog, events: Lifecycle
+) -> Dispatch | None:
+    """The first eligible thing across every project, or None.
+
+    A request that names no project yet is cold start: there is no graph to
+    select from, so it is answered before the per-project ladder rather than
+    being invisible to it.
+    """
+    for message in inbox.list(status=PENDING):
+        if not message.project:
+            return Dispatch(
+                TRIAGE,
+                "",
+                {"request": message.id},
+                "a request has arrived with no project yet",
+            )
+
+    for project in store.list_projects():
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
+        batches, _escalations = route(
+            manifest, graph, issues.list(project=project, status=OPEN)
+        )
+        chosen = select(
+            manifest,
+            graph,
+            pending=[m.id for m in inbox.list(status=PENDING, project=project)],
+            unchecked=_unchecked_corrections(inbox, events, project),
+            batches=batches,
+        )
+        if chosen is not None:
+            return chosen
+    return None
+
+
+def run_pipeline(
+    store: ProjectStore,
+    inbox: Inbox,
+    issues: IssueLog,
+    events: Lifecycle,
+    *,
+    session_root: Path,
+    base_url: str,
+    runner: Callable[[Dispatch, str], Any] | None = None,
+    now_fn: Callable[[], float] = time.time,
+    lock: Path | None = None,
+    shipper: Callable[..., bool] | None = None,
+) -> dict:
+    """Advance the pipeline by exactly one session.
+
+    One, not "until done": a bounded unit of work with a clean exit is the
+    shape every session in this system has, and a loop that ran until the
+    graph was finished would hold the lock for hours and be impossible to
+    reason about when it failed halfway.
+
+    Returns what happened. It never raises -- a session that fails is a
+    reported result, because the caller is a trigger endpoint and a failed
+    agent run is ordinary rather than exceptional.
+    """
+    lock = Path(lock) if lock else store.root() / "pipeline.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+
+    with rn.gate(lock) as acquired:
+        if not acquired:
+            return {"ran": False, "reason": "another run holds the lock"}
+
+        chosen = _choose(store, inbox, issues, events)
+        if chosen is None:
+            return {"ran": False, "reason": "nothing eligible"}
+
+        launch = runner or (
+            lambda d, brief: rn.run(d, brief, root=Path(session_root))
+        )
+        result = launch(chosen, chosen.brief(base_url))
+
+        # Collect. The local record lands first and unconditionally; the copy
+        # for whoever aggregates is best-effort and never changes the answer.
+        refs = [chosen.scope[k] for k in ("request", "slice") if k in chosen.scope]
+        events.record(
+            lc.SESSION,
+            chosen.project or None,
+            now_fn,
+            refs=refs,
+            session_type=chosen.session_type,
+            ok=result.ok,
+            duration_seconds=result.duration_seconds,
+            reason=chosen.reason,
+            scope=chosen.scope,
+        )
+
+        payload = {**chosen.to_json(), **result.to_json()}
+        send = shipper or (
+            lambda entry_type, payload: ship(
+                store.root(), payload, entry_type=entry_type
+            )
+        )
+        try:
+            send(entry_type=SESSION_RUN, payload=payload)
+        except Exception:
+            # A logs unit that is down must never fail a session that ran.
+            pass
+
+        gates = (
+            _gate_report(
+                store.load_graph(chosen.project), store.load_manifest(chosen.project)
+            )
+            if chosen.project
+            else {"sound": True, "complete": True}
+        )
+        return {
+            "ran": True,
+            "ok": result.ok,
+            "session_type": chosen.session_type,
+            "project": chosen.project,
+            "scope": chosen.scope,
+            "reason": chosen.reason,
+            "duration_seconds": result.duration_seconds,
+            "detail": result.detail,
+            "gates": gates,
+        }

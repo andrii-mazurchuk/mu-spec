@@ -45,6 +45,9 @@ ISSUE_RAISED = "issue_raised"
 ISSUE_CLOSED = "issue_closed"
 PLAN = "plan"
 AUDIT = "audit"
+# One agent session ran to completion. The only kind not written by a
+# caller: the pipeline loop records it about itself.
+SESSION = "session"
 
 KINDS = (
     REQUEST,
@@ -57,6 +60,7 @@ KINDS = (
     ISSUE_CLOSED,
     PLAN,
     AUDIT,
+    SESSION,
 )
 
 

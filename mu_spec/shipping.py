@@ -44,6 +44,11 @@ UNIT_NAME = "mu-spec"
 # specification and stays interesting for months.
 ENTRY_TYPE = "project_event"
 
+# One agent run. Already in the receiving unit's vocabulary, and what its
+# rollups compute avg_duration_seconds and failure_count from -- so unlike
+# project_event this one actually lands.
+SESSION_RUN = "session_run"
+
 DELIVERY_POLICY = "delivery_policy.json"
 PEERS = "peers.json"
 
@@ -109,6 +114,7 @@ def ship(
     root: Path,
     event: Any,
     sender: Callable[[str, dict], bool] = None,
+    entry_type: str = ENTRY_TYPE,
 ) -> bool:
     """Copy one lifecycle event to the logs unit. Returns whether it landed.
 
@@ -120,7 +126,7 @@ def ship(
         return False
     body = {
         "source_unit": UNIT_NAME,
-        "entry_type": ENTRY_TYPE,
+        "entry_type": entry_type,
         "payload": event.to_json() if hasattr(event, "to_json") else dict(event),
     }
     send = sender or _post

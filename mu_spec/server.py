@@ -32,6 +32,9 @@ from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
 PROMPT_TIERS = ("default", "reference")
+# Where the session-type directories live. Each is a directory holding a
+# CLAUDE.md, discovered from the filesystem rather than a manifest.
+SESSION_TYPES_DIR = "session_types"
 
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
@@ -424,6 +427,20 @@ def _tools() -> list[dict[str, Any]]:
             "/projects",
             {},
         ),
+        tool(
+            "run_pipeline",
+            "Advance the pipeline by exactly one agent session, across "
+            "every project. Picks what to run from the graph alone -- an "
+            "unchecked correction first, then a wave's open issues, then "
+            "a waiting request, then unsliced behaviour, then anything "
+            "unserved, then unbuilt spec -- launches it, and reports what "
+            "happened. Runs nothing and reports why when nothing is "
+            "eligible or another run holds the lock. Takes no arguments: "
+            "what runs next is computed, never chosen.",
+            "POST",
+            "/trigger",
+            {},
+        ),
     ]
 
 
@@ -444,6 +461,9 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/stats$"), "stats"),
     ("GET", re.compile(r"^/tools$"), "tools"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
+    # Advance the pipeline by one session. The gateway pokes this rather
+    # than restarting the process.
+    ("POST", re.compile(r"^/trigger$"), "trigger"),
     # The single external door.
     ("POST", re.compile(r"^/inbox$"), "post_inbox"),
     ("GET", re.compile(r"^/inbox$"), "list_inbox"),
@@ -497,6 +517,8 @@ def handle(
     inbox: Inbox | None = None,
     issues: IssueLog | None = None,
     events: Lifecycle | None = None,
+    session_root: Path | None = None,
+    base_url: str = "",
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -532,6 +554,23 @@ def handle(
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
+
+        if name == "trigger":
+            return (
+                200,
+                JSON,
+                json.dumps(
+                    service.run_pipeline(
+                        store,
+                        inbox,
+                        issues,
+                        events,
+                        session_root=Path(session_root or SESSION_TYPES_DIR),
+                        base_url=base_url,
+                        now_fn=now_fn,
+                    )
+                ),
+            )
 
         if name == "stats":
             return (
@@ -725,7 +764,10 @@ def handle(
 
 
 def build_handler(
-    store: ProjectStore, prompts_dir: Path
+    store: ProjectStore,
+    prompts_dir: Path,
+    session_root: Path | None = None,
+    base_url: str = "",
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         def _respond(self, method: str) -> None:
@@ -743,7 +785,13 @@ def build_handler(
                     )
                     return
             status, content_type, body = handle(
-                method, self.path, store, prompts_dir, payload
+                method,
+                self.path,
+                store,
+                prompts_dir,
+                payload,
+                session_root=session_root,
+                base_url=base_url,
             )
             self._write(status, content_type, body)
 
@@ -768,5 +816,16 @@ def build_handler(
     return _Handler
 
 
-def serve(host: str, port: int, store: ProjectStore, prompts_dir: Path) -> None:
-    ThreadingHTTPServer((host, port), build_handler(store, prompts_dir)).serve_forever()
+def serve(
+    host: str,
+    port: int,
+    store: ProjectStore,
+    prompts_dir: Path,
+    session_root: Path | None = None,
+) -> None:
+    # A session reaches this unit the same way any other caller does, so
+    # it needs the address the unit is actually answering on.
+    handler = build_handler(
+        store, prompts_dir, session_root, f"http://{host}:{port}"
+    )
+    ThreadingHTTPServer((host, port), handler).serve_forever()

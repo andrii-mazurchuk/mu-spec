@@ -65,6 +65,38 @@ class Dispatch:
             "reason": self.reason,
         }
 
+    def brief(self, base_url: str) -> str:
+        """The dynamic half of the session's prompt -- everything the static
+        `CLAUDE.md` in its directory cannot know.
+
+        Deliberately short. It names the scope and where to reach the unit;
+        it does not pre-load the spine or the bodies, because the session has
+        HTTP access and its own prompt already says what to fetch. Copying
+        graph content in here would make the brief a second, staler copy of
+        the graph.
+        """
+        lines = [
+            "# Session brief",
+            "",
+            f"You are a `{self.session_type}` session. Your static contract is the",
+            "`CLAUDE.md` already loaded from this directory; read `../SHARED.md` next.",
+            "",
+            f"- mu-spec base URL: {base_url}",
+            f"- project: {self.project or '(none yet -- this request creates it)'}",
+            f"- why you were selected: {self.reason}",
+            "",
+            "## Your scope",
+            "",
+            "This is the complete list for this session. The wave order, the layer",
+            "boundary and the ownership rules were applied before you started --",
+            "do not go looking for more work.",
+            "",
+        ]
+        for key, value in self.scope.items():
+            rendered = ", ".join(str(v) for v in value) if isinstance(value, list) else value
+            lines.append(f"- {key}: {rendered}")
+        return "\n".join(lines) + "\n"
+
 
 def _sliced(manifest: Manifest) -> set[Identifier]:
     return {member for s in manifest.slices.values() for member in s.members}
