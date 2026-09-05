@@ -16,9 +16,12 @@ Full architecture: **`docs/DESIGN.md`**. Read it before writing code here.
 ## The shape
 
 Five layers — intent, behaviour, architecture, implementation spec, code.
-Every entry carries an identifier, a derives-from list, and a body. Two
-structural fields turn a pile of markdown into a directed graph, and the graph
-is the whole system.
+Every entry carries an identifier, a body, and three kinds of edge:
+`derives_from` (vertical, exactly one layer up — what it serves),
+`depends_on` (horizontal, same layer — what it needs, and the only edge that
+imposes an order), and `emits_into` (horizontal, only into a cross-cutting
+slice — what it publishes, fire-and-forget). Those edges turn a pile of
+records into a directed graph, and the graph is the whole system.
 
 ## Asking it for something
 
@@ -52,11 +55,12 @@ it.
 **mu-spec computes. It never reasons, and it never executes.**
 
 Every operation is deterministic and derivable from the graph: storage,
-identifier permanence, spine generation, retrieval by identifier, the three
-admission gates, blast radius, spec-diff → write/read set. Anything needing
-judgement — authoring entries, classifying a correction to its layer,
-declaring what could not be derived — belongs to the processing unit, which
-calls this one.
+identifier permanence, spine generation, retrieval by identifier, the
+admission gates, blast radius, wave assignment, the issue queue and its
+grouping. Anything needing judgement — authoring entries, classifying a
+correction to its layer, ruling a slice cross-cutting, calling an issue
+additive or semantic, declaring what could not be derived — belongs to the
+processing unit, which calls this one.
 
 That split is deliberate. `docs/DESIGN.md` §6 calls admission gates
 "mechanical, run by the agent, human sees only failures" — and a mechanical
@@ -102,15 +106,18 @@ is right.
 
 ## Status
 
-Working end to end. Storage, the graph, two admission gates, and the six
-operations are implemented and served over HTTP.
+Working end to end, over HTTP. Storage, the graph and its three edge kinds,
+five admission gates, slice classification, wave assignment, the issue queue
+and its router, and the work package.
 
-Not built yet: the third gate (backwards dependency arrows between slices),
-spec-level diffs so a work package can carry only what *changed* rather than
-a whole slice, and the code layer's module backlinks. Per-layer field shapes
-(`docs/DESIGN.md` §11) are still open and deliberately do not block anything
-— the graph needs only `id`, `derives_from` and `body`, and the shapes
-constrain what goes inside a body.
+Run `python walkthrough.py` to watch the whole pipeline behave — it is the
+fastest way to see what this does.
+
+Not built yet: spec-level diffs, so a work package can carry only what
+*changed* rather than a whole slice, and the code layer's module backlinks.
+Per-layer field shapes (`docs/DESIGN.md` §11) are still open and deliberately
+do not block anything — the graph needs only `id`, the edge lists and `body`,
+and the shapes constrain only what goes inside a body.
 
 ## Commands
 

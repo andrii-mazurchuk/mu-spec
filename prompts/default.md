@@ -30,14 +30,16 @@ down from there.
 ## Asking it a question
 
 Ask mu-spec for: what an entry says, what derives from it, what it derives
-from, which entries a change touches, and whether the graph currently holds
-together. Load the spine first — identifier, one-line title, derives-from,
-no bodies — then fetch the bodies you actually need by identifier.
+from, which entries a change touches, what order the slices may be worked in,
+and whether the graph currently holds together. Load the spine first —
+identifier, one-line title, all three edge lists, no bodies — then fetch the
+bodies you actually need by identifier.
 
-Two health questions, reported separately. **Sound** means no entry derives
-from something missing, retired, or below it; unsound blocks work.
-**Complete** means knowledge has reached spec on every branch; incomplete is
-just the to-do list.
+Two health questions, reported separately. **Sound** means every edge lands
+where it should: nothing derives from something missing, retired or out of
+layer, no slice cycle, no concern reaching into a feature slice. Unsound
+blocks work. **Complete** means knowledge has reached spec on every branch;
+incomplete is just the to-do list, and never blocks.
 
 ## What it does not do
 
