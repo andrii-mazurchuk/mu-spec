@@ -5,6 +5,7 @@ from mu_spec.identifiers import parse
 from mu_spec.slice_gates import (
     CROSS_CUTTING_OUTBOUND,
     DEPENDENCY_CYCLE,
+    OVERLAPPING_MEMBERSHIP,
     edge_gates,
     slice_gates,
 )
@@ -265,3 +266,23 @@ def test_inverting_an_outbound_edge_into_an_emission_resolves_the_cycle():
     )
     assert slice_gates(manifest, fixed) == []
     assert edge_gates(manifest, fixed) == []
+
+
+# -- one entry, one slice ----------------------------------------------------
+
+
+def test_an_entry_in_two_slices_is_refused():
+    """Slices define write ownership, so overlapping membership is no
+    ownership: two work packages would both hand the same entry out as
+    editable, and the audit would pass for both -- which makes it blind to
+    the one thing that broke."""
+    manifest = _manifest(a=("S·01 S·02", "slice"), b=("S·02", "slice"))
+    findings = slice_gates(manifest, Graph([_entry("S·01"), _entry("S·02")]))
+    assert [f.kind for f in findings] == [OVERLAPPING_MEMBERSHIP]
+    assert "S·02" in findings[0].detail
+    assert "a, b" in findings[0].detail
+
+
+def test_distinct_membership_is_clean():
+    manifest = _manifest(a=("S·01", "slice"), b=("S·02", "slice"))
+    assert slice_gates(manifest, Graph([_entry("S·01"), _entry("S·02")])) == []

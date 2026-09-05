@@ -266,6 +266,7 @@ package is issued:*
   slices, dependencies into everything else? (bad emissions)
 - Is the projected slice dependency graph acyclic? (bad slicing — see below)
 - Does any cross-cutting slice depend on a feature slice? (misclassification)
+- Does any entry belong to more than one slice? (overlapping ownership)
 
 *Complete — the report of what is left to do, never a blocker:*
 - Does every entry above have at least one entry below serving it? (unserved

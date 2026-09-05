@@ -405,3 +405,17 @@ def test_setting_the_type_of_an_unknown_slice_is_refused(tmp_path):
     store.create_project("m")
     with pytest.raises(ValueError):
         store.set_slice_type("m", "nope", CROSS_CUTTING)
+
+
+def test_the_write_path_cannot_put_one_entry_in_two_slices(tmp_path):
+    """Membership is recorded on append, and an identifier can only be
+    appended once -- so the ordinary write path cannot create the overlap at
+    all. The slice gate covers the cases that bypass it: a split, or a
+    manifest edited by hand."""
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    entry = Entry(id=parse("S·01"), title="index")
+    store.append("m", [entry], slice_name="listings")
+    with pytest.raises(ValueError, match="already exists"):
+        store.append("m", [entry], slice_name="payouts")
+    assert store.load_manifest("m").slice_of(parse("S·01")) == "listings"

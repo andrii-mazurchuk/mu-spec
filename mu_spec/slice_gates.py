@@ -25,6 +25,10 @@ before anything derives from a slice costs nothing.
   what its classification says it does not. Depending on another
   cross-cutting slice is fine; the cycle check still applies there.
 
+- **An entry in more than one slice.** Slices define write ownership, and
+  overlapping ownership is no ownership: two work packages would hand the
+  same entry out as editable, and the audit would pass for both.
+
 - **An edge of the wrong kind for what it points at.** An edge into a
   cross-cutting slice is an emission, and an emission goes nowhere else.
   This is what makes the classification enforceable rather than declarative:
@@ -48,6 +52,7 @@ from mu_spec.storage import CROSS_CUTTING, Manifest
 DEPENDENCY_CYCLE = "dependency_cycle"
 CROSS_CUTTING_OUTBOUND = "cross_cutting_outbound"
 BAD_EMISSION = "bad_emission"
+OVERLAPPING_MEMBERSHIP = "overlapping_membership"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -188,6 +193,26 @@ def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:
     """Every slice-level finding, in kind then name order."""
     edges = manifest.dependency_graph(graph)
     findings: list[SliceFinding] = []
+
+    # One entry belongs to exactly one slice. Overlapping membership is no
+    # ownership: two work packages would hand the same entry out as editable,
+    # two agents would edit it, and the audit would pass for both -- which
+    # makes it blind to the one thing that actually broke.
+    owners: dict[str, list[str]] = {}
+    for name, sl in sorted(manifest.slices.items()):
+        for member in sl.members:
+            owners.setdefault(str(member), []).append(name)
+    for member, names in sorted(owners.items()):
+        if len(names) > 1:
+            findings.append(
+                SliceFinding(
+                    OVERLAPPING_MEMBERSHIP,
+                    names[0],
+                    f"{member} is a member of {', '.join(names)}. An entry "
+                    "belongs to exactly one slice -- slices define write "
+                    "ownership, and two owners is no owner",
+                )
+            )
 
     for name in manifest.cross_cutting():
         reaching_out = [
