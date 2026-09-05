@@ -10,7 +10,9 @@ This file only says what's specific to mu-spec.
 
 The standard four endpoints (`/health`, `/stats`, `/tools`,
 `/prompts/<tier>`) in `mu_spec/server.py`. `unit_type: memory`,
-`lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
+`lifecycle: persistent`, plus `POST /trigger` -- the gateway pokes the
+running process to advance the pipeline by one session rather than
+restarting it.
 
 `/stats` carries **already-processed** aggregates — counts per layer, how
 many projects are sound, mean change locality, where corrections entered —
@@ -21,7 +23,7 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — twenty-six of them,
+Everything beyond the four is declared in `/tools` — twenty-seven of them,
 covering the inbox, amendments, slice classification, waves, the issue queue
 and its reconciliation, module backlinks, planning, the audit, the work
 package, and the measurement surface. Tool names are action-style rather than
@@ -49,12 +51,20 @@ of the invariants that keep it sound — identifiers never reused or
 renumbered, slice membership a set rather than a range, amendments
 append-only, slices splitting but never merging.
 
-**It computes; it never reasons and never executes.** Mechanical operations —
+**It computes and dispatches; it never reasons.** Mechanical operations —
 admission gates, spine generation, graph traversal, wave assignment,
 spec-diff resolution — belong here precisely so a session cannot skip them.
 Authoring entries, classifying corrections, ruling a slice cross-cutting, and
-declaring what could not be derived belong to the processing unit, which
-calls this one.
+declaring what could not be derived belong to a **session** -- a headless
+`claude -p` run this unit launches, which calls back in over HTTP like any
+other caller. Selecting which session runs next is arithmetic over the
+graph and stays here; everything the session then does is judgement and
+does not.
+
+Worth stating plainly, because it contradicts a sibling's contract: this
+unit launches `claude -p` sessions, and the processing unit documents
+itself as the only unit that does. That is a ruling, not an oversight, and
+the sibling's contract is the one that needs updating.
 
 It also never runs git. The diff audit takes the touched paths as an
 argument; the caller runs git and passes them in.

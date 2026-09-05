@@ -40,11 +40,23 @@ of to whole documents.
 
 ### The boundary you must not cross
 
-**mu-spec computes. It never reasons, and it never executes.**
+**mu-spec computes and dispatches. It never reasons.**
 
 Every operation this unit performs is deterministic and derivable from the
-graph. Anything requiring judgement belongs to a session in another unit,
-which calls this one.
+graph. Anything requiring judgement belongs to a **session** -- a headless
+`claude -p` run this unit launches, which calls back in over HTTP like any
+other caller.
+
+This unit **does** run the pipeline loop: it selects which session runs
+next, launches it, and collects the result. That is not a softening of the
+boundary. Selection is arithmetic over state that already exists -- unserved
+entries, slice membership, wave order, open batches -- and the scoped
+context a session is handed is the work package this unit already computed.
+What it still never does is **decide what any of it means**.
+
+The one thing that changed with it: this unit is now a second launcher of
+`claude -p` sessions in a system whose processing unit documents itself as
+the only one. That was a deliberate ruling, not an oversight.
 
 | mu-spec owns (mechanical) | Another unit owns (judgement) |
 |---|---|
@@ -57,6 +69,7 @@ which calls this one.
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |
 | Scoring a *proposed* partition without creating it | Grouping behaviours by what they are about |
 | Recording the lifecycle: requests as worded, corrections and the layer they entered at, refusals, assumptions | Deciding what an assumption should have been |
+| Selecting which session runs next, launching it, and collecting the result | Everything the session then does |
 | Change locality, correction distribution, cohesion, coupling — reported, never enforced | Whether a slicing is any good |
 
 The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
@@ -64,9 +77,18 @@ The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
 doesn't need an agent — it needs a function. Putting them here means a
 session in a hurry cannot skip them, which is the entire point of a gate.
 
-If you find yourself writing code that spawns a process, edits a file outside
-this unit's own storage, calls a model, or decides that some project now
-needs work done to it — stop. That belongs elsewhere.
+Spawning a session is now this unit's job, and `runner.py` is the **only**
+place a process is started. If you find yourself starting one anywhere else,
+editing a file outside this unit's own storage, calling a model from unit
+code, or deciding that some project is worth working on at all — stop. The
+loop picks the next item off a queue; it never rules that the queue deserves
+attention.
+
+**A session is not exempt from enclosure.** Sessions run with `cwd` inside
+this repository, which makes reading `state/` trivially easy and would
+bypass every admission gate. They talk to this unit over HTTP like anyone
+else. Putting the gates here is only worth anything if a session in a hurry
+cannot route around them.
 
 ### Invariants this unit is the guardian of
 
@@ -221,6 +243,8 @@ Modules, and the one-line reason each exists:
 | `lifecycle` | What happened, in order — what the graph cannot recover |
 | `metrics` | Change locality, corrections by layer, cohesion. Never gates |
 | `slicing` | Candidates, and scoring a proposal that commits nothing |
+| `dispatch` | Which session runs next, from the graph alone. Pure; launches nothing |
+| `runner` | Filesystem-discovered session types, the lock, and the only spawn |
 | `shipping` | A best-effort copy of each event to whoever holds the logs role |
 | `service` | The operations, as plain functions over a store. No HTTP |
 | `server` | Routing and the tool manifest. The only module that knows HTTP |
