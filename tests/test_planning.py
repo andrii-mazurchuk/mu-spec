@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mu_spec.gates import BAD_DEPENDENCY, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 from mu_spec.planning import audit, plan, spec_diff
@@ -189,3 +190,38 @@ def test_the_audit_never_runs_git():
     unit that executes, which this one does not do -- the function takes two
     lists of strings and that is the whole interface."""
     assert audit(["a.py"], ["a.py"])["clean"] is True
+
+
+# -- interface changes -------------------------------------------------------
+
+
+def test_an_interface_change_is_visible_at_the_entry_that_consumed_it():
+    """`docs/DESIGN.md` §11 calls this the highest-risk undetected case: a
+    spec change altering an interface another slice consumes looks isolated
+    at spec level and is not.
+
+    It is not isolated here, because the consumption is an edge. S·03
+    declares `depends_on: S·01`; superseding S·01 leaves S·03 pointing at a
+    retired entry, which the bad_dependency gate reports and which makes the
+    graph unsound until S·03 is re-derived. Nothing is planned or issued
+    meanwhile."""
+    graph = _graph(
+        Entry(id=parse("S·04"), title="index v2", supersedes=parse("S·01"))
+    )
+    findings = [
+        f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY
+    ]
+    assert [str(f.id) for f in findings] == ["S·03"]
+    assert "superseded" in findings[0].detail
+
+
+def test_an_undeclared_interface_consumer_is_caught_by_the_audit_instead():
+    """The residual case: a slice that consumes another's interface without
+    declaring the edge. No graph check can see that -- the edge is the only
+    evidence there is. It surfaces afterwards, as a file touched outside the
+    write set, which is exactly 'the planner missed a dependency'."""
+    result = audit(
+        ["search/index.py", "payouts/ledger.py"], ["search/index.py"]
+    )
+    assert result["undeclared"] == ["payouts/ledger.py"]
+    assert "missed a dependency" in result["detail"]

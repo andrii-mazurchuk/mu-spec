@@ -506,9 +506,16 @@ Not yet designed. These need closing before implementation.
   enough to be enforceable rather than aspirational.
 - **Thin intent handling** — when the human says "build me a thing," does the agent
   interrogate or assume-and-flag?
-- **Interface-change detection** — a spec change altering an interface other slices
-  consume looks isolated at spec level and is not. This is the highest-risk undetected
-  case in the current design.
+- ~~**Interface-change detection**~~ — **closed.** It looked isolated at spec level only
+  while consumption was invisible. It is an edge now: a consumer declares `depends_on`,
+  so superseding an entry leaves every consumer pointing at something retired, the
+  bad-dependency gate reports each one, and the graph stays unsound — no work package,
+  no plan — until they are re-derived.
+
+  The residual case is a slice that consumes another's interface *without* declaring the
+  edge. No graph check can see that; the edge is the only evidence there is. It surfaces
+  afterwards instead, in the audit, as a file touched outside the write set — which is
+  precisely "the planner missed a dependency."
 
 ---
 
