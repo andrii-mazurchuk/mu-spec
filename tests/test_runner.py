@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from mu_spec.dispatch import DERIVATION, Dispatch
+from pathlib import Path
+
+from mu_spec.dispatch import DERIVATION, SESSION_TYPES, Dispatch
 from mu_spec.runner import argv_for, discover, gate, run
 
 
@@ -151,3 +153,27 @@ def test_the_gate_releases_even_when_the_body_raises(tmp_path):
     except RuntimeError:
         pass
     assert not lock.exists()
+
+
+# -- the prompts that actually ship ------------------------------------------
+
+_REPO_TYPES = Path(__file__).resolve().parent.parent / "session_types"
+
+
+def test_every_ladder_rung_has_a_prompt_on_disk():
+    """The ladder dispatches by name and the runner resolves that name to a
+    directory. A rename on one side and not the other would dispatch a
+    session type that cannot be launched."""
+    assert discover(_REPO_TYPES) == set(SESSION_TYPES)
+
+
+def test_every_prompt_points_at_the_shared_contract():
+    """SHARED.md carries the issue obligation and the storage boundary. A
+    prompt that never tells the session to read it drops both."""
+    for name in SESSION_TYPES:
+        text = (_REPO_TYPES / name / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "../SHARED.md" in text, name
+
+
+def test_the_shared_contract_is_not_itself_a_session_type():
+    assert "SHARED" not in discover(_REPO_TYPES)
