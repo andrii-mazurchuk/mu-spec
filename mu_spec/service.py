@@ -31,6 +31,7 @@ from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
 from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
+from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
@@ -732,6 +733,129 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
             "the executor freelanced",
         },
     }
+
+
+# -- spec to code -----------------------------------------------------------
+
+
+def declare_module(store: ProjectStore, project: str, body: dict) -> dict:
+    """Record which spec entries a module implements.
+
+    The bottom layer's backlink. Code is not an entry in this graph, so this
+    is the only thing tying a file to the reasoning that produced it --
+    without it the graph stops at spec and the scheme is decorative.
+    """
+    path = body.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise ServiceError("'path' is required")
+    implements = body.get("implements")
+    if implements is not None and not isinstance(implements, list):
+        raise ServiceError("'implements' must be a list of spec identifiers")
+    try:
+        store.set_module(project, path, implements or [])
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+    manifest = store.load_manifest(project)
+    return {
+        "project": project,
+        "path": path.strip(),
+        "implements": sorted(
+            str(i) for i in manifest.modules.get(path.strip(), set())
+        ),
+    }
+
+
+def list_modules(store: ProjectStore, project: str) -> dict:
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    return {
+        "project": project,
+        "modules": [
+            {
+                "path": path,
+                "implements": sorted(str(i) for i in ids),
+                "slice": manifest.slice_of(sorted(ids, key=sort_key)[0]),
+            }
+            for path, ids in sorted(manifest.modules.items())
+        ],
+        # Spec entries no module claims. The bottom layer's version of
+        # "unserved": stated, nothing built.
+        "unimplemented": [
+            str(e.id)
+            for e in graph.entries()
+            if e.id.layer == "S" and not manifest.implementers(e.id)
+        ],
+    }
+
+
+def get_plan(store: ProjectStore, project: str, since: Any) -> dict:
+    """The spec diff since a mark, resolved into a write set and a read set.
+
+    `since` is the spec counter's value at the last plan -- everything
+    numbered above it is new. Omit it for a first iteration, where the whole
+    spec layer is the diff.
+
+    Deliberately not a git diff. That would make code the source of truth:
+    the planner would reason about what the code does rather than what the
+    spec says it should, and the spec layer would be decorative within a few
+    cycles.
+    """
+    try:
+        mark = int(since) if since not in (None, "") else 0
+    except (TypeError, ValueError) as exc:
+        raise ServiceError("'since' must be a number") from exc
+
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    gates = _gate_report(graph, manifest)
+    if not gates["sound"]:
+        return {
+            "project": project,
+            "since": mark,
+            "issued": False,
+            "reason": "graph is unsound -- planning from a broken chain "
+            "produces code derived from a lie",
+            "gates": gates,
+        }
+    result = plan(manifest, graph, spec_diff(graph, mark))
+    return {
+        "project": project,
+        "since": mark,
+        # Pass this back as `since` next time. The counter, not a timestamp:
+        # identifiers are allocated in creation order and never reused, so
+        # the mark means exactly one thing forever.
+        "mark": manifest.allocation.get("S", 0),
+        "issued": True,
+        **result,
+    }
+
+
+def audit_diff(store: ProjectStore, project: str, body: dict) -> dict:
+    """Compare the files actually touched against the write set that was
+    declared.
+
+    Where a git diff belongs: afterwards, as evidence rather than as input.
+    The caller runs git and passes the paths -- this unit never executes
+    anything.
+    """
+    touched = body.get("touched")
+    if not isinstance(touched, list):
+        raise ServiceError("'touched' must be a list of file paths")
+    editable = body.get("editable_paths")
+    if editable is None:
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
+        since = body.get("since", 0)
+        try:
+            mark = int(since) if since not in (None, "") else 0
+        except (TypeError, ValueError) as exc:
+            raise ServiceError("'since' must be a number") from exc
+        editable = plan(manifest, graph, spec_diff(graph, mark))["audit"][
+            "editable_paths"
+        ]
+    if not isinstance(editable, list):
+        raise ServiceError("'editable_paths' must be a list of file paths")
+    return {"project": project, **audit(touched, editable)}
 
 
 # -- 6. review the final layer ----------------------------------------------

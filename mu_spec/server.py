@@ -257,6 +257,63 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "slice"),
         ),
         tool(
+            "declare_module",
+            "Record which spec entries a module implements -- the bottom "
+            "layer's backlink. Code is not an entry in this graph, so this is "
+            "the only thing tying a file to the reasoning that produced it. "
+            "Replaces rather than merges: declaring an empty list removes the "
+            "module. Only spec identifiers are accepted; a module claiming an "
+            "architecture entry has skipped the layer that says how.",
+            "POST",
+            "/projects/{project}/modules",
+            {"project": s, "path": s, "implements": strings},
+            ("project", "path", "implements"),
+        ),
+        tool(
+            "list_modules",
+            "Every module backlink, plus `unimplemented`: the spec entries no "
+            "module claims yet.",
+            "GET",
+            "/projects/{project}/modules",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
+            "get_plan",
+            "The spec-level diff since a mark, resolved into a write set "
+            "(modules implementing a changed entry -- editable) and a read "
+            "set (modules that consumed a changed meaning but did not "
+            "themselves change -- context only). `since` is the `mark` a "
+            "previous plan returned; omit it for a first iteration, where the "
+            "whole spec layer is the diff. This is the planner's input, and "
+            "deliberately NOT a git diff: reasoning from code makes code the "
+            "source of truth and the spec layer decorative within a few "
+            "cycles. Refused while the graph is unsound.",
+            "GET",
+            "/projects/{project}/plan",
+            {"project": s, "since": {"type": "integer"}},
+            ("project",),
+        ),
+        tool(
+            "audit_diff",
+            "Compare the files actually touched against the write set that "
+            "was declared. This is where a git diff belongs -- afterwards, as "
+            "evidence rather than as input. YOU run git and pass the paths in "
+            "`touched`; this unit never executes anything. Pass "
+            "`editable_paths`, or pass `since` and let it derive them. A file "
+            "touched outside the set is a gate failure: either the planner "
+            "missed a dependency or the executor freelanced.",
+            "POST",
+            "/projects/{project}/audit",
+            {
+                "project": s,
+                "touched": strings,
+                "editable_paths": strings,
+                "since": {"type": "integer"},
+            },
+            ("project", "touched"),
+        ),
+        tool(
             "review_layer",
             "Read one layer with each entry's justification chain, what "
             "serves it, and the comments attached to it -- so a reviewer sees "
@@ -352,6 +409,11 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(rf"^/projects/{_P}/reconcile$"), "reconcile"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
     ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
+    # Spec to code.
+    ("POST", re.compile(rf"^/projects/{_P}/modules$"), "declare_module"),
+    ("GET", re.compile(rf"^/projects/{_P}/modules$"), "list_modules"),
+    ("GET", re.compile(rf"^/projects/{_P}/plan$"), "plan"),
+    ("POST", re.compile(rf"^/projects/{_P}/audit$"), "audit"),
     ("GET", re.compile(rf"^/projects/{_P}/review$"), "review"),
 ]
 
@@ -502,6 +564,27 @@ def handle(
                 store, project, params["slice"], body or {}
             )
             return (200 if result["recorded"] else 409), JSON, json.dumps(result)
+
+        if name == "declare_module":
+            return (
+                200,
+                JSON,
+                json.dumps(service.declare_module(store, project, body or {})),
+            )
+
+        if name == "list_modules":
+            return 200, JSON, json.dumps(service.list_modules(store, project))
+
+        if name == "plan":
+            result = service.get_plan(store, project, query.get("since"))
+            return (200 if result["issued"] else 409), JSON, json.dumps(result)
+
+        if name == "audit":
+            return (
+                200,
+                JSON,
+                json.dumps(service.audit_diff(store, project, body or {})),
+            )
 
         if name == "work_package":
             if not query.get("slice"):

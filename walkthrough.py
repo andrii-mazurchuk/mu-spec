@@ -548,6 +548,59 @@ def main(argv=None) -> int:
         print(f"    ESCALATED {e['issue']} [{e['reason']}]")
         print(f"      {e['detail']}")
 
+    # --------------------------------------------------------------- 5e
+    step("5e.", "SPEC TO CODE — the diff a planner acts on, and the audit")
+    print("  Code is not an entry in this graph. Modules declare which spec")
+    print("  entries they implement, and that backlink is the only thing")
+    print("  tying a file to the reasoning that produced it.\n")
+    for path, implements in (
+        ("search/index.py", ["S·01"]),
+        ("search/filters.py", ["S·02"]),
+        ("payouts/release.py", ["S·03"]),
+    ):
+        status, m = call(
+            "POST", f"/projects/{P}/modules",
+            {"path": path, "implements": implements},
+        )
+        print(f"  declare_module -> {status} {path} implements {m['implements']}")
+
+    _, mods = call("GET", f"/projects/{P}/modules")
+    show("spec entries no module claims", mods["unimplemented"])
+
+    status, pl = call("GET", f"/projects/{P}/plan")
+    print(f"\n  get_plan (first iteration) -> {status} issued={pl['issued']}")
+    if pl["issued"]:
+        show("diff.added", pl["diff"]["added"])
+        print("\n  WRITE SET (editable)")
+        for r in pl["write_set"]:
+            print(f"    {r['path']:22} implements {r['implements']} [{r['slice']}]")
+        print("  READ SET (context only)")
+        for r in pl["read_set"]:
+            print(f"    {r['path']:22} implements {r['implements']} [{r['slice']}]")
+        if not pl["read_set"]:
+            print("    (empty: on a first iteration every entry is in the diff,")
+            print("     so there is no unchanged consumer to read. It fills up")
+            print("     on the next plan, when only part of the spec has moved.)")
+        print(f"\n  mark to pass back next time: {pl['mark']}")
+        print("\n  Note this is a SPEC diff, never a git diff. Feeding a git")
+        print("  diff to the planner makes code the source of truth: it starts")
+        print("  reasoning about what the code does rather than what the spec")
+        print("  says it should, and the spec layer is decorative in a few cycles.")
+
+        print("\n  Afterwards, git diff DOES belong -- as audit, not input.")
+        print("  The caller runs git and passes the paths; this unit never")
+        print("  executes anything.")
+        _, aud = call(
+            "POST", f"/projects/{P}/audit",
+            {
+                "touched": pl["audit"]["editable_paths"] + ["search/sneaky.py"],
+                "editable_paths": pl["audit"]["editable_paths"],
+            },
+        )
+        show("clean", aud["clean"])
+        show("undeclared", aud["undeclared"])
+        print(f"    {aud['detail']}")
+
     # ---------------------------------------------------------------- 6
     step("6.", "REVIEW THE FINAL LAYER")
     _, review = call("GET", f"/projects/{P}/review?layer=A&slice=discovery")
@@ -626,6 +679,7 @@ def main(argv=None) -> int:
     print("\n  Every identifier is unchanged. discovery's membership is now")
     print("  non-contiguous, which is why it is a set and never a range.")
 
+    # ---------------------------------------------------------------- 9
     # ---------------------------------------------------------------- 9
     step("9.", "WHAT IS ON DISK")
     for path in sorted(root.rglob("*")):

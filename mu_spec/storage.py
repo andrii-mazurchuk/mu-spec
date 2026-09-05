@@ -171,12 +171,24 @@ class Manifest:
     # retires it but never frees its number, because every historical
     # reference must keep meaning what it meant.
     allocation: dict[str, int] = dataclasses.field(default_factory=dict)
+    # module path -> the spec entries it implements. The bottom layer's
+    # backlink: code is not an entry in the graph, so this is the only thing
+    # tying a file to the reasoning that produced it. Without it the graph
+    # stops at spec and the whole scheme is decorative.
+    modules: dict[str, set[Identifier]] = dataclasses.field(default_factory=dict)
 
     def slice_of(self, identifier: Identifier) -> str | None:
         for name, sl in self.slices.items():
             if identifier in sl.members:
                 return name
         return None
+
+    def implementers(self, identifier: Identifier) -> tuple[str, ...]:
+        """Which modules declare they implement this entry. The write set is
+        built from exactly this."""
+        return tuple(
+            sorted(p for p, ids in self.modules.items() if identifier in ids)
+        )
 
     def cross_cutting(self) -> tuple[str, ...]:
         """Every cross-cutting slice, in name order. These land in every
@@ -221,6 +233,10 @@ class Manifest:
                     for name, sl in sorted(self.slices.items())
                 },
                 "allocation": self.allocation,
+                "modules": {
+                    path: sorted(str(i) for i in ids)
+                    for path, ids in sorted(self.modules.items())
+                },
             },
             indent=2,
         )
@@ -239,6 +255,10 @@ class Manifest:
                 for name, body in raw.get("slices", {}).items()
             },
             allocation=dict(raw.get("allocation", {})),
+            modules={
+                path: {parse(i) for i in ids}
+                for path, ids in raw.get("modules", {}).items()
+            },
         )
 
 
@@ -302,6 +322,43 @@ class ProjectStore:
         manifest.allocation[layer] = nxt
         self.save_manifest(project, manifest)
         return Identifier(layer=layer, number=nxt)
+
+    def set_module(self, project: str, path: str, implements: list[str]) -> None:
+        """Declare which spec entries a module implements.
+
+        Replaces rather than merges: a module that has stopped implementing
+        something must be able to say so, or the write set keeps handing out
+        files nobody needs. Declaring nothing removes it.
+
+        Every identifier is checked against the live graph, and must be at
+        spec. Code implements spec; a module claiming an architecture entry
+        has skipped the layer that says how, and the backlink would point at
+        a decision rather than an instruction.
+        """
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("a module path is required")
+        graph = self.load_graph(project)
+        parsed: set[Identifier] = set()
+        for raw in implements or []:
+            try:
+                identifier = parse(str(raw))
+            except InvalidIdentifier as exc:
+                raise ValueError(str(exc)) from exc
+            if identifier.layer != "S":
+                raise ValueError(
+                    f"{identifier} is at {identifier.layer_name}; a module "
+                    "implements spec entries, not the layers above them"
+                )
+            if identifier not in graph:
+                raise ValueError(f"{identifier} does not exist")
+            parsed.add(identifier)
+
+        manifest = self.load_manifest(project)
+        if parsed:
+            manifest.modules[path.strip()] = parsed
+        else:
+            manifest.modules.pop(path.strip(), None)
+        self.save_manifest(project, manifest)
 
     def set_slice_type(self, project: str, slice_name: str, slice_type: str) -> None:
         """Mark a slice as cross-cutting, or back to ordinary. A classification

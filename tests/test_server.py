@@ -118,6 +118,10 @@ def test_tools_manifest_declares_the_operations(store, prompts):
         "list_issues",
         "close_issue",
         "get_reconciliation",
+        "declare_module",
+        "list_modules",
+        "get_plan",
+        "audit_diff",
         "get_work_package",
         "review_layer",
     } <= names
@@ -1405,3 +1409,155 @@ def test_issues_are_kept_apart_from_the_inbox(store, prompts):
     _issue(store, prompts, "S·01", "additive", "needs a size")
     _, messages = call(store, prompts, "GET", "/inbox")
     assert not any("needs a size" in m["title"] for m in messages["messages"])
+
+
+# -- spec to code, end to end ------------------------------------------------
+
+
+def _implemented(store, prompts):
+    """The seeded project with S·01 implemented by a module."""
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search/index.py", "implements": ["S·01"]})
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "payouts/ledger.py", "implements": ["S·03"]})
+    return mid
+
+
+def test_a_module_declares_what_it_implements(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/modules",
+                           {"path": "search/index.py", "implements": ["S·01"]})
+    assert (status, payload["implements"]) == (200, ["S·01"])
+
+
+def test_spec_entries_nothing_implements_are_listed(store, prompts):
+    """The bottom layer's version of unserved: stated, nothing built."""
+    _two_columns(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search/index.py", "implements": ["S·01"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/modules")
+    assert payload["unimplemented"] == ["S·02"]
+
+
+def test_a_module_claiming_a_layer_above_spec_is_refused(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/modules",
+                           {"path": "search/index.py", "implements": ["A·01"]})
+    assert status == 400
+    assert "implements spec entries" in payload["error"]
+
+
+def test_the_first_plan_is_the_whole_spec_layer(store, prompts):
+    _implemented(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/plan")
+    assert payload["issued"] is True
+    assert payload["diff"]["added"] == ["S·01", "S·02", "S·03"]
+    assert payload["mark"] == 3
+
+
+def test_a_supersession_produces_a_write_set_and_a_read_set(store, prompts):
+    """search/index.py implemented S·01 and must change. payouts/ledger.py
+    consumed S·01's meaning through S·03 and is read-only context."""
+    mid = _implemented(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "a different index module",
+                    "derives_from": ["A·01"],
+                    "supersedes": "S·01",
+                }
+            ],
+        },
+    )
+    # S·03 still points at retired S·01, so re-derive it before planning.
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "payouts",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "ledger reads the new index",
+                    "derives_from": ["A·02"],
+                    "depends_on": ["S·04"],
+                    "supersedes": "S·03",
+                }
+            ],
+        },
+    )
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "payouts/ledger.py", "implements": ["S·05"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/plan?since=3")
+    assert payload["diff"]["retired"] == ["S·01", "S·03"]
+    assert [r["path"] for r in payload["write_set"]] == [
+        "payouts/ledger.py",
+        "search/index.py",
+    ]
+
+
+def test_planning_is_refused_while_the_graph_is_unsound(store, prompts):
+    """Planning from a broken chain produces code derived from a lie."""
+    mid = _implemented(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "S",
+                    "title": "a different index module",
+                    "derives_from": ["A·01"],
+                    "supersedes": "S·01",
+                }
+            ],
+        },
+    )
+    status, payload = call(store, prompts, "GET", "/projects/m/plan?since=3")
+    assert (status, payload["issued"]) == (409, False)
+
+
+def test_the_audit_compares_touched_files_against_the_write_set(store, prompts):
+    _implemented(store, prompts)
+    _, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/audit",
+        {
+            "touched": ["search/index.py", "search/secret_helper.py"],
+            "editable_paths": ["search/index.py"],
+        },
+    )
+    assert payload["clean"] is False
+    assert payload["undeclared"] == ["search/secret_helper.py"]
+
+
+def test_the_audit_can_derive_the_write_set_itself(store, prompts):
+    _implemented(store, prompts)
+    _, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/audit",
+        {"touched": ["search/index.py", "payouts/ledger.py"], "since": 0},
+    )
+    assert payload["clean"] is True

@@ -51,7 +51,7 @@ which calls this one.
 | Storing entries; enforcing identifier permanence and append-only history | Authoring entry bodies |
 | Spine generation; retrieval of bodies by identifier | Deciding which entries a task needs |
 | Admission gates: orphans, broken same-layer edges, slice cycles, cross-cutting reaching into a feature slice, unserved requirements | Judgement gates: flagging what could not be derived |
-| Blast radius; spec-diff → write set / read set | Classifying a correction to its layer |
+| Blast radius; spec-diff → write set / read set; auditing a diff against the declared write set | Classifying a correction to its layer |
 | Wave assignment: the order slices may be worked in, from the projected graph | Deciding a slice is worth working at all |
 | The issue queue: storing it, grouping it by target slice, computing each batch's re-run scope, escalating what is not a repair | Whether an issue is additive or semantic, and what the actual fix is |
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |

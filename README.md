@@ -78,7 +78,11 @@ Enforced, not documented. Violating one is a hard error, not a warning.
   with.
 - Amendments are append-only, with a superseding marker.
 - Slices split, never merge.
-- Cross-cutting entries are read-only from a slice.
+- No slice ever writes into another. One entry belongs to exactly one slice,
+  and slices define write ownership.
+- An edge into a cross-cutting slice is `emits_into`, never `depends_on`, and
+  a cross-cutting slice holds no outbound dependency into a feature slice.
+- Slice dependency is projected from entry edges, never authored.
 
 ## Two settled decisions
 
@@ -97,27 +101,29 @@ python walkthrough.py                 # runs the whole pipeline, prints every st
 python walkthrough.py --keep ./demo   # leave the files behind to read
 ```
 
-It starts a real server on a real socket and makes real HTTP requests --
-nothing is stubbed. It walks intent → behaviour → architecture → spec across
-two slices, shows the gate refusing an unsound amendment, issues a work
-package, splits a slice, and prints what ended up on disk. Read it top to
-bottom and you can see exactly what the unit does and judge whether the shape
-is right.
+It calls the request handler directly by default (`--http` binds a real socket
+instead); nothing is stubbed either way, since `handle()` is the whole
+service. It walks intent → behaviour → architecture → spec across two feature
+slices and one cross-cutting one, shows the gates refusing what they should,
+computes waves, files issues and routes them, plans spec-to-code, audits a
+diff, issues a work package, splits a slice, and prints what ended up on
+disk. Read it top to bottom and you can judge whether the shape is right.
 
 ## Status
 
 Working end to end, over HTTP. Storage, the graph and its three edge kinds,
 five admission gates, slice classification, wave assignment, the issue queue
-and its router, and the work package.
+and its router, module backlinks, spec-level diffs resolved into write and
+read sets, the git-diff audit, and the work package.
 
 Run `python walkthrough.py` to watch the whole pipeline behave — it is the
 fastest way to see what this does.
 
-Not built yet: spec-level diffs, so a work package can carry only what
-*changed* rather than a whole slice, and the code layer's module backlinks.
-Per-layer field shapes (`docs/DESIGN.md` §11) are still open and deliberately
-do not block anything — the graph needs only `id`, the edge lists and `body`,
-and the shapes constrain only what goes inside a body.
+Every mechanical operation the architecture calls for is implemented. What
+remains open is design, not code: per-layer field shapes, session boundaries,
+judgement-call criteria, thin-intent handling (`docs/DESIGN.md` §11). None of
+it blocks anything — the graph needs only `id`, the edge lists and `body`, and
+those shapes constrain only what goes inside a body.
 
 ## Commands
 

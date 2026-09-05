@@ -450,12 +450,18 @@ moves.
 ### 10.1 First iteration
 
 Spec entries are planned into tasks and executed. Each module records the spec
-identifiers it implements.
+identifiers it implements — the bottom layer's backlink, and the only thing tying a file
+to the reasoning that produced it. A module may only claim *spec* entries: one claiming
+an architecture entry has skipped the layer that says how, and would be pointing at a
+decision rather than an instruction.
 
 ### 10.2 Subsequent changes
 
 The planner's input is a **spec-level diff** — which spec entries were added, modified
-or superseded. This falls out of propagation for free.
+or superseded. This falls out of propagation for free, and literally so: identifiers are
+allocated in creation order from a per-layer counter that only ever moves up, so "created
+since state N" is just "numbered above N". No history file, no timestamps, and no second
+copy of anything that could drift from the first.
 
 **Do not feed a git diff to the planner as input.** That makes code the source of
 truth: the planner starts reasoning about what the code does rather than what the spec
@@ -464,8 +470,12 @@ says it should do, and within a few cycles the spec layer is decorative.
 The planner resolves the spec diff into two sets:
 
 - **Write set** — modules declaring they implement a changed spec entry. Editable.
-- **Read set** — modules depending on those, whose own spec entries did not change.
-  Read-only context.
+- **Read set** — modules implementing entries that *depend on* a changed one but did not
+  themselves change. Read-only context. Computed from entry-level edges, so it is the
+  modules that actually consumed the changed meaning, not everything in the slice.
+- **Unimplemented** — added entries no module claims yet. Not a failure, it is the new
+  work — but it has to be visible, or a planner silently emits no task for a requirement
+  that has no file yet.
 
 This makes "peeking at related features" a declared, bounded operation instead of the
 executor wandering the repo.
