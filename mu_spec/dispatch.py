@@ -78,8 +78,10 @@ class Dispatch:
         lines = [
             "# Session brief",
             "",
-            f"You are a `{self.session_type}` session. Your static contract is the",
-            "`CLAUDE.md` already loaded from this directory; read `../SHARED.md` next.",
+            f"You are a `{self.session_type}` session. Your contract is the",
+            "`CLAUDE.md` already loaded from this directory, and the shared contract",
+            "it imports. Both are already in your context; you do not need to fetch",
+            "them.",
             "",
             f"- mu-spec base URL: {base_url}",
             f"- project: {self.project or '(none yet -- this request creates it)'}",
@@ -95,6 +97,24 @@ class Dispatch:
         for key, value in self.scope.items():
             rendered = ", ".join(str(v) for v in value) if isinstance(value, list) else value
             lines.append(f"- {key}: {rendered}")
+
+        # Without this the brief only *describes* the situation, and the first
+        # live session read it as context and replied "I'm ready. What do you
+        # need?" -- there was nobody to answer, so it exited having done
+        # nothing, and a clean exit was recorded as success.
+        lines += [
+            "",
+            "## Begin",
+            "",
+            "Do this work now, using the HTTP API above.",
+            "",
+            "**This is a headless run.** There is nobody to answer a question, and no",
+            "confirmation is coming -- asking one ends the session having done nothing.",
+            "If something is genuinely undecidable, the contract tells you what to do:",
+            "file an issue, state the assumption, and carry on.",
+            "",
+            "Finish the work in your scope, then stop.",
+        ]
         return "\n".join(lines) + "\n"
 
 

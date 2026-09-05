@@ -21,7 +21,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from mu_spec import service
 from mu_spec.service import ServiceError
@@ -525,7 +525,10 @@ def handle(
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
-    path = parsed.path.rstrip("/") or "/"
+    # Identifiers contain U+00B7, so any correct client percent-encodes them.
+    # Without this every entry lookup 404s -- which is every identifier this
+    # unit has ever issued.
+    path = unquote(parsed.path).rstrip("/") or "/"
     query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
     body = body or {}
 

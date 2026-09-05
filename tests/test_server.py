@@ -1792,3 +1792,15 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         assert name in exposed, f"route {name!r} is exposed by no tool"
         if exposed[name]:
             assert exposed[name] in declared
+
+
+def test_a_percent_encoded_identifier_resolves(store, prompts):
+    """Every identifier contains U+00B7, so a correct client percent-encodes
+    it. The path was never unquoted, which made get_entry -- retrieval by
+    identifier, one of this unit's core operations -- unreachable over HTTP
+    for every entry that has ever existed."""
+    seed(store, prompts)
+    raw = call(store, prompts, "GET", "/projects/m/entries/I·01")
+    encoded = call(store, prompts, "GET", "/projects/m/entries/I%C2%B701")
+    assert raw[0] == 200
+    assert encoded == raw

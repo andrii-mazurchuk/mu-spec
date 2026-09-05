@@ -1,6 +1,8 @@
 # Back-check session
 
-**Read `../SHARED.md` before anything else.** This file only covers what is
+@../SHARED.md
+
+**The shared contract above is part of your instructions.** This file only covers what is
 specific to back-checking.
 
 ## Why you are running

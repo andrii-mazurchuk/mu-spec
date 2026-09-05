@@ -1,6 +1,8 @@
 # Triage session
 
-**Read `../SHARED.md` before anything else.** It carries the rules every
+@../SHARED.md
+
+**The shared contract above is part of your instructions.** It carries the rules every
 session obeys — how to reach mu-spec, the issue obligation, what an
 amendment must cite. This file only covers what is specific to triage.
 

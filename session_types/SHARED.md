@@ -30,6 +30,12 @@ Three kinds of edge, and they answer different questions:
 **Over HTTP, like any other caller.** The base URL is in your dynamic
 prompt.
 
+**Use `curl`.** It is the only network command you are permitted, and the
+allowlist is deliberately narrow rather than generous. `python`, PowerShell
+and `WebFetch` will not work: the first two are not granted, and `WebFetch`
+forces HTTPS and cannot POST, so it can reach neither a local plain-HTTP
+unit nor any write endpoint.
+
 You are running inside mu-spec's own repository. That does not give you a
 shortcut: **never read or write `state/`, and never edit the graph on
 disk.** Every admission gate lives behind the API precisely so a session in

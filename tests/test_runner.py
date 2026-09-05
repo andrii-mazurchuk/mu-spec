@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mu_spec.dispatch import DERIVATION, SESSION_TYPES, Dispatch
-from mu_spec.runner import argv_for, discover, gate, run
+from mu_spec.runner import argv_for, discover, gate, resolve, run
 
 
 def _types(tmp_path, *names):
@@ -25,8 +25,8 @@ class _Spawn:
     def __init__(self, code=0, detail=""):
         self.code, self.detail, self.calls = code, detail, []
 
-    def __call__(self, argv, cwd):
-        self.calls.append((list(argv), cwd))
+    def __call__(self, argv, cwd, prompt=""):
+        self.calls.append((list(argv), cwd, prompt))
         return self.code, self.detail
 
 
@@ -48,19 +48,47 @@ def test_discovery_of_a_missing_root_is_empty_not_an_error(tmp_path):
 
 
 def test_the_model_flag_is_passed_when_a_type_declares_one():
-    assert "--model" in argv_for("prompt", "claude-opus-5")
-    assert "claude-opus-5" in argv_for("prompt", "claude-opus-5")
+    assert "--model" in argv_for("claude-opus-5")
+    assert "claude-opus-5" in argv_for("claude-opus-5")
 
 
 def test_the_model_flag_is_omitted_entirely_when_none():
     """Omitted, not passed empty -- that leaves the CLI's own default in
     effect rather than overriding it with nothing."""
-    assert "--model" not in argv_for("prompt", None)
+    assert "--model" not in argv_for(None)
 
 
-def test_the_prompt_is_passed_with_dash_p():
-    argv = argv_for("do the thing", None)
-    assert argv[argv.index("-p") + 1] == "do the thing"
+def test_the_prompt_is_never_an_argument():
+    """It goes over stdin. As an argv element it is truncated at the first
+    newline by the Windows .CMD shim, which is what silently reduced the
+    first three live briefs to their heading."""
+    argv = argv_for(None)
+    assert "the whole brief" not in " ".join(argv)
+    assert argv[:2] == ["claude", "-p"]
+
+
+def test_the_prompt_reaches_the_launcher_over_stdin(tmp_path):
+    _types(tmp_path, DERIVATION)
+    spawn = _Spawn()
+    run(_dispatch(), "the whole brief\nwith a second line", root=tmp_path, spawn=spawn)
+    _argv, _cwd, prompt = spawn.calls[0]
+    assert prompt == "the whole brief\nwith a second line"
+
+
+def test_a_multi_line_prompt_survives_the_real_launcher(tmp_path):
+    """The regression that cost three live runs, pinned against the real
+    subprocess path rather than a fake."""
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    code, detail = _spawn(
+        [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read())"],
+        tmp_path,
+        "line one\nline two",
+    )
+    assert code == 0
+    assert detail == "line one\nline two"
 
 
 # -- running -----------------------------------------------------------------
@@ -81,7 +109,7 @@ def test_the_session_runs_in_its_own_type_directory(tmp_path):
     _types(tmp_path, DERIVATION)
     spawn = _Spawn()
     run(_dispatch(), "prompt", root=tmp_path, spawn=spawn)
-    _, cwd = spawn.calls[0]
+    _, cwd, _prompt = spawn.calls[0]
     assert cwd == tmp_path / DERIVATION
 
 
@@ -186,9 +214,90 @@ def test_a_session_that_overruns_is_killed_and_reported(tmp_path):
 
     _types(tmp_path, DERIVATION)
 
-    def hang(argv, cwd):
+    def hang(argv, cwd, prompt=""):
         raise subprocess.TimeoutExpired(argv, 0.01)
 
     result = run(_dispatch(), "prompt", root=tmp_path, spawn=hang)
     assert result.ok is False
     assert "timed out" in result.detail.lower()
+
+
+def test_the_launcher_name_is_resolved_before_it_is_executed():
+    """On Windows `claude` is a .CMD shim, and CreateProcess does not apply
+    PATHEXT to a bare name in list form -- so the unresolved name raises
+    FileNotFoundError and no session ever starts."""
+    import shutil
+
+    resolved = resolve("claude")
+    assert resolved == (shutil.which("claude") or "claude")
+
+
+def test_an_unresolvable_name_is_returned_unchanged():
+    assert resolve("definitely-not-a-real-binary") == "definitely-not-a-real-binary"
+
+
+def test_a_launcher_that_cannot_be_started_is_a_failed_result(tmp_path):
+    """The first live run died here: the exception escaped run_pipeline and
+    reached the request handler, which returned an empty body. Nothing may
+    escape into a handler -- a session that cannot start is a failed result."""
+    _types(tmp_path, DERIVATION)
+
+    def missing(argv, cwd, prompt=""):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    result = run(_dispatch(), "prompt", root=tmp_path, spawn=missing)
+    assert result.ok is False
+    assert "could not start" in result.detail.lower()
+
+
+def test_stdout_is_the_record_not_stderr(tmp_path):
+    """The first live run reported three unrelated permission warnings as
+    the session's result. `claude -p` writes its answer to stdout and this
+    environment always has something on stderr, so `stderr or stdout`
+    discarded the answer every single time."""
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    code, detail = _spawn(
+        [sys.executable, "-c",
+         "import sys; sys.stdin.read(); sys.stdout.write('THE ANSWER');"
+         " sys.stderr.write('noise')"],
+        tmp_path,
+    )
+    assert code == 0
+    assert detail == "THE ANSWER"
+
+
+def test_a_failure_keeps_stderr_because_that_is_where_the_reason_is(tmp_path):
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    code, detail = _spawn(
+        [sys.executable, "-c",
+         "import sys; sys.stdin.read();"
+         " sys.stderr.write('what went wrong'); sys.exit(3)"],
+        tmp_path,
+    )
+    assert code == 3
+    assert "what went wrong" in detail
+
+
+def test_a_session_is_granted_the_tools_it_needs():
+    """The first session that actually read its brief could do nothing: every
+    curl, python and PowerShell call came back "This command requires
+    approval", and a headless run has nobody to approve it."""
+    argv = argv_for(None)
+    joined = " ".join(argv)
+    assert "--allowedTools" in argv
+    assert "curl" in joined
+
+
+def test_only_build_may_write_files():
+    """Every other session type writes entries through the API. A derivation
+    session holding Write could edit the graph on disk and skip every gate."""
+    from mu_spec.dispatch import BUILD
+
+    assert "Write" not in " ".join(argv_for(None, DERIVATION))
+    assert "Write" in " ".join(argv_for(None, BUILD))

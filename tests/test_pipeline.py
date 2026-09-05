@@ -268,3 +268,20 @@ def test_a_dry_run_reports_the_dispatch_and_launches_nothing(parts, tmp_path):
 def test_a_dry_run_with_nothing_eligible_says_so(parts, tmp_path):
     out = _run(parts, _Runner(), tmp_path, dry_run=True)
     assert out["ran"] is False and out.get("would_run") is None
+
+
+def test_the_brief_instructs_rather_than_only_describes():
+    """The first live session read a purely descriptive brief as context and
+    replied "I'm ready. What do you need?" -- then exited 0 having done
+    nothing, which the loop recorded as success."""
+    d = Dispatch(TRIAGE, "m", {"request": "msg-0001"}, "why")
+    brief = d.brief("http://x")
+    assert "Do this work now" in brief
+    assert "headless" in brief.lower()
+
+
+def test_the_brief_does_not_ask_the_session_to_fetch_its_own_contract():
+    """SHARED.md is @-imported by each CLAUDE.md, because the repo's
+    Read(../**) deny rule blocks a session from reading it as a file."""
+    d = Dispatch(TRIAGE, "m", {"request": "msg-0001"}, "why")
+    assert "read `../SHARED.md`" not in d.brief("http://x")
