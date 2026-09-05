@@ -53,6 +53,7 @@ which calls this one.
 | Admission gates: orphans, broken same-layer edges, slice cycles, cross-cutting reaching into a feature slice, unserved requirements | Judgement gates: flagging what could not be derived |
 | Blast radius; spec-diff → write set / read set | Classifying a correction to its layer |
 | Wave assignment: the order slices may be worked in, from the projected graph | Deciding a slice is worth working at all |
+| The issue queue: storing it, grouping it by target slice, computing each batch's re-run scope, escalating what is not a repair | Whether an issue is additive or semantic, and what the actual fix is |
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |
 
 The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
@@ -88,6 +89,10 @@ is an error the caller sees, not a warning in a log.
 - **Slice dependency is projected from entry edges, never authored.** There is
   deliberately no field to declare it in; two statements of the same fact
   drift, and the authored one goes stale.
+- **Agents never message each other.** A request from one part of the
+  pipeline to another is an issue filed against the target *entry*, and the
+  raiser proceeds on a stated assumption. Anything else means blocking or
+  nondeterminism, and the audit property is gone either way.
 - **An edge into a cross-cutting slice is `emits_into`, never `depends_on`;
   a cross-cutting slice has no outbound dependency into a feature slice.**
   An emission imposes no order, which is what keeps a concern derivable

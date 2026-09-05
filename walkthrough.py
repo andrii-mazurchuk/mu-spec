@@ -487,6 +487,67 @@ def main(argv=None) -> int:
         print("\n  chain=true: every wave is one slice wide, so nothing can be")
         print("  done in parallel. A signal that the slices are too coupled.")
 
+    # --------------------------------------------------------------- 5d
+    step("5d.", "ISSUES — one part of the pipeline asking another for a fix")
+    print("  The payouts agent finds things missing from the index. It does")
+    print("  not message the discovery agent -- that agent is finished and")
+    print("  gone. It files issues against the artifact and proceeds on a")
+    print("  stated assumption.\n")
+    for target, kind, claim, by in (
+        ("S·01", "additive", "no way to ask the index for its size", "payouts"),
+        ("S·01", "additive", "no way to page through results", "payouts"),
+        ("S·01", "semantic", "the index returns ids where it said names",
+         "discovery"),
+    ):
+        status, iss = call(
+            "POST",
+            f"/projects/{P}/issues",
+            {
+                "target": target,
+                "kind": kind,
+                "claim": claim,
+                "raised_by": by,
+                "assumption": "assumed the current shape and carried on",
+            },
+        )
+        print(f"  raise_issue({kind:8}) -> {status} {iss['id']} against "
+              f"{target} in {iss['target_slice']}")
+
+    _, rec = call("GET", f"/projects/{P}/reconcile")
+    print("\n  RECONCILIATION — grouped by target slice, in dependency order")
+    for b in rec["batches"]:
+        print(f"    {b['slice']} (wave {b['wave']}) — {len(b['issues'])} issue(s)")
+        for i in b["issues"]:
+            print(f"        [{i['kind']:8}] {i['claim']}")
+        print(f"        re-run: {b['rerun'] or '(nothing)'}")
+    for e in rec["escalations"]:
+        print(f"    ESCALATED {e['issue']}: {e['reason']}")
+
+    print("\n  The router read only those headers -- about thirty tokens each,")
+    print("  never an assumption and never a target's body. That is what keeps")
+    print("  its cost flat: a hundred issues across six slices is six batches,")
+    print("  and the expensive reading happens in a session that was going to")
+    print("  load that column anyway.")
+    print("\n  The additive ones re-run nothing: a new entry changes no")
+    print("  existing meaning. The semantic one names exactly what consumed")
+    print("  the old meaning -- from the entries' own edges, not a whole column.")
+
+    print("\n  And an issue that is not a repair goes to a human instead:")
+    call(
+        "POST",
+        f"/projects/{P}/issues",
+        {
+            "target": "S·01",
+            "kind": "semantic",
+            "claim": "the index means something else entirely",
+            "raised_by": "payouts",
+        },
+    )
+    _, rec2 = call("GET", f"/projects/{P}/reconcile")
+    for e in rec2["escalations"]:
+        print(f"    ESCALATED {e['issue']} [{e['reason']}]")
+        print(f"      {e['detail']}")
+
     # ---------------------------------------------------------------- 6
     step("6.", "REVIEW THE FINAL LAYER")
     _, review = call("GET", f"/projects/{P}/review?layer=A&slice=discovery")

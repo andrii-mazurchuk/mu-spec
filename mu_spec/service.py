@@ -30,6 +30,8 @@ from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
+from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
+from mu_spec.reconcile import route
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
@@ -484,6 +486,105 @@ def get_entry(store: ProjectStore, project: str, identifier: str) -> dict:
     )
     view["children"] = [str(i) for i in graph.children(ident)]
     return view
+
+
+# -- the internal queue -----------------------------------------------------
+
+
+def raise_issue(
+    store: ProjectStore,
+    issues: IssueLog,
+    project: str,
+    body: dict,
+    now_fn: Callable[[], float],
+) -> dict:
+    """File a request against an artifact.
+
+    An agent that finds another slice's entry wrong or missing files this and
+    proceeds on its stated assumption. It does not message that slice's agent,
+    because there is no such channel: that agent is finished, and a live one
+    would mean blocking or nondeterminism, either of which loses the audit
+    property.
+
+    The target's slice is resolved and stored here, at filing time, so
+    grouping later does not depend on membership that may since have moved.
+    """
+    manifest = store.load_manifest(project)
+    target_slice = None
+    raw_target = body.get("target")
+    if isinstance(raw_target, str) and raw_target.strip():
+        try:
+            target_slice = manifest.slice_of(parse(raw_target))
+        except InvalidIdentifier as exc:
+            raise ServiceError(f"'target': {exc}") from exc
+    try:
+        issue = issues.raise_issue(
+            {**body, "project": project}, target_slice, now_fn
+        )
+    except IssueError as exc:
+        raise ServiceError(str(exc)) from exc
+    return {
+        **issue.to_json(),
+        "next": "proceed on your assumption; this is repaired in the next "
+        "reconciliation, not now",
+    }
+
+
+def list_issues(issues: IssueLog, project: str, query: dict) -> dict:
+    rows = issues.list(
+        project=project,
+        status=query.get("status"),
+        target_slice=query.get("slice"),
+    )
+    return {"project": project, "issues": [i.to_json() for i in rows]}
+
+
+def close_issue(issues: IssueLog, issue_id: str, body: dict) -> dict:
+    try:
+        issue = issues.close(
+            issue_id,
+            body.get("status", RESOLVED),
+            body.get("note", ""),
+            body.get("produced", []),
+        )
+    except IssueError as exc:
+        raise ServiceError(str(exc)) from exc
+    return issue.to_json()
+
+
+def get_reconciliation(store: ProjectStore, issues: IssueLog, project: str) -> dict:
+    """The open queue, grouped into one repair batch per target slice.
+
+    Run after every wave rather than once per layer: a smaller blast radius,
+    and failures caught while the context that produced them is still narrow.
+
+    Each batch carries its own re-run scope -- the entries that consumed a
+    meaning one of its issues says has moved, computed at entry level from
+    the entries' own edges. Batches come back in dependency order.
+
+    `escalations` are the issues that are not repairs: past the round cap, or
+    semantically reaching back into a wave that is already finished. Those go
+    to a human. Nothing here is dispatched -- this unit produces the batches
+    as data, and whatever runs a repair session lives elsewhere.
+    """
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    batches, escalations = route(
+        manifest, graph, issues.list(project=project, status=OPEN)
+    )
+    return {
+        "project": project,
+        "batches": [b.to_json() for b in batches],
+        "escalations": [
+            {"issue": e.issue, "reason": e.reason, "detail": e.detail}
+            for e in escalations
+        ],
+        "next": (
+            "run one repair session per batch, in the order given"
+            if batches
+            else "nothing open"
+        ),
+    }
 
 
 def get_waves(store: ProjectStore, project: str) -> dict:

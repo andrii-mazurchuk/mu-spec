@@ -386,6 +386,65 @@ prompting needs work. This is the debug signal for the agent system itself.
 
 ---
 
+## 9a. Issues: the internal queue
+
+An agent deriving one slice discovers another slice's entry is wrong or missing
+something. **There is no agent-to-agent channel, deliberately.** That agent is finished
+and gone; and a live one would mean either blocking or nondeterminism, and either way the
+audit property is lost.
+
+Instead it files an **issue against the artifact** — a numbered entry naming the target
+entry, the requesting slice, and a one-line claim — then proceeds on its stated
+assumption and flags that assumption as a judgement call. A queue against files, not an
+inbox between processes. Kept separate from the human-facing inbox: that one is what the
+outside world wants, this is what one part of the pipeline needs from another.
+
+**Two kinds, and the difference is what it costs:**
+
+- **Additive** — a new entry is needed. Nothing existing changes meaning, so nothing
+  downstream is invalidated and nothing re-runs.
+- **Semantic** — an existing entry that others already consumed now means something
+  else. Its consumers are invalidated. Expensive, correctly so, and rare if the slicing
+  was good.
+
+Which one it is, is a judgement about meaning — the raiser's call. What is computed is
+the *consequence*.
+
+### The router routes; repair sessions resolve
+
+Run **after every wave**, not once per layer: a smaller blast radius, and failures caught
+while the context that produced them is still narrow.
+
+The router reads **issue headers only** — target, requester, kind, one-line claim, about
+thirty tokens each. Never an assumption, never a target's body. It groups by target slice
+and dispatches one repair per slice. That is what keeps its cost flat: a hundred issues
+across six slices is six repair sessions, and the expensive reading happens inside a
+session that was going to load that column anyway.
+
+### Re-run scope
+
+Computed at the **entry** level, never the slice level. If `B·31` changed meaning, only
+the entries declaring `depends_on: B·31` are invalid — usually a handful, not a column.
+Direct dependents only: an entry two hops away consumed its *neighbour's* meaning, and
+whether that moved is not known until the neighbour is actually repaired.
+
+### Termination
+
+Repairs can raise their own issues. Two rules keep it bounded:
+
+- Repairs run in dependency order, tiebroken by slice name. Arbitrary but deterministic,
+  which is what reproducibility needs.
+- **Cap at two rounds.** Past that it goes to a human. Without a cap the system
+  oscillates and nobody notices until it has burned a day.
+
+And a **semantic issue reaching backwards into a completed wave is a conflict, not a
+cascade.** Everything derived from that entry in the waves since is now suspect, and that
+signal means the slicing itself was wrong — not something to repair automatically. An
+*additive* issue reaching backwards is fine: it invalidates nothing, so nothing behind it
+moves.
+
+---
+
 ## 10. Spec to code
 
 ### 10.1 First iteration

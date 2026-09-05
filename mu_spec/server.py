@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 from mu_spec import service
 from mu_spec.service import ServiceError
 from mu_spec.inbox import Inbox, InboxError
+from mu_spec.issues import IssueError, IssueLog
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
@@ -167,6 +168,66 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "slice", "type"),
         ),
         tool(
+            "raise_issue",
+            "File a request against another slice's entry, then proceed on "
+            "your own stated assumption. There is no agent-to-agent channel "
+            "and deliberately so: the agent that wrote the target is gone, "
+            "and messaging a live one would mean blocking or nondeterminism. "
+            "`kind` is 'additive' (a new entry is needed; nothing existing "
+            "changes meaning, so nothing re-runs) or 'semantic' (an existing "
+            "entry others already consumed now means something else; its "
+            "consumers are invalidated). That call is a judgement about "
+            "meaning, so you make it and this unit records it. Put the "
+            "claim on one line -- the router reads headers only -- and put "
+            "what you assumed in `assumption`.",
+            "POST",
+            "/projects/{project}/issues",
+            {
+                "project": s,
+                "target": s,
+                "kind": s,
+                "claim": s,
+                "assumption": s,
+                "raised_by": s,
+                "round": {"type": "integer"},
+            },
+            ("project", "target", "kind", "claim"),
+        ),
+        tool(
+            "list_issues",
+            "The issue queue for a project. Filter by status "
+            "(open/resolved/escalated) or by the slice an issue targets.",
+            "GET",
+            "/projects/{project}/issues",
+            {"project": s, "status": s, "slice": s},
+            ("project",),
+        ),
+        tool(
+            "close_issue",
+            "Close an issue: resolved (with what it produced) or escalated "
+            "(it needs a human).",
+            "POST",
+            "/projects/{project}/issues/{iid}/close",
+            {"project": s, "iid": s, "status": s, "note": s, "produced": strings},
+            ("project", "iid"),
+        ),
+        tool(
+            "get_reconciliation",
+            "The open issue queue grouped into one repair batch per target "
+            "slice, in dependency order. Run this after every wave, not once "
+            "per layer. Each batch carries its re-run scope: the entries that "
+            "consumed a meaning one of its issues says has moved, computed at "
+            "entry level, so usually a handful rather than a column. "
+            "`escalations` are the issues that are not repairs -- past the "
+            "two-round cap, or semantically reaching back into a wave that is "
+            "already finished -- and those need a human. This returns the "
+            "batches as data; running a repair session is the caller's job.",
+            "GET",
+            "/projects/{project}/reconcile",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "get_waves",
             "The order the slices may be worked in, computed from the "
             "dependency graph rather than chosen. Slices in one wave have no "
@@ -280,6 +341,15 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
     ("GET", re.compile(rf"^/projects/{_P}/gates$"), "gates"),
     ("GET", re.compile(rf"^/projects/{_P}/waves$"), "waves"),
+    # The internal queue: one part of the pipeline asking another for a fix.
+    ("POST", re.compile(rf"^/projects/{_P}/issues$"), "raise_issue"),
+    ("GET", re.compile(rf"^/projects/{_P}/issues$"), "list_issues"),
+    (
+        "POST",
+        re.compile(rf"^/projects/{_P}/issues/(?P<iid>[A-Za-z0-9_-]+)/close$"),
+        "close_issue",
+    ),
+    ("GET", re.compile(rf"^/projects/{_P}/reconcile$"), "reconcile"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
     ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
     ("GET", re.compile(rf"^/projects/{_P}/review$"), "review"),
@@ -294,6 +364,7 @@ def handle(
     body: dict | None = None,
     now_fn: Callable[[], float] = time.time,
     inbox: Inbox | None = None,
+    issues: IssueLog | None = None,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -319,6 +390,7 @@ def handle(
 
     project = params.get("project", "")
     inbox = inbox or Inbox(store.inbox_path())
+    issues = issues or IssueLog(store.issues_path())
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
@@ -380,6 +452,34 @@ def handle(
                 json.dumps(service.get_spine(store, project, query.get("layer"))),
             )
 
+        if name == "raise_issue":
+            return (
+                201,
+                JSON,
+                json.dumps(
+                    service.raise_issue(store, issues, project, body or {}, now_fn)
+                ),
+            )
+
+        if name == "list_issues":
+            return 200, JSON, json.dumps(service.list_issues(issues, project, query))
+
+        if name == "close_issue":
+            return (
+                200,
+                JSON,
+                json.dumps(
+                    service.close_issue(issues, params["iid"], body or {})
+                ),
+            )
+
+        if name == "reconcile":
+            return (
+                200,
+                JSON,
+                json.dumps(service.get_reconciliation(store, issues, project)),
+            )
+
         if name == "waves":
             return 200, JSON, json.dumps(service.get_waves(store, project))
 
@@ -399,7 +499,7 @@ def handle(
 
         if name == "classify_slice":
             result = service.classify_slice(
-                store, project, match.group("slice"), body or {}
+                store, project, params["slice"], body or {}
             )
             return (200 if result["recorded"] else 409), JSON, json.dumps(result)
 

@@ -112,6 +112,12 @@ def test_tools_manifest_declares_the_operations(store, prompts):
         "resolve_request",
         "create_project",
         "submit_amendment",
+        "classify_slice",
+        "get_waves",
+        "raise_issue",
+        "list_issues",
+        "close_issue",
+        "get_reconciliation",
         "get_work_package",
         "review_layer",
     } <= names
@@ -1274,3 +1280,128 @@ def test_a_cross_cutting_slice_is_in_wave_zero(store, prompts):
     _audit_column(store, prompts, mid)
     _, payload = call(store, prompts, "GET", "/projects/m/waves")
     assert payload["wave_of"]["audit"] == 0
+
+
+# -- issues and reconciliation, end to end -----------------------------------
+
+
+def _issue(store, prompts, target, kind, claim, raised_by=None, round=1):
+    return call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/issues",
+        {
+            "target": target,
+            "kind": kind,
+            "claim": claim,
+            "raised_by": raised_by,
+            "round": round,
+            "assumption": "assumed the old shape holds",
+        },
+    )
+
+
+def test_an_issue_resolves_its_target_slice_when_filed(store, prompts):
+    """Resolved at filing time, so grouping later cannot be thrown off by
+    membership that has since moved."""
+    _two_columns(store, prompts)
+    status, payload = _issue(store, prompts, "S·01", "additive", "needs a size")
+    assert status == 201
+    assert payload["target_slice"] == "listings"
+    assert payload["status"] == "open"
+
+
+def test_an_issue_against_a_malformed_target_is_a_caller_error(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = _issue(store, prompts, "nonsense", "additive", "x")
+    assert status == 400
+    assert "malformed identifier" in payload["error"]
+
+
+def test_reconciliation_groups_open_issues_by_target_slice(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    _issue(store, prompts, "S·01", "additive", "needs a size", "payouts")
+    _issue(store, prompts, "S·01", "additive", "needs a count", "payouts")
+    _issue(store, prompts, "S·02", "additive", "needs a total", "listings")
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert [(b["slice"], b["wave"], len(b["issues"])) for b in payload["batches"]] == [
+        ("listings", 0, 2),
+        ("payouts", 1, 1),
+    ]
+    assert payload["escalations"] == []
+
+
+def test_a_batch_carries_the_rerun_scope_of_its_semantic_issues(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    _issue(store, prompts, "S·01", "semantic", "it returns ids not names",
+           "listings")
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert payload["batches"][0]["rerun"] == ["S·03"]
+
+
+def test_an_additive_issue_leaves_the_rerun_scope_empty(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    _issue(store, prompts, "S·01", "additive", "needs a size", "listings")
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert payload["batches"][0]["rerun"] == []
+
+
+def test_the_router_sees_headers_not_assumptions(store, prompts):
+    """Roughly thirty tokens an issue. The assumption is stored and readable,
+    but never in what the router loads."""
+    _two_columns(store, prompts)
+    _issue(store, prompts, "S·01", "additive", "needs a size")
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    header = payload["batches"][0]["issues"][0]
+    assert "assumption" not in header
+    assert set(header) == {
+        "id", "target", "target_slice", "raised_by", "kind", "claim", "round"
+    }
+    _, listed = call(store, prompts, "GET", "/projects/m/issues")
+    assert listed["issues"][0]["assumption"] == "assumed the old shape holds"
+
+
+def test_a_semantic_issue_reaching_back_a_wave_is_escalated(store, prompts):
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    _issue(store, prompts, "S·01", "semantic", "it means something else",
+           "payouts")
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert payload["batches"] == []
+    assert payload["escalations"][0]["reason"] == "reaches_back"
+
+
+def test_an_issue_past_the_round_cap_is_escalated(store, prompts):
+    _two_columns(store, prompts)
+    _issue(store, prompts, "S·01", "additive", "again", "payouts", round=3)
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert payload["escalations"][0]["reason"] == "round_cap"
+
+
+def test_a_closed_issue_leaves_the_queue(store, prompts):
+    _two_columns(store, prompts)
+    _issue(store, prompts, "S·01", "additive", "needs a size")
+    call(store, prompts, "POST", "/projects/m/issues/iss-0001/close",
+         {"status": "resolved", "note": "added", "produced": ["S·09"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
+    assert payload["batches"] == []
+    _, listed = call(store, prompts, "GET", "/projects/m/issues?status=resolved")
+    assert listed["issues"][0]["resolution"]["produced"] == ["S·09"]
+
+
+def test_issues_are_kept_apart_from_the_inbox(store, prompts):
+    """The inbox is what the outside world wants; the issue queue is what one
+    part of the pipeline needs from another. Conflating them would put a
+    request nobody outside ever made into the queue a human reads."""
+    _two_columns(store, prompts)
+    _issue(store, prompts, "S·01", "additive", "needs a size")
+    _, messages = call(store, prompts, "GET", "/inbox")
+    assert not any("needs a size" in m["title"] for m in messages["messages"])

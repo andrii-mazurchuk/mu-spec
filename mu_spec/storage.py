@@ -380,6 +380,15 @@ class ProjectStore:
         message has no project yet by definition."""
         return self._root / "inbox.jsonl"
 
+    # -- issues -------------------------------------------------------------
+
+    def issues_path(self) -> Path:
+        """The internal queue, alongside the inbox and deliberately separate
+        from it. The inbox is what the outside world wants; this is what one
+        part of the pipeline needs from another. Conflating them would put a
+        request nobody outside ever made into the queue a human reads."""
+        return self._root / "issues.jsonl"
+
     # -- slices -------------------------------------------------------------
 
     def split_slice(
