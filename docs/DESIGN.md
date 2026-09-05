@@ -496,17 +496,145 @@ the executor freelanced. Both are worth knowing. Mechanical check.
 
 ---
 
+## 10a. Measuring the pipeline
+
+Everything above says how the pipeline works. This says how you find out whether it is
+working — and it is governed by one rule that matters more than any metric in it:
+
+> **Nothing here ever gates.**
+
+Every gate in §6 blocks on something *definitionally* broken: a cycle cannot be
+scheduled, a dangling edge points at nothing, an entry with two owners has none.
+Everything in this section is a **proxy** for a question nobody can answer yet — *is
+this slicing any good* — and baking a proxy into the one place the system is supposed to
+be certain would be the worst trade available. These report. They never refuse.
+
+Nor is anything here a *verdict*. A slicing that scores badly may be right and the unit
+has no way to know. Callers get inputs to a judgement.
+
+### 10a.1 The primary score is not a proxy
+
+A good slicing is one where **a typical change lands inside one slice**. That is the
+definition, not a stand-in for it — and it is directly measurable, because every request
+already records exactly which entries it produced.
+
+**Change locality**: for one request, how many distinct slices do its produced entries
+fall into? One is perfect. The distribution over many changes is the score.
+
+Intent is excluded. Every change touches it, so counting it would add one to every score
+and distinguish nothing.
+
+Everything else in this section is secondary to that number.
+
+### 10a.2 Three tiers, separated by when the data exists
+
+This is the real difficulty, and pretending otherwise would make the weak numbers look
+strong.
+
+**Ex ante, at slicing time.** Only intent and behaviour exist — no `depends_on` edges
+worth speaking of, no architecture, no history. Two signals, and that is genuinely all:
+
+- **Shared parentage** — entries deriving from the same parent are usually about the
+  same thing. The strongest signal available, and free, because the edge is already
+  there.
+- **Spread** — a parent whose children scatter widely is either constraint-shaped
+  ("every action must be auditable", a cross-cutting tell) or evidence the cut runs
+  across the grain of intent. Two opposite readings from one number, which is exactly why
+  it is reported for an agent to argue from rather than acted on.
+
+This filters an obviously bad proposal. It does not pick the best one, and should not be
+described as though it does.
+
+**Structural, once a layer has propagated.** Cohesion (the share of a slice's dependency
+edges that stay inside it), coupling, fan-in and fan-out asymmetry, wave shape, work
+package ratio. Real numbers, and they arrive incrementally — cross-slice edges appearing
+at architecture that nobody predicted at behaviour is an early warning, and it lands
+while a split is still cheap. Splits are always available; merges never are.
+
+Emissions are excluded from coupling. They impose no order and cross into a concern by
+design, so counting them would penalise exactly what the edge exists to make cheap.
+
+**Retrospective, from history.** Change locality, the correction distribution, issue-pair
+density, escalation rate, repair rounds used.
+
+One honesty note: the issue-derived metrics are **endogenous**. That history was produced
+under one particular slicing, so it partly measures the cut that generated it. Change
+locality is the least contaminated — the entries a feature needs are mostly a property of
+the feature, not of how you filed them.
+
+### 10a.3 Scoring a cut that does not exist
+
+Slices split and never merge, so a ratified cut is expensive to undo forever. The
+remedy for that is to move the argument earlier: take a *proposed* partition, run every
+gate and every structural metric against it as though it were real, and commit nothing.
+
+This is what makes trialling several slicings possible at all, and it is where §6's
+decision to hard-block conflicts pays off — a cycle caught in a proposal costs a rename;
+the same cycle after ratification costs a split.
+
+It returns a result **even when the cut is illegal**. Refusing would make trialling
+impossible, which is the entire point of the mechanism.
+
+And because membership comes from the proposal rather than the manifest, the same change
+history can be replayed under an alternative cut. That is the trial harness: same
+changes, different slicing, different score.
+
+### 10a.4 The lifecycle log
+
+The graph answers *what is true now*. It cannot answer *how it got that way*, and three
+things in particular vanish into a correct-looking graph:
+
+- A gate that failed and was then fixed leaves no trace in the fixed graph.
+- A correction's **layer of origin** — the whole point of §8's classification — is
+  invisible once the fix has propagated.
+- What an agent **could not derive, and assumed instead** is nowhere in the state at all.
+
+So those are recorded as they happen: requests as they were actually worded, derivations,
+corrections with the layer they entered at, refusals, classifications, issues with their
+assumptions, plans, audits.
+
+Deliberately **not a second copy of the graph.** Events carry identifiers, never bodies.
+A log that duplicated content would go stale against the thing it copied, which is the
+same argument that keeps dependencies out of the manifest and spines out of storage.
+
+### 10a.5 What this is for
+
+§9 already said it: the distribution of outcomes over time is the debug signal for the
+agent system itself. Corrections clustered at intent mean the interview is too shallow to
+derive from; clustered lower, the derivation prompting is weak.
+
+That is a **learning signal across projects**, not a fix for the current one. The
+retrospective numbers arrive months after the decision they judge. The one genuinely
+actionable mid-flight signal is structural drift — predicted coupling at slicing time
+against measured coupling at architecture — because that lands while a split is still
+cheap.
+
+Steering on any of this, when there is evidence for it, belongs in what a proposal
+*reports*, never in what the graph *refuses*.
+
+---
+
 ## 11. Known open items
 
-Not yet designed. These need closing before implementation.
+Design, not code. Every mechanical operation this document calls for is implemented;
+what remains open is judgement about how the agent should behave, and none of it blocks
+anything that exists.
 
-- **Entry field shape** per layer — the actual fields, not the prose.
+- **Entry field shape** per layer — the actual fields, not the prose. The graph needs
+  only an identifier, the edge lists and a body; these constrain what goes *inside* a
+  body.
 - **Session boundaries** — which layers are written by the same agent session and which
   demand a fresh one. Context bleed between layers is real and undermines the separation.
 - **Judgement-call criteria** — what the agent is *obliged* to flag, stated concretely
   enough to be enforceable rather than aspirational.
 - **Thin intent handling** — when the human says "build me a thing," does the agent
-  interrogate or assume-and-flag?
+  interrogate or assume-and-flag? `prompts/reference.md` holds the settled half — what
+  an `initiate` request must *produce* — and is explicit that the technique is not
+  settled.
+- **Whether the ex-ante metrics are worth anything.** §10a.2 is honest that shared
+  parentage and spread are weak. Whether they correlate with change locality is an
+  empirical question that needs projects to have run, and until then they are reported
+  and believed cautiously.
 - ~~**Interface-change detection**~~ — **closed.** It looked isolated at spec level only
   while consumption was invisible. It is an edge now: a consumer declares `depends_on`,
   so superseding an entry leaves every consumer pointing at something retired, the
@@ -533,3 +661,6 @@ Not yet designed. These need closing before implementation.
 7. Retrieval is graph traversal, not similarity search.
 8. The agent must declare what it could not derive.
 9. Spec is the source of truth for planning; code is the source of truth for audit.
+10. Measurement reports and never refuses. Gates block on what is definitionally broken;
+    a metric is a proxy for a question nobody can answer yet, and a proxy must never be
+    given the authority of a certainty.

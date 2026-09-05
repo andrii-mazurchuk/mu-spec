@@ -57,10 +57,11 @@ it.
 Every operation is deterministic and derivable from the graph: storage,
 identifier permanence, spine generation, retrieval by identifier, the
 admission gates, blast radius, wave assignment, the issue queue and its
-grouping. Anything needing judgement — authoring entries, classifying a
-correction to its layer, ruling a slice cross-cutting, calling an issue
-additive or semantic, declaring what could not be derived — belongs to the
-processing unit, which calls this one.
+grouping, spec diffs, and the measurement surface. Anything needing
+judgement — authoring entries, classifying a correction to its layer, ruling
+a slice cross-cutting, calling an issue additive or semantic, grouping
+behaviours by what they are about, deciding whether a slicing is any good —
+belongs to the processing unit, which calls this one.
 
 That split is deliberate. `docs/DESIGN.md` §6 calls admission gates
 "mechanical, run by the agent, human sees only failures" — and a mechanical
@@ -83,6 +84,8 @@ Enforced, not documented. Violating one is a hard error, not a warning.
 - An edge into a cross-cutting slice is `emits_into`, never `depends_on`, and
   a cross-cutting slice holds no outbound dependency into a feature slice.
 - Slice dependency is projected from entry edges, never authored.
+- No metric ever gates. Gates block on what is definitionally broken; a
+  metric is a proxy for a question nobody can answer yet.
 
 ## Two settled decisions
 
@@ -106,24 +109,30 @@ instead); nothing is stubbed either way, since `handle()` is the whole
 service. It walks intent → behaviour → architecture → spec across two feature
 slices and one cross-cutting one, shows the gates refusing what they should,
 computes waves, files issues and routes them, plans spec-to-code, audits a
-diff, issues a work package, splits a slice, and prints what ended up on
-disk. Read it top to bottom and you can judge whether the shape is right.
+diff, issues a work package, splits a slice, scores an alternative slicing
+without creating it, prints the lifecycle, and shows what ended up on disk.
+Read it top to bottom and you can judge whether the shape is right.
 
 ## Status
 
 Working end to end, over HTTP. Storage, the graph and its three edge kinds,
-five admission gates, slice classification, wave assignment, the issue queue
+six admission checks, slice classification, wave assignment, the issue queue
 and its router, module backlinks, spec-level diffs resolved into write and
-read sets, the git-diff audit, and the work package.
+read sets, the git-diff audit, the work package, and the measurement surface
+— change locality, correction distribution, cohesion, the lifecycle log, and
+scoring a proposed slicing without creating it.
+
+**No agent session exists.** Nothing derives anything: `walkthrough.py`
+hand-writes every entry to prove the machinery works. That gap is the whole
+remaining project.
 
 Run `python walkthrough.py` to watch the whole pipeline behave — it is the
 fastest way to see what this does.
 
-Every mechanical operation the architecture calls for is implemented. What
-remains open is design, not code: per-layer field shapes, session boundaries,
-judgement-call criteria, thin-intent handling (`docs/DESIGN.md` §11). None of
-it blocks anything — the graph needs only `id`, the edge lists and `body`, and
-those shapes constrain only what goes inside a body.
+What remains open is design, not code: per-layer field shapes, session
+boundaries, judgement-call criteria, thin-intent handling, and whether the
+ex-ante slicing metrics are worth anything (`docs/DESIGN.md` §11). None of it
+blocks anything that exists.
 
 ## Commands
 

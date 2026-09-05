@@ -45,8 +45,15 @@ incomplete is just the to-do list, and never blocks.
 
 mu-spec computes; it does not reason and does not execute. It stores entries
 and answers questions about the graph. Deciding what a request means,
-interviewing whoever sent it, and writing the derived entries all belong to
-whoever calls it.
+interviewing whoever sent it, grouping behaviours by what they are about,
+ruling whether a slicing is any good, and writing the derived entries all
+belong to whoever calls it. It does not run git either — the diff audit takes
+the paths you touched as an argument.
+
+It also measures itself: how many slices a typical change had to touch, where
+corrections entered, how cohesive each slice is, and the whole lifecycle of a
+project in order. All of that is **reported and never enforced** — no gate
+fires on any of it.
 
 Agents turning a raw idea into intent should fetch `GET /prompts/reference`
 first — it carries the intake interview and the rules about what intent

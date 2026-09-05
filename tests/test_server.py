@@ -1723,3 +1723,71 @@ def test_a_proposal_that_would_be_illegal_says_so_without_refusing(store, prompt
     )
     assert status == 200
     assert any("probably not a slice" in w for w in payload["warnings"])
+
+
+def test_every_declared_tool_path_actually_routes(store, prompts):
+    """The manifest is hand-written, so it can drift from the routing table.
+    A tool declaring a path nothing serves is a 404 that a model walks into
+    while believing the unit told it to."""
+    import re as _re
+
+    from mu_spec.server import _ROUTES, _tools
+
+    broken = []
+    for tool in _tools():
+        # Substitute each {placeholder} with something the route patterns
+        # accept, then check some route of that method matches.
+        concrete = _re.sub(r"\{id\}", "S·01", tool["path"])
+        concrete = _re.sub(r"\{[a-z_]+\}", "sample", concrete)
+        if not any(
+            method == tool["method"] and pattern.match(concrete)
+            for method, pattern, _ in _ROUTES
+        ):
+            broken.append((tool["name"], tool["method"], concrete))
+    assert broken == []
+
+
+def test_every_route_an_agent_could_call_is_declared(store, prompts):
+    """The other direction. /health and /tools are deliberately never
+    declared; anything else undeclared is unreachable through the bridge,
+    which makes it as good as unbuilt."""
+    from mu_spec.server import _ROUTES, _tools
+
+    declared = {t["name"] for t in _tools()}
+    # Route name -> the tool that exposes it. Written out rather than
+    # derived, because the mapping is deliberately not one-to-one.
+    exposed = {
+        "post_inbox": "post_request",
+        "list_inbox": "list_requests",
+        "get_message": "get_request",
+        "resolve": "resolve_request",
+        "create_project": "create_project",
+        "amendment": "submit_amendment",
+        "classify_slice": "classify_slice",
+        "raise_issue": "raise_issue",
+        "list_issues": "list_issues",
+        "close_issue": "close_issue",
+        "reconcile": "get_reconciliation",
+        "waves": "get_waves",
+        "candidates": "propose_slicing",
+        "score_slicing": "score_slicing",
+        "insights": "get_insights",
+        "events": "list_events",
+        "declare_module": "declare_module",
+        "list_modules": "list_modules",
+        "plan": "get_plan",
+        "audit": "audit_diff",
+        "work_package": "get_work_package",
+        "review": "review_layer",
+        "spine": "get_spine",
+        "entry": "get_entry",
+        "gates": "check_gates",
+        "list_projects": "list_projects",
+        "stats": None,
+    }
+    for _, _, name in _ROUTES:
+        if name in ("health", "tools", "prompts"):
+            continue
+        assert name in exposed, f"route {name!r} is exposed by no tool"
+        if exposed[name]:
+            assert exposed[name] in declared

@@ -10,10 +10,29 @@ This file only says what's specific to mu-spec.
 
 The standard four endpoints (`/health`, `/stats`, `/tools`,
 `/prompts/<tier>`) in `mu_spec/server.py`. `unit_type: memory`,
-`lifecycle: persistent`.
+`lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
 
-Its own capabilities are being built out — see `docs/DESIGN.md` for the
-architecture and `README.md` for current status.
+`/stats` carries **already-processed** aggregates — counts per layer, how
+many projects are sound, mean change locality, where corrections entered —
+with no text and no per-item detail. An analytical unit reads it without
+knowing anything about how this unit works. Everything richer is a
+registered tool, reachable by an agent rather than by a scrape.
+
+There is no `/metrics` endpoint: the standard defines `/stats` with a
+`metrics` field inside it, and that is what this implements.
+
+Everything beyond the four is declared in `/tools` — twenty-six of them,
+covering the inbox, amendments, slice classification, waves, the issue queue
+and its reconciliation, module backlinks, planning, the audit, the work
+package, and the measurement surface. Tool names are action-style rather than
+path echoes, so one route served under two methods is declared twice under
+two names.
+
+**Logs.** Lifecycle events are pushed to whichever unit holds the `logs`
+role, resolved from `delivery_policy.json` at call time and never named in
+code, as `entry_type: project_event`. Best-effort in both directions: the
+local log is the durable record, and a logs unit that is down, absent, or
+that refuses the type changes nothing here.
 
 ## What's specific to mu-spec
 
@@ -31,7 +50,16 @@ renumbered, slice membership a set rather than a range, amendments
 append-only, slices splitting but never merging.
 
 **It computes; it never reasons and never executes.** Mechanical operations —
-admission gates, spine generation, graph traversal, spec-diff resolution —
-belong here precisely so a session cannot skip them. Authoring entries,
-classifying corrections, and declaring what could not be derived belong to
-the processing unit, which calls this one.
+admission gates, spine generation, graph traversal, wave assignment,
+spec-diff resolution — belong here precisely so a session cannot skip them.
+Authoring entries, classifying corrections, ruling a slice cross-cutting, and
+declaring what could not be derived belong to the processing unit, which
+calls this one.
+
+It also never runs git. The diff audit takes the touched paths as an
+argument; the caller runs git and passes them in.
+
+One rule spans the measurement surface: **it reports and never refuses.**
+Gates block on what is definitionally broken. A metric is a proxy for a
+question nobody can answer yet, and a proxy must never be given the authority
+of a certainty.

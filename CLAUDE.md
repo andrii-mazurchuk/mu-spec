@@ -55,6 +55,9 @@ which calls this one.
 | Wave assignment: the order slices may be worked in, from the projected graph | Deciding a slice is worth working at all |
 | The issue queue: storing it, grouping it by target slice, computing each batch's re-run scope, escalating what is not a repair | Whether an issue is additive or semantic, and what the actual fix is |
 | The raw coupling / direction / ubiquity / size numbers behind slice proposals | Proposing and ratifying the slices |
+| Scoring a *proposed* partition without creating it | Grouping behaviours by what they are about |
+| Recording the lifecycle: requests as worded, corrections and the layer they entered at, refusals, assumptions | Deciding what an assumption should have been |
+| Change locality, correction distribution, cohesion, coupling — reported, never enforced | Whether a slicing is any good |
 
 The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
 "mechanical, run by the agent, human sees only failures." A mechanical check
@@ -89,6 +92,12 @@ is an error the caller sees, not a warning in a log.
 - **Slice dependency is projected from entry edges, never authored.** There is
   deliberately no field to declare it in; two statements of the same fact
   drift, and the authored one goes stale.
+- **No metric ever gates.** Gates block on what is definitionally broken — a
+  cycle, a dangling edge, an entry with two owners. Everything in `metrics.py`,
+  `slicing.py` and `lifecycle.py` is a proxy for a question nobody can answer
+  yet, and giving a proxy the authority of a certainty is the worst trade
+  available here. They report. If you find yourself writing `if cohesion <`
+  anywhere near a refusal, stop.
 - **Agents never message each other.** A request from one part of the
   pipeline to another is an issue filed against the target *entry*, and the
   raiser proceeds on a stated assumption. Anything else means blocking or
@@ -194,6 +203,27 @@ any design that needs many.
 Python ≥3.10, **stdlib only**. `pytest` for tests, nothing else. The
 no-embeddings decision is what keeps this true — don't add a dependency
 without a real argument.
+
+Modules, and the one-line reason each exists:
+
+| Module | Owns |
+|---|---|
+| `identifiers` | Parsing, ordering, and what "one layer up" means |
+| `graph` | Entries, the three edge kinds, traversal, the computed spine |
+| `storage` | The only module that touches the filesystem |
+| `gates` | Checks answerable from the graph alone — knows nothing of slices |
+| `slice_gates` | Checks needing the manifest: cycles, ownership, edge kind |
+| `waves` | Execution order by longest path |
+| `inbox` | The single external door; type-is-permission |
+| `issues` | The internal queue — one part of the pipeline asking another |
+| `reconcile` | Routing that queue into repair batches, headers only |
+| `planning` | Spec diff, write/read set, the git-diff audit |
+| `lifecycle` | What happened, in order — what the graph cannot recover |
+| `metrics` | Change locality, corrections by layer, cohesion. Never gates |
+| `slicing` | Candidates, and scoring a proposal that commits nothing |
+| `shipping` | A best-effort copy of each event to whoever holds the logs role |
+| `service` | The operations, as plain functions over a store. No HTTP |
+| `server` | Routing and the tool manifest. The only module that knows HTTP |
 
 ```bash
 pip install -e ".[dev]"
