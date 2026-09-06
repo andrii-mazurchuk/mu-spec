@@ -291,3 +291,31 @@ def test_an_issue_within_one_slice_never_reaches_back(tmp_path):
 
 def test_routing_an_empty_queue_produces_nothing(tmp_path):
     assert route(_manifest(), _graph(), []) == ([], [])
+
+
+def test_an_issue_against_an_unsliced_entry_escalates_rather_than_batching():
+    """Intent is never sliced. A triage session that flags "the requester
+    never said what the home currency is" is not describing a defect an
+    agent can repair -- only the requester knows. Routed as a batch it
+    produced a phantom repair session against a slice named "".
+    """
+    from mu_spec.graph import Entry, Graph
+    from mu_spec.identifiers import parse
+    from mu_spec.issues import Issue
+    from mu_spec.reconcile import UNOWNED, route
+    from mu_spec.storage import Manifest
+
+    graph = Graph([Entry(id=parse("I·01"), title="intent")])
+    issue = Issue(
+        id="iss-0001",
+        project="m",
+        target="I·01",
+        target_slice=None,
+        raised_by=None,
+        kind="additive",
+        claim="no home currency stated",
+        round=1,
+    )
+    batches, escalations = route(Manifest(project="m", slices={}), graph, [issue])
+    assert batches == []
+    assert [e.reason for e in escalations] == [UNOWNED]

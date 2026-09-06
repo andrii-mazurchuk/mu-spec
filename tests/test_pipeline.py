@@ -285,3 +285,74 @@ def test_the_brief_does_not_ask_the_session_to_fetch_its_own_contract():
     Read(../**) deny rule blocks a session from reading it as a file."""
     d = Dispatch(TRIAGE, "m", {"request": "msg-0001"}, "why")
     assert "read `../SHARED.md`" not in d.brief("http://x")
+
+
+# -- progress detection ------------------------------------------------------
+
+
+def test_a_session_that_changes_nothing_is_recorded_as_no_progress(parts, tmp_path):
+    """Exit code is a bad proxy for progress. Four live sessions returned
+    ok:true having achieved nothing -- one of them literally replied "I'm
+    ready. What do you need?" and quit."""
+    store, inbox, _, events = parts
+    _seed_request(store, inbox)
+    out = _run(parts, _Runner(), tmp_path)
+    assert out["ok"] is True
+    assert out["progress"] is False
+    recorded = [e for e in events.list(project="m") if e.kind == SESSION]
+    assert recorded[-1].facts["progress"] is False
+
+
+def test_a_session_that_writes_entries_shows_progress(parts, tmp_path):
+    store, inbox, issues, events = parts
+    _seed_request(store, inbox)
+
+    class _Working:
+        """Stands in for a session that actually did its job."""
+
+        def __call__(self, dispatch, brief):
+            service.submit_amendment(
+                store, inbox, "m",
+                {"in_response_to": "msg-0001",
+                 "entries": [{"layer": "I", "title": "a real intent entry"}]},
+            )
+            return SessionResult(dispatch.session_type, dispatch.project, True, 1.0, "")
+
+    out = _run(parts, _Working(), tmp_path)
+    assert out["progress"] is True
+
+
+def test_a_dispatch_that_stalls_twice_is_not_launched_a_third_time(parts, tmp_path):
+    """Without this the same no-op session is re-dispatched forever, each
+    round costing real time and money to rediscover the same wall."""
+    store, inbox, _, _ = parts
+    _seed_request(store, inbox)
+    runner = _Runner()
+    for _ in range(service.STALL_CAP):
+        assert _run(parts, runner, tmp_path)["ran"] is True
+    out = _run(parts, runner, tmp_path)
+    assert out["ran"] is False
+    assert "stalled" in out["reason"]
+    assert len(runner.calls) == service.STALL_CAP
+
+
+def test_progress_clears_the_stall_count(parts, tmp_path):
+    store, inbox, _, _ = parts
+    _seed_request(store, inbox)
+
+    class _Working:
+        def __init__(self):
+            self.n = 0
+
+        def __call__(self, dispatch, brief):
+            self.n += 1
+            service.submit_amendment(
+                store, inbox, "m",
+                {"in_response_to": "msg-0001",
+                 "entries": [{"layer": "I", "title": f"entry {self.n}"}]},
+            )
+            return SessionResult(dispatch.session_type, dispatch.project, True, 1.0, "")
+
+    _run(parts, _Runner(), tmp_path)          # stall
+    _run(parts, _Working(), tmp_path)         # progress -- resets
+    assert _run(parts, _Runner(), tmp_path)["ran"] is True

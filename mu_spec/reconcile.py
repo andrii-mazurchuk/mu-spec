@@ -41,6 +41,10 @@ from mu_spec.waves import schedule
 
 ROUND_CAP = "round_cap"
 REACHES_BACK = "reaches_back"
+# The target belongs to no slice, so no session owns it. Intent is never
+# sliced, and an issue raised against intent is an open question for
+# whoever asked -- not a defect any agent is able to repair.
+UNOWNED = "unowned"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -138,6 +142,18 @@ def route(
                     "else. That wave is already complete, so everything "
                     "derived from it since is suspect -- this is the slicing "
                     "being wrong, not a repair",
+                )
+            )
+            continue
+
+        if not issue.target_slice:
+            escalations.append(
+                Escalation(
+                    issue.id,
+                    UNOWNED,
+                    f"{issue.target!r} belongs to no slice, so no session owns "
+                    "it. Intent is never sliced: this is a question for "
+                    "whoever asked, not a repair",
                 )
             )
             continue

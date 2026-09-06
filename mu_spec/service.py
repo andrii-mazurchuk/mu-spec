@@ -1203,6 +1203,69 @@ def review_layer(
 
 # -- the pipeline loop -------------------------------------------------------
 
+# How many times one dispatch may run without changing anything before the
+# loop stops offering it. Exit code is a bad proxy for progress: a session
+# can answer a question, exit 0, and leave the graph exactly as it found it,
+# and the ladder will then select the identical work again forever.
+STALL_CAP = 2
+
+
+def _fingerprint(
+    store: ProjectStore, inbox: Inbox, issues: IssueLog, project: str
+) -> tuple:
+    """A cheap summary of everything a session is able to change.
+
+    Counts only, and only through the store's own API -- what matters is
+    whether the state moved, not how. A project-less dispatch (cold start)
+    is measured globally, because the project it is supposed to create does
+    not exist yet.
+    """
+    pending = len([m for m in inbox.list(status=PENDING)])
+    if not project:
+        return (len(store.list_projects()), pending)
+    try:
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
+    except Exception:
+        # A project that cannot be loaded has not been changed by anything.
+        return (len(store.list_projects()), pending, 0, 0, 0, 0)
+    return (
+        len(store.list_projects()),
+        pending,
+        len(list(graph.entries())),
+        len(manifest.slices),
+        len(manifest.modules),
+        len(issues.list(project=project)),
+    )
+
+
+def _signature(dispatch: Dispatch) -> str:
+    """What makes two dispatches the same piece of work."""
+    return json.dumps(
+        [dispatch.session_type, dispatch.project, dispatch.scope],
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _stalls(events: Lifecycle, dispatch: Dispatch) -> int:
+    """Consecutive runs of this exact dispatch that changed nothing.
+
+    Consecutive is the point: one that eventually made progress clears the
+    count, so a session that is merely slow is not mistaken for one that is
+    stuck.
+    """
+    want = _signature(dispatch)
+    count = 0
+    for event in reversed(events.list(project=dispatch.project or None)):
+        if event.kind != lc.SESSION or event.facts.get("signature") != want:
+            continue
+        if event.facts.get("progress"):
+            break
+        count += 1
+    return count
+
+
 
 def _unchecked_back_checked(events: Lifecycle, project: str) -> set[str]:
     """Requests whose back-check actually succeeded.
@@ -1324,6 +1387,17 @@ def run_pipeline(
                 **({"would_run": None} if dry_run else {}),
             }
 
+        stalls = _stalls(events, chosen)
+        if stalls >= STALL_CAP:
+            return {
+                "ran": False,
+                "reason": (
+                    f"stalled -- {chosen.session_type} on this scope changed "
+                    f"nothing {stalls} times running; a human should look"
+                ),
+                "stalled": chosen.to_json(),
+            }
+
         if build_root:
             chosen = dataclasses.replace(
                 chosen, scope={**chosen.scope, "target_repository": build_root}
@@ -1344,7 +1418,9 @@ def run_pipeline(
         launch = runner or (
             lambda d, text: rn.run(d, text, root=Path(session_root))
         )
+        before = _fingerprint(store, inbox, issues, chosen.project)
         result = launch(chosen, brief)
+        progress = _fingerprint(store, inbox, issues, chosen.project) != before
 
         # Collect. The local record lands first and unconditionally; the copy
         # for whoever aggregates is best-effort and never changes the answer.
@@ -1356,6 +1432,8 @@ def run_pipeline(
             refs=refs,
             session_type=chosen.session_type,
             ok=result.ok,
+            progress=progress,
+            signature=_signature(chosen),
             duration_seconds=result.duration_seconds,
             reason=chosen.reason,
             scope=chosen.scope,
@@ -1383,6 +1461,9 @@ def run_pipeline(
         return {
             "ran": True,
             "ok": result.ok,
+            # Whether anything actually moved. A session can exit 0 having
+            # done nothing at all, and did, four times on the first live run.
+            "progress": progress,
             "session_type": chosen.session_type,
             "project": chosen.project,
             "scope": chosen.scope,
