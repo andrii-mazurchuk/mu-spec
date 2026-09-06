@@ -137,6 +137,7 @@ def select(
     unchecked: Sequence[str] = (),
     batches: Sequence[Any] = (),
     can_build: bool = True,
+    proposal_pending: bool = False,
 ) -> Dispatch | None:
     """The next session to run, or `None` when nothing is eligible.
 
@@ -187,6 +188,11 @@ def select(
         (e.id for e in graph.entries() if e.id.layer == "B" and e.id not in owned),
         key=lambda i: (i.depth, i.number),
     )
+    # A proposal already waits on a human. Nothing an agent can do advances
+    # a decision that is not an agent's to make, and re-running slicing would
+    # discard the proposal a human is in the middle of reading.
+    if unsliced and proposal_pending:
+        return None
     if unsliced:
         return dispatch(
             SLICING,

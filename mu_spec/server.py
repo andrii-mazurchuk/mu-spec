@@ -422,6 +422,31 @@ def _tools() -> list[dict[str, Any]]:
             ("project",),
         ),
         tool(
+            "submit_proposal",
+            "Submit a proposed slicing for ratification: a mapping of slice "
+            "name to the entry identifiers it would own, optional per-slice "
+            "types, and a note carrying the rationale. Creates nothing -- a "
+            "partition is not a partition until a human rules on it. While a "
+            "proposal is pending no further slicing session is dispatched. "
+            "An entry proposed for two slices is refused here rather than at "
+            "the ratification gate.",
+            "POST",
+            "/projects/{project}/slicing/proposal",
+            {"project": s, "proposal": {"type": "object"},
+             "types": {"type": "object"}, "note": s},
+            ("project", "proposal"),
+        ),
+        tool(
+            "get_proposal",
+            "The slicing proposal currently awaiting ratification, if any, "
+            "with the note that came with it and the reason the last one was "
+            "rejected. `status` is 'pending' or 'none'.",
+            "GET",
+            "/projects/{project}/slicing/proposal",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "list_projects",
             "Every project this unit holds.",
             "GET",
@@ -497,6 +522,12 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # Analysis. Reported, never enforced -- no gate fires on any of it.
     ("GET", re.compile(rf"^/projects/{_P}/slicing/candidates$"), "candidates"),
     ("POST", re.compile(rf"^/projects/{_P}/slicing/score$"), "score_slicing"),
+    # Proposed, then ruled on. A partition is not a partition until a human
+    # says so, and before this the proposal had nowhere to wait.
+    ("POST", re.compile(rf"^/projects/{_P}/slicing/proposal$"), "propose"),
+    ("GET", re.compile(rf"^/projects/{_P}/slicing/proposal$"), "get_proposal"),
+    ("POST", re.compile(rf"^/projects/{_P}/slicing/proposal/ratify$"), "ratify"),
+    ("POST", re.compile(rf"^/projects/{_P}/slicing/proposal/reject$"), "reject_proposal"),
     ("GET", re.compile(rf"^/projects/{_P}/insights$"), "insights"),
     ("GET", re.compile(rf"^/projects/{_P}/events$"), "events"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
@@ -560,6 +591,22 @@ def handle(
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
+
+        if name == "propose":
+            return 200, JSON, json.dumps(service.propose(store, project, body))
+
+        if name == "get_proposal":
+            return 200, JSON, json.dumps(service.get_proposal(store, project))
+
+        if name == "ratify":
+            return 200, JSON, json.dumps(service.ratify(store, project, body))
+
+        if name == "reject_proposal":
+            return (
+                200,
+                JSON,
+                json.dumps(service.reject_proposal(store, project, body)),
+            )
 
         if name == "trigger":
             return (

@@ -47,6 +47,9 @@ INTENT_FILE = "intent.jsonl"
 # does; demanding a slice name for it made the designed order impossible.
 # Architecture and spec are derived after slicing and always have an owner.
 HOLDING_FILE = "_unassigned.jsonl"
+# A slicing proposal waiting on a human. Kept out of the manifest because
+# it is not a partition yet -- ratification is what makes it one.
+PROPOSAL_FILE = "proposal.json"
 BEHAVIOUR_LAYER = "B"
 MANIFEST_FILE = "manifest.json"
 
@@ -458,6 +461,9 @@ class ProjectStore:
         """Where the gateway writes peers.json and the delivery policy. The
         only reason anything outside this module needs the path."""
         return self._root
+
+    def proposal_path(self, project: str) -> Path:
+        return self._project_dir(project) / PROPOSAL_FILE
 
     def events_path(self) -> Path:
         """The lifecycle log. Alongside the other two and never loaded during

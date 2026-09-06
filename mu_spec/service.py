@@ -42,7 +42,7 @@ from mu_spec import runner as rn
 from mu_spec.shipping import SESSION_RUN, ship
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.slicing import candidates, score
-from mu_spec.storage import SLICE_TYPES, Manifest, ProjectStore, Slice
+from mu_spec.storage import SLICE, SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
 
 COMMENTS_FILE = "comments.jsonl"
@@ -1341,6 +1341,7 @@ def _choose(
             unchecked=_unchecked_corrections(inbox, events, project),
             batches=batches,
             can_build=can_build,
+            proposal_pending=_read_proposal(store, project).get("status") == "pending",
         )
         if chosen is not None:
             return chosen
@@ -1482,3 +1483,139 @@ def run_pipeline(
             "detail": result.detail,
             "gates": gates,
         }
+
+
+# -- slicing proposals awaiting ratification ---------------------------------
+#
+# A slicing session proposes; a human ratifies. Before this existed the
+# proposal had nowhere to go: the first live session produced a six-slice
+# partition with a rationale and a score, and it evaporated the moment the
+# process exited, so the ladder dispatched slicing again on identical input.
+#
+# The proposal is deliberately not the manifest. It is not a partition until
+# somebody rules on it, and storing it as one would mean an agent had cut the
+# system up on its own authority.
+
+
+def _read_proposal(store: ProjectStore, project: str) -> dict:
+    path = store.proposal_path(project)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_proposal(store: ProjectStore, project: str, state: dict) -> None:
+    path = store.proposal_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def propose(store: ProjectStore, project: str, body: dict) -> dict:
+    """Record a proposed partition. Creates nothing."""
+    proposal = body.get("proposal")
+    if not isinstance(proposal, dict) or not proposal:
+        raise ServiceError("'proposal' must map a slice name to its members")
+    # Validated now so a session learns immediately, rather than a human
+    # discovering it at the ratification gate.
+    _parse_proposal_members(store, project, proposal)
+    state = _read_proposal(store, project)
+    state.update(
+        {
+            "status": "pending",
+            "proposal": {k: list(v) for k, v in proposal.items()},
+            "types": body.get("types") or {},
+            "note": body.get("note", ""),
+        }
+    )
+    _write_proposal(store, project, state)
+    return {"project": project, "status": "pending", "next": "a human ratifies"}
+
+
+def get_proposal(store: ProjectStore, project: str) -> dict:
+    state = _read_proposal(store, project)
+    return {
+        "project": project,
+        "status": state.get("status", "none"),
+        "proposal": state.get("proposal", {}),
+        "types": state.get("types", {}),
+        "note": state.get("note", ""),
+        "last_rejection": state.get("last_rejection"),
+    }
+
+
+def _parse_proposal_members(
+    store: ProjectStore, project: str, proposal: dict
+) -> dict[str, set[Identifier]]:
+    known = {e.id for e in store.load_all(project)}
+    seen: dict[Identifier, str] = {}
+    out: dict[str, set[Identifier]] = {}
+    for name, members in proposal.items():
+        if not isinstance(members, list):
+            raise ServiceError(f"members of {name!r} must be a list")
+        ids = set()
+        for raw in members:
+            ident = _parse_ids([raw], "proposal")[0]
+            if ident not in known:
+                raise ServiceError(f"{ident} is not an entry in {project!r}")
+            owner = seen.get(ident)
+            if owner is not None:
+                raise ServiceError(
+                    f"{ident} is proposed for both {owner!r} and {name!r}. "
+                    "One entry belongs to exactly one slice -- two owners "
+                    "means two sessions may edit it and neither knows"
+                )
+            seen[ident] = name
+            ids.add(ident)
+        out[name] = ids
+    return out
+
+
+def ratify(store: ProjectStore, project: str, body: dict) -> dict:
+    """Turn the pending proposal into the project's slices."""
+    state = _read_proposal(store, project)
+    if state.get("status") != "pending":
+        raise ServiceError("no proposal is waiting for ratification")
+
+    members = _parse_proposal_members(store, project, state["proposal"])
+    types = state.get("types") or {}
+    manifest = store.load_manifest(project)
+    for name, ids in members.items():
+        stype = types.get(name, SLICE)
+        if stype not in SLICE_TYPES:
+            raise ServiceError(f"slice type must be one of {SLICE_TYPES}")
+        manifest.slices[name] = Slice(name=name, members=set(ids), type=stype)
+
+    findings = slice_gates(manifest, store.load_graph(project))
+    if findings:
+        raise ServiceError(
+            "ratifying would break the slice structure: "
+            + "; ".join(f"{f.kind} in {f.slice}: {f.detail}" for f in findings)
+        )
+
+    store.save_manifest(project, manifest)
+    _write_proposal(store, project, {"status": "none", "ratified": state["proposal"]})
+    return {
+        "project": project,
+        "ratified": True,
+        "slices": {n: sorted(str(i) for i in ids) for n, ids in members.items()},
+    }
+
+
+def reject_proposal(store: ProjectStore, project: str, body: dict) -> dict:
+    """Clear the pending proposal so slicing runs again, keeping the reason."""
+    state = _read_proposal(store, project)
+    if state.get("status") != "pending":
+        raise ServiceError("no proposal is waiting for ratification")
+    _write_proposal(
+        store,
+        project,
+        {
+            "status": "none",
+            "last_rejection": {
+                "note": body.get("note", ""),
+                "proposal": state["proposal"],
+            },
+        },
+    )
+    return {"project": project, "rejected": True, "next": "slicing runs again"}

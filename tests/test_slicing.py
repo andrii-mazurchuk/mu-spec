@@ -196,3 +196,95 @@ def test_a_superseded_entry_is_still_a_legitimate_member():
     result = score(Manifest(project="m"), graph, {"a": ["S·01", "S·02"]})
     assert result["legal"] is True
     assert result["slices"][0]["size"] == 2
+
+
+# -- proposals awaiting ratification -----------------------------------------
+
+
+def _store(tmp_path):
+    from mu_spec.storage import ProjectStore
+
+    s = ProjectStore(tmp_path / "p")
+    s.create_project("m")
+    return s
+
+
+def _seed_behaviour(store, n=4):
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+
+    store.append("m", [Entry(id=parse(f"B·0{i}"), title=f"b{i}") for i in range(1, n + 1)])
+
+
+def test_a_proposal_is_stored_and_read_back(tmp_path):
+    """The first live slicing session produced a six-slice proposal with a
+    rationale and a score, and it evaporated -- nothing stored it, so the
+    ladder dispatched slicing again on the identical input."""
+    from mu_spec import service
+
+    store = _store(tmp_path)
+    _seed_behaviour(store)
+    body = {"proposal": {"capture": ["B·01", "B·02"], "reporting": ["B·03", "B·04"]},
+            "note": "grouped by what they are about"}
+    out = service.propose(store, "m", body)
+    assert out["status"] == "pending"
+    assert service.get_proposal(store, "m")["proposal"]["capture"] == ["B·01", "B·02"]
+
+
+def test_slicing_is_not_dispatched_while_a_proposal_waits(tmp_path):
+    """Nothing an agent can do advances a decision that is a human's."""
+    from mu_spec.dispatch import SLICING, select
+    from mu_spec.graph import Entry, Graph
+    from mu_spec.identifiers import parse
+    from mu_spec.storage import Manifest
+
+    graph = Graph([Entry(id=parse("B·01"), title="b")])
+    manifest = Manifest(project="m", slices={})
+    assert select(manifest, graph).session_type == SLICING
+    assert select(manifest, graph, proposal_pending=True) is None
+
+
+def test_ratifying_creates_the_slices(tmp_path):
+    from mu_spec import service
+
+    store = _store(tmp_path)
+    _seed_behaviour(store)
+    service.propose(store, "m", {"proposal": {"capture": ["B·01", "B·02"],
+                                              "reporting": ["B·03", "B·04"]},
+                                 "types": {"capture": "slice"}})
+    out = service.ratify(store, "m", {})
+    assert out["ratified"] is True
+    slices = store.load_manifest("m").slices
+    assert set(slices) == {"capture", "reporting"}
+    assert {str(i) for i in slices["capture"].members} == {"B·01", "B·02"}
+    assert service.get_proposal(store, "m")["status"] == "none"
+
+
+def test_ratifying_an_overlapping_proposal_is_refused(tmp_path):
+    """One entry, one slice -- the rule the whole partition exists to
+    enforce. Caught before anything is written, not after."""
+    import pytest
+
+    from mu_spec import service
+    from mu_spec.service import ServiceError
+
+    store = _store(tmp_path)
+    _seed_behaviour(store)
+    with pytest.raises(ServiceError, match="exactly one slice"):
+        service.propose(store, "m", {"proposal": {"a": ["B·01", "B·02"],
+                                                  "b": ["B·02", "B·03"]}})
+    assert store.load_manifest("m").slices == {}
+    assert service.get_proposal(store, "m")["status"] == "none"
+
+
+def test_rejecting_clears_the_proposal_and_keeps_the_reason(tmp_path):
+    from mu_spec import service
+
+    store = _store(tmp_path)
+    _seed_behaviour(store)
+    service.propose(store, "m", {"proposal": {"a": ["B·01", "B·02", "B·03", "B·04"]}})
+    out = service.reject_proposal(store, "m", {"note": "entitlement should split"})
+    assert out["rejected"] is True
+    state = service.get_proposal(store, "m")
+    assert state["status"] == "none"
+    assert "entitlement should split" in state["last_rejection"]["note"]

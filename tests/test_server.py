@@ -1784,6 +1784,13 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "gates": "check_gates",
         "list_projects": "list_projects",
         "trigger": "run_pipeline",
+        "propose": "submit_proposal",
+        "get_proposal": "get_proposal",
+        # Ratifying and rejecting are the human's decision. Deliberately not
+        # offered as tools: a slicing session that could ratify its own
+        # proposal would be the one thing its contract forbids.
+        "ratify": None,
+        "reject_proposal": None,
         "stats": None,
     }
     for _, _, name in _ROUTES:

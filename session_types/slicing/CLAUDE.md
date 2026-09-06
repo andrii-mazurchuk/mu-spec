@@ -41,7 +41,20 @@ A **proposal**, and nothing else. You commit nothing.
 4. `score_slicing` scores the partition without creating it. A bad score is
    information, not a verdict — a slicing can score badly and still be the
    right cut.
-5. Present membership, types and score for **human ratification**.
+5. **`submit_proposal`.** This is the step that makes your work survive.
+
+Submitting stores the proposal for a human to rule on, and stops another
+slicing session being dispatched over the top of it. **A session that only
+reports its proposal in its final message has produced nothing** — the
+process exits, the text goes nowhere, and the next trigger dispatches
+slicing again on identical input. That has already happened once.
+
+Send the membership, the per-slice types, and a `note` carrying your
+reasoning — the two-test results, the warnings you are not resolving, and
+anything a human needs in order to disagree with you.
+
+Check `get_proposal` first. If a previous proposal was rejected, its reason
+is there, and it is the most useful thing you will read this session.
 
 A human ratifies. Only then does the partition become real. Do not create
 slices, and do not treat your own proposal as settled.
