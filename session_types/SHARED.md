@@ -36,6 +36,31 @@ and `WebFetch` will not work: the first two are not granted, and `WebFetch`
 forces HTTPS and cannot POST, so it can reach neither a local plain-HTTP
 unit nor any write endpoint.
 
+**Send a big body on stdin, never as one long `-d` argument.** A command
+line of a few kilobytes is truncated by the shell, and a truncated amendment
+is a malformed one. Use a heredoc:
+
+```
+curl -sS -X POST "$BASE/projects/$P/amendments" \
+  -H 'Content-Type: application/json' -d @- <<'JSON'
+{ "in_response_to": "msg-0001", "slice": "capture", "entries": [ ... ] }
+JSON
+```
+
+This matters more than it looks. **One session submits one amendment.** An
+amendment is a transaction: it is admitted whole or refused whole, and
+splitting one into three because the command line was too long gives you
+three transactions, two of which can land while the third is refused. If you
+find yourself splitting a write to make it fit, use the heredoc instead.
+
+**Identifiers in a URL** contain `·` (U+00B7). Either the raw character or
+its percent-encoded form `%C2%B7` works.
+
+**Never post to `/inbox` to test whether something works.** That door is how
+change enters the pipeline: a probe there is a real request that a later
+triage session will pick up and act on. Read-only calls are the safe way to
+find your footing.
+
 You are running inside mu-spec's own repository. That does not give you a
 shortcut: **never read or write `state/`, and never edit the graph on
 disk.** Every admission gate lives behind the API precisely so a session in
