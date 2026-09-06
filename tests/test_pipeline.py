@@ -396,3 +396,37 @@ def test_the_loop_stops_when_the_budget_is_spent(parts, tmp_path):
     assert out["ran"] is False
     assert "budget" in out["reason"]
     assert out["spent_usd"] == 6.0
+
+
+def test_the_stall_signature_is_the_work_unit_not_its_contents():
+    """Repair ran 17 times across 4 slices in the first full run and the
+    stall cap never tripped, because the signature included the issue list:
+    one new issue made the same slice look like different work. The unit of
+    work is the slice, not the issues open against it at that moment."""
+    from mu_spec.dispatch import Dispatch
+    from mu_spec.service import _signature
+
+    one = Dispatch("repair", "m",
+                   {"slice": "accounts", "wave": 2,
+                    "issues": [{"id": "iss-1"}], "rerun": []}, "why")
+    two = Dispatch("repair", "m",
+                   {"slice": "accounts", "wave": 2,
+                    "issues": [{"id": "iss-1"}, {"id": "iss-2"}], "rerun": []}, "why")
+    other = Dispatch("repair", "m", {"slice": "capture", "wave": 0,
+                                     "issues": [], "rerun": []}, "why")
+    assert _signature(one) == _signature(two)
+    assert _signature(one) != _signature(other)
+
+
+def test_derivation_of_a_different_layer_is_different_work():
+    from mu_spec.dispatch import Dispatch
+    from mu_spec.service import _signature
+
+    a = Dispatch("derivation", "m", {"layer": "A", "slice": "capture",
+                                     "parents": ["B·01"]}, "why")
+    b = Dispatch("derivation", "m", {"layer": "S", "slice": "capture",
+                                     "parents": ["A·01"]}, "why")
+    c = Dispatch("derivation", "m", {"layer": "A", "slice": "capture",
+                                     "parents": ["B·01", "B·02"]}, "why")
+    assert _signature(a) != _signature(b)
+    assert _signature(a) == _signature(c)

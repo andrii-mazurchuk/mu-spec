@@ -1266,10 +1266,24 @@ def _fingerprint(
     )
 
 
+# The scope keys that identify a piece of work, as opposed to describing its
+# contents. Repair against `accounts` is the same work whether two issues are
+# open against it or three.
+_WORK_KEYS = ("slice", "layer", "request")
+
+
 def _signature(dispatch: Dispatch) -> str:
-    """What makes two dispatches the same piece of work."""
+    """What makes two dispatches the same piece of work.
+
+    Deliberately not the whole scope. Including the issue list meant one new
+    issue made the same slice look like different work, so the stall cap
+    never tripped -- repair ran seventeen times across four slices in the
+    first full run, seven of them changing nothing, and each paid the full
+    fixed cost of starting a session.
+    """
+    identity = {k: dispatch.scope[k] for k in _WORK_KEYS if k in dispatch.scope}
     return json.dumps(
-        [dispatch.session_type, dispatch.project, dispatch.scope],
+        [dispatch.session_type, dispatch.project, identity],
         sort_keys=True,
         default=str,
     )
