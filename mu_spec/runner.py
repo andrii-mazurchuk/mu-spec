@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import json
 import os
 import shutil
 import subprocess
@@ -63,6 +64,8 @@ class SessionResult:
     ok: bool
     duration_seconds: float
     detail: str = ""
+    # What the run actually cost. Empty when the launcher did not report it.
+    usage: dict = dataclasses.field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {
@@ -71,6 +74,7 @@ class SessionResult:
             "ok": self.ok,
             "duration_seconds": self.duration_seconds,
             "detail": self.detail,
+            **self.usage,
         }
 
 
@@ -96,7 +100,17 @@ def argv_for(model: str | None, session_type: str | None = None) -> list[str]:
     sessions each received only the brief's `# Session brief` heading and
     replied asking what was wanted. stdin has no such limit.
     """
-    argv = ["claude", "-p", "--allowedTools", *tools_for(session_type)]
+    argv = [
+        "claude",
+        "-p",
+        # JSON so the run reports its own cost and token counts. Without
+        # it the loop recorded wall clock and nothing else, which made
+        # every question about spend a guess.
+        "--output-format",
+        "json",
+        "--allowedTools",
+        *tools_for(session_type),
+    ]
     if model:
         argv += ["--model", model]
     return argv
@@ -134,10 +148,48 @@ def _spawn(
     # output on every run -- it is kept only when something failed, which is
     # the one case it explains anything.
     detail = (done.stdout or "").strip()
-    if done.returncode != 0:
+    code, usage = done.returncode, {}
+
+    envelope = _parse_envelope(detail)
+    if envelope is not None:
+        detail = str(envelope.get("result") or "").strip()
+        usage = _usage_of(envelope)
+        # The CLI exits 0 and sets is_error when it refuses -- a session
+        # limit or a permission wall reads as a clean run otherwise.
+        if envelope.get("is_error") and code == 0:
+            code = 1
+
+    if code != 0:
         parts = [p for p in (detail, (done.stderr or "").strip()) if p]
         detail = chr(10).join(parts)
-    return done.returncode, detail
+    return code, detail, usage
+
+
+def _parse_envelope(text: str) -> dict | None:
+    """The --output-format json envelope, or None if this is plain text.
+
+    Degrades rather than raising: a launcher that stops speaking JSON should
+    cost the loop its usage numbers, not the run.
+    """
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) and "result" in parsed else None
+
+
+def _usage_of(envelope: dict) -> dict:
+    raw = envelope.get("usage") or {}
+    return {
+        "cost_usd": envelope.get("total_cost_usd"),
+        "num_turns": envelope.get("num_turns"),
+        "input_tokens": raw.get("input_tokens"),
+        "output_tokens": raw.get("output_tokens"),
+        # The fixed price of starting a session at all: every contract and
+        # prompt this session type loads, paid on every single run.
+        "cache_creation_tokens": raw.get("cache_creation_input_tokens"),
+        "cache_read_tokens": raw.get("cache_read_input_tokens"),
+    }
 
 
 def run(
@@ -145,7 +197,7 @@ def run(
     prompt: str,
     *,
     root: Path,
-    spawn: Callable[[Sequence[str], Path, str], tuple[int, str]] = _spawn,
+    spawn: Callable[[Sequence[str], Path, str], tuple] = _spawn,
     now_fn: Callable[[], float] = time.monotonic,
     models: dict[str, str | None] | None = None,
 ) -> SessionResult:
@@ -164,7 +216,7 @@ def run(
     model = (MODELS if models is None else models).get(dispatch.session_type)
     started = now_fn()
     try:
-        code, detail = spawn(
+        code, detail, usage = spawn(
             argv_for(model, dispatch.session_type), cwd, prompt
         )
     except subprocess.TimeoutExpired:
@@ -194,6 +246,7 @@ def run(
         code == 0,
         now_fn() - started,
         detail,
+        usage,
     )
 
 

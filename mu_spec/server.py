@@ -37,6 +37,17 @@ PROMPT_TIERS = ("default", "reference")
 # CLAUDE.md, discovered from the filesystem rather than a manifest.
 SESSION_TYPES_DIR = "session_types"
 
+
+def _budget() -> float | None:
+    """What one project may spend across all its sessions, from the
+    environment. Absent means uncapped, which is how the first full run
+    reached an account session limit."""
+    raw = os.environ.get("MU_SPEC_BUDGET_USD")
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
 
@@ -622,6 +633,7 @@ def handle(
                         base_url=base_url,
                         now_fn=now_fn,
                         build_root=os.environ.get("MU_SPEC_BUILD_ROOT") or None,
+                        budget_usd=_budget(),
                         dry_run=bool(body.get("dry_run")),
                     )
                 ),

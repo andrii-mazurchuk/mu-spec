@@ -356,3 +356,43 @@ def test_progress_clears_the_stall_count(parts, tmp_path):
     _run(parts, _Runner(), tmp_path)          # stall
     _run(parts, _Working(), tmp_path)         # progress -- resets
     assert _run(parts, _Runner(), tmp_path)["ran"] is True
+
+
+def test_the_run_records_what_it_cost(parts, tmp_path):
+    """24 live sessions burned 2.9 hours and an account session limit, and
+    the only number kept was wall clock."""
+    store, inbox, _, events = parts
+    _seed_request(store, inbox)
+
+    class _Costly:
+        def __call__(self, dispatch, brief):
+            return SessionResult(
+                dispatch.session_type, dispatch.project, True, 1.0, "",
+                {"cost_usd": 0.42, "output_tokens": 20,
+                 "cache_creation_tokens": 27568},
+            )
+
+    out = _run(parts, _Costly(), tmp_path)
+    assert out["cost_usd"] == 0.42
+    recorded = [e for e in events.list(project="m") if e.kind == SESSION][-1]
+    assert recorded.facts["cost_usd"] == 0.42
+    assert recorded.facts["cache_creation_tokens"] == 27568
+
+
+def test_the_loop_stops_when_the_budget_is_spent(parts, tmp_path):
+    """Session 24 of the first full run died on an account limit rather than
+    on any decision of ours. A cap is what makes that our choice."""
+    store, inbox, _, events = parts
+    _seed_request(store, inbox)
+
+    class _Costly:
+        def __call__(self, dispatch, brief):
+            return SessionResult(dispatch.session_type, dispatch.project,
+                                 True, 1.0, "", {"cost_usd": 3.0})
+
+    assert _run(parts, _Costly(), tmp_path, budget_usd=5.0)["ran"] is True
+    assert _run(parts, _Costly(), tmp_path, budget_usd=5.0)["ran"] is True
+    out = _run(parts, _Costly(), tmp_path, budget_usd=5.0)
+    assert out["ran"] is False
+    assert "budget" in out["reason"]
+    assert out["spent_usd"] == 6.0

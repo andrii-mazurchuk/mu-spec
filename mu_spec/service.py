@@ -1275,6 +1275,15 @@ def _signature(dispatch: Dispatch) -> str:
     )
 
 
+def _spent(events: Lifecycle, project: str) -> float:
+    """What this project's sessions have cost so far, in dollars."""
+    return sum(
+        float(e.facts.get("cost_usd") or 0.0)
+        for e in events.list(project=project or None)
+        if e.kind == lc.SESSION
+    )
+
+
 def _stalls(events: Lifecycle, dispatch: Dispatch) -> int:
     """Consecutive runs of this exact dispatch that changed nothing.
 
@@ -1379,6 +1388,7 @@ def run_pipeline(
     shipper: Callable[..., bool] | None = None,
     build_root: str | None = None,
     dry_run: bool = False,
+    budget_usd: float | None = None,
 ) -> dict:
     """Advance the pipeline by exactly one session.
 
@@ -1395,6 +1405,11 @@ def run_pipeline(
     is dispatched at all: a build session runs with `cwd` inside this unit,
     so one with nowhere to write would write the target project's code into
     mu-spec. Per-project targeting is undesigned -- see `docs/DESIGN.md` 11.
+
+    `budget_usd` caps what this project may spend across all its sessions.
+    The first full run stopped on an account session limit at session 24
+    rather than on any decision of ours, which is the wrong thing to be
+    stopped by.
 
     Returns what happened. It never raises -- a session that fails is a
     reported result, because the caller is a trigger endpoint and a failed
@@ -1413,6 +1428,14 @@ def run_pipeline(
                 "ran": False,
                 "reason": "nothing eligible",
                 **({"would_run": None} if dry_run else {}),
+            }
+
+        spent = _spent(events, chosen.project)
+        if budget_usd is not None and spent >= budget_usd:
+            return {
+                "ran": False,
+                "reason": f"budget spent -- ${spent:.2f} of ${budget_usd:.2f}",
+                "spent_usd": round(spent, 4),
             }
 
         stalls = _stalls(events, chosen)
@@ -1465,6 +1488,7 @@ def run_pipeline(
             duration_seconds=result.duration_seconds,
             reason=chosen.reason,
             scope=chosen.scope,
+            **result.usage,
         )
 
         payload = {**chosen.to_json(), **result.to_json()}
@@ -1498,6 +1522,8 @@ def run_pipeline(
             "reason": chosen.reason,
             "duration_seconds": result.duration_seconds,
             "detail": result.detail,
+            **result.usage,
+            "spent_usd": round(spent + float(result.usage.get("cost_usd") or 0), 4),
             "gates": gates,
         }
 

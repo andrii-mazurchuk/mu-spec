@@ -27,7 +27,7 @@ class _Spawn:
 
     def __call__(self, argv, cwd, prompt=""):
         self.calls.append((list(argv), cwd, prompt))
-        return self.code, self.detail
+        return self.code, self.detail, {}
 
 
 # -- discovery ---------------------------------------------------------------
@@ -82,7 +82,7 @@ def test_a_multi_line_prompt_survives_the_real_launcher(tmp_path):
 
     from mu_spec.runner import _spawn
 
-    code, detail = _spawn(
+    code, detail, _usage = _spawn(
         [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.read())"],
         tmp_path,
         "line one\nline two",
@@ -259,7 +259,7 @@ def test_stdout_is_the_record_not_stderr(tmp_path):
 
     from mu_spec.runner import _spawn
 
-    code, detail = _spawn(
+    code, detail, _usage = _spawn(
         [sys.executable, "-c",
          "import sys; sys.stdin.read(); sys.stdout.write('THE ANSWER');"
          " sys.stderr.write('noise')"],
@@ -274,7 +274,7 @@ def test_a_failure_keeps_stderr_because_that_is_where_the_reason_is(tmp_path):
 
     from mu_spec.runner import _spawn
 
-    code, detail = _spawn(
+    code, detail, _usage = _spawn(
         [sys.executable, "-c",
          "import sys; sys.stdin.read();"
          " sys.stderr.write('what went wrong'); sys.exit(3)"],
@@ -301,3 +301,64 @@ def test_only_build_may_write_files():
 
     assert "Write" not in " ".join(argv_for(None, DERIVATION))
     assert "Write" in " ".join(argv_for(None, BUILD))
+
+
+def test_usage_is_captured_from_the_launcher(tmp_path):
+    """A run cost real money and the loop recorded only its wall clock. The
+    CLI reports tokens and dollars; not capturing them made every question
+    about cost a guess."""
+    import json as _json
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    payload = _json.dumps({
+        "result": "did the thing",
+        "is_error": False,
+        "total_cost_usd": 0.42,
+        "num_turns": 3,
+        "usage": {"input_tokens": 10, "output_tokens": 20,
+                  "cache_creation_input_tokens": 27568,
+                  "cache_read_input_tokens": 21335},
+    })
+    code, detail, usage = _spawn(
+        [sys.executable, "-c",
+         f"import sys; sys.stdin.read(); sys.stdout.write({payload!r})"],
+        tmp_path,
+    )
+    assert code == 0
+    assert detail == "did the thing"
+    assert usage["cost_usd"] == 0.42
+    assert usage["output_tokens"] == 20
+    assert usage["cache_creation_tokens"] == 27568
+
+
+def test_a_session_reporting_its_own_error_is_not_a_success(tmp_path):
+    """The CLI exits 0 and sets is_error when it refuses -- a session limit
+    reads as a clean run otherwise."""
+    import json as _json
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    payload = _json.dumps({"result": "hit your session limit", "is_error": True})
+    code, detail, _usage = _spawn(
+        [sys.executable, "-c",
+         f"import sys; sys.stdin.read(); sys.stdout.write({payload!r})"],
+        tmp_path,
+    )
+    assert code != 0
+    assert "session limit" in detail
+
+
+def test_non_json_output_still_works(tmp_path):
+    """Degrade rather than crash if the launcher stops speaking JSON."""
+    import sys
+
+    from mu_spec.runner import _spawn
+
+    code, detail, usage = _spawn(
+        [sys.executable, "-c", "import sys; sys.stdin.read(); print('plain text')"],
+        tmp_path,
+    )
+    assert code == 0 and detail == "plain text" and usage == {}
