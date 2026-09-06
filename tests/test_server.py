@@ -1804,3 +1804,31 @@ def test_a_percent_encoded_identifier_resolves(store, prompts):
     encoded = call(store, prompts, "GET", "/projects/m/entries/I%C2%B701")
     assert raw[0] == 200
     assert encoded == raw
+
+
+def test_a_refused_amendment_burns_no_identifiers(store, prompts):
+    """`allocate` ran before `append`, so an amendment that `append` then
+    rejected had already committed the high-water mark. The first live
+    derivation session permanently burned B·01-B·04 that way and filed an
+    issue about it -- the code comment two lines above the bug says a
+    rejected amendment does not burn identifiers."""
+    mid = seed(store, prompts)
+    # Architecture with no slice: refused by storage, not by a gate.
+    status, _ = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {"in_response_to": mid,
+         "entries": [{"layer": "A", "title": "no slice given",
+                      "derives_from": ["B·01"]}]},
+    )
+    assert status >= 400
+
+    # The next architecture entry must be A·02 -- A·01 already existed from
+    # the seed, and the refused one must not have consumed A·03.
+    status, payload = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {"slice": "listings", "in_response_to": mid,
+         "entries": [{"layer": "A", "title": "a real one",
+                      "derives_from": ["B·01"]}]},
+    )
+    assert status == 200, payload
+    assert payload["created"] == ["A·02"]

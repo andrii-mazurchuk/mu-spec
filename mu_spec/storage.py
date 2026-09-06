@@ -42,6 +42,12 @@ from mu_spec.identifiers import (
 INTENT_LAYER = "I"
 LAYER_DIRS = {"B": "behaviour", "A": "architecture", "S": "spec"}
 INTENT_FILE = "intent.jsonl"
+# Where behaviour lives before slicing has run. Slices are cut once
+# behaviour is complete, so behaviour necessarily exists before any slice
+# does; demanding a slice name for it made the designed order impossible.
+# Architecture and spec are derived after slicing and always have an owner.
+HOLDING_FILE = "_unassigned.jsonl"
+BEHAVIOUR_LAYER = "B"
 MANIFEST_FILE = "manifest.json"
 
 # Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
@@ -376,11 +382,20 @@ class ProjectStore:
 
     # -- entry files --------------------------------------------------------
 
+    def file_for(self, project: str, layer: str, slice_name: str | None) -> Path:
+        """Where an entry of this layer would be written. Public so a caller
+        can find out that a write is impossible *before* anything is
+        committed -- identifiers are allocated first and cannot be handed
+        back."""
+        return self._file_for(project, layer, slice_name)
+
     def _file_for(self, project: str, layer: str, slice_name: str | None) -> Path:
         path = self._project_dir(project)
         if layer == INTENT_LAYER:
             return path / INTENT_FILE
         if not slice_name:
+            if layer == BEHAVIOUR_LAYER:
+                return path / LAYER_DIRS[layer] / HOLDING_FILE
             raise ValueError(f"layer {layer!r} is sliced -- a slice name is required")
         return path / LAYER_DIRS[layer] / f"{slice_name}.jsonl"
 

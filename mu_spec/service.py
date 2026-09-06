@@ -425,6 +425,16 @@ def submit_amendment(
             ],
         }
 
+    # Storage refuses architecture and spec with no owning slice. Checked
+    # here, before anything is committed: `allocate` persists the high-water
+    # mark, so letting `append` be the one to refuse burned the identifiers
+    # of an amendment that was never admitted.
+    try:
+        for entry in staged:
+            store.file_for(project, entry.id.layer, slice_name)
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+
     for entry in staged:
         store.allocate(project, entry.id.layer)
     store.append(project, staged, slice_name=slice_name)

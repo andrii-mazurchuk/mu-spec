@@ -419,3 +419,38 @@ def test_the_write_path_cannot_put_one_entry_in_two_slices(tmp_path):
     with pytest.raises(ValueError, match="already exists"):
         store.append("m", [entry], slice_name="payouts")
     assert store.load_manifest("m").slice_of(parse("S·01")) == "listings"
+
+
+def test_behaviour_can_be_written_before_any_slice_exists(tmp_path):
+    """Slices are cut after behaviour is complete, so behaviour necessarily
+    exists before there is a slice to own it. Storage demanding a slice name
+    for layer B made the designed order impossible -- the first live
+    derivation session had to invent a slice called `unsliced` to write at
+    all, which the contract explicitly forbids it from doing."""
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+    from mu_spec.storage import ProjectStore
+
+    store = ProjectStore(tmp_path / "p")
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("B·01"), title="a behaviour")])
+
+    assert [str(e.id) for e in store.load_all("m")] == ["B·01"]
+    # It belongs to no slice, which is what makes the slicing session's work
+    # visible to the ladder.
+    assert store.load_manifest("m").slices == {}
+
+
+def test_architecture_still_requires_a_slice(tmp_path):
+    """Architecture is derived after slicing, so there is always a slice to
+    own it. Allowing it unsliced would let a session skip ratification."""
+    import pytest
+
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+    from mu_spec.storage import ProjectStore
+
+    store = ProjectStore(tmp_path / "p")
+    store.create_project("m")
+    with pytest.raises(ValueError):
+        store.append("m", [Entry(id=parse("A·01"), title="an architecture")])
