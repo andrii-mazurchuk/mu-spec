@@ -310,6 +310,23 @@ def submit_amendment(
             )
         )
 
+    # One session writes one layer. A repair session wrote a behaviour and
+    # the architecture deriving from it in a single amendment, so that
+    # architecture derived from the session's own reasoning rather than from
+    # an entry it had read -- and every gate passed, because the graph was
+    # well formed and only the claim was false. The prompts say this; saying
+    # it here is what makes it true.
+    layers = {e.id.layer for e in staged}
+    if len(layers) > 1:
+        raise ServiceError(
+            "an amendment writes entries at one layer, not "
+            f"{sorted(layers)}. Deriving the layer below in the same session "
+            "that wrote the layer above claims a derivation nobody performed: "
+            "the session already knows why it wrote the parent, so it never "
+            "reads it. Submit the upper layer and let the next session derive "
+            "from what is actually written"
+        )
+
     spec_type = TYPES[message.type]
     already = (message.resolution or {}).get("produced", [])
     is_origination = not any(a[:1] in ("I", "B", "A", "S") and "·" in a for a in already)

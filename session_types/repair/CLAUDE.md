@@ -64,6 +64,21 @@ looping forever. If you are looking at an issue you have clearly seen
 before, that is the signal it is **not a repair** — say so plainly and let
 it escalate. Do not keep patching around it.
 
+## One layer, like every other session
+
+A repair writes at **one layer**. If the fix is a missing behaviour, write
+the behaviour and stop -- do not also write the architecture that serves it.
+
+It is tempting, because leaving it unserved feels unfinished. It is not:
+incomplete never blocks, and the ladder will dispatch a derivation session
+that reads your entry and derives from what is actually written. A session
+that writes both already knows why it wrote the parent, so it never reads
+it, and the `derives_from` edge claims a derivation nobody performed. Every
+gate still passes.
+
+The unit enforces this -- an amendment carrying two layers is refused -- but
+knowing why saves you the round trip.
+
 ## What you must not do
 
 - **Do not redesign.** You repair what the issues name. If the right fix is

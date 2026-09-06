@@ -1854,3 +1854,37 @@ def test_the_documented_tool_count_matches_the_manifest(store, prompts):
     }
     stated = next(n for w, n in words.items() if f"— {w} of them" in text)
     assert stated == len(_tools())
+
+
+def test_an_amendment_may_only_write_one_layer(store, prompts):
+    """One session writes one layer. A repair session wrote B·25 and then
+    A·07 deriving from it in the same amendment -- so the architecture entry
+    derived from the session's own reasoning rather than from an entry it
+    read, and every gate still passed. Enforced here rather than asked for in
+    a prompt: a mechanical check needs a function, not an agent."""
+    mid = seed(store, prompts)
+    status, payload = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {"slice": "listings", "in_response_to": mid,
+         "entries": [
+             {"layer": "B", "title": "a behaviour", "derives_from": ["I·01"]},
+             {"layer": "A", "title": "its architecture", "derives_from": ["B·02"]},
+         ]},
+    )
+    assert status >= 400
+    assert "one layer" in json.dumps(payload)
+
+
+def test_many_entries_at_one_layer_are_still_fine(store, prompts):
+    """The rule is one layer, not one entry -- a derivation session serving
+    six parents writes six entries."""
+    mid = seed(store, prompts)
+    status, _ = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {"slice": "listings", "in_response_to": mid,
+         "entries": [
+             {"layer": "B", "title": "one", "derives_from": ["I·01"]},
+             {"layer": "B", "title": "two", "derives_from": ["I·01"]},
+         ]},
+    )
+    assert status == 200
