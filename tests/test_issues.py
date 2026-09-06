@@ -319,3 +319,22 @@ def test_an_issue_against_an_unsliced_entry_escalates_rather_than_batching():
     batches, escalations = route(Manifest(project="m", slices={}), graph, [issue])
     assert batches == []
     assert [e.reason for e in escalations] == [UNOWNED]
+
+
+def test_an_issue_naming_a_slice_that_does_not_exist_escalates():
+    """A batch is dispatched against its slice. One naming a slice absent
+    from the manifest has nothing to dispatch to."""
+    from mu_spec.graph import Entry, Graph
+    from mu_spec.identifiers import parse
+    from mu_spec.issues import Issue
+    from mu_spec.reconcile import UNOWNED, route
+    from mu_spec.storage import Manifest
+
+    graph = Graph([Entry(id=parse("B·01"), title="b")])
+    issue = Issue(
+        id="iss-0001", project="m", target="B·01", target_slice="gone",
+        raised_by=None, kind="additive", claim="something", round=1,
+    )
+    batches, escalations = route(Manifest(project="m", slices={}), graph, [issue])
+    assert batches == []
+    assert [e.reason for e in escalations] == [UNOWNED]

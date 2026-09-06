@@ -146,14 +146,15 @@ def route(
             )
             continue
 
-        if not issue.target_slice:
+        if not issue.target_slice or issue.target_slice not in manifest.slices:
             escalations.append(
                 Escalation(
                     issue.id,
                     UNOWNED,
-                    f"{issue.target!r} belongs to no slice, so no session owns "
-                    "it. Intent is never sliced: this is a question for "
-                    "whoever asked, not a repair",
+                    f"{issue.target!r} belongs to no slice that exists, so "
+                    "no session owns it. Intent is never sliced, and a batch "
+                    "against a slice that is not in the manifest cannot be "
+                    "dispatched: this is a question for a human, not a repair",
                 )
             )
             continue
