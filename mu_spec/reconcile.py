@@ -110,6 +110,25 @@ def route(
     """
     waves = schedule(manifest, graph).wave_of()
 
+    def owner(issue: Issue) -> str | None:
+        """Which slice owns this issue's target, read from the manifest.
+
+        Never `issue.target_slice`. That was recorded when the issue was
+        raised, and an issue raised before slicing recorded None -- so after
+        ratification two issues against the same entry routed differently,
+        one into a batch and one escalated as having no owner. Membership
+        lives in one place; a copy on the issue is a second statement of the
+        same fact and rots as soon as the partition changes.
+        """
+        try:
+            target = parse(issue.target)
+        except InvalidIdentifier:
+            return None
+        for name, sl in manifest.slices.items():
+            if target in sl.members:
+                return name
+        return None
+
     escalations: list[Escalation] = []
     routable: list[Issue] = []
     for issue in issues:
@@ -126,7 +145,8 @@ def route(
             continue
 
         here = waves.get(issue.raised_by) if issue.raised_by else None
-        there = waves.get(issue.target_slice) if issue.target_slice else None
+        owned_by = owner(issue)
+        there = waves.get(owned_by) if owned_by else None
         if (
             issue.kind == SEMANTIC
             and here is not None
@@ -138,7 +158,7 @@ def route(
                     issue.id,
                     REACHES_BACK,
                     f"{issue.raised_by!r} is in wave {here} and says an entry "
-                    f"in {issue.target_slice!r} (wave {there}) means something "
+                    f"in {owned_by!r} (wave {there}) means something "
                     "else. That wave is already complete, so everything "
                     "derived from it since is suspect -- this is the slicing "
                     "being wrong, not a repair",
@@ -146,7 +166,7 @@ def route(
             )
             continue
 
-        if not issue.target_slice or issue.target_slice not in manifest.slices:
+        if owned_by is None:
             escalations.append(
                 Escalation(
                     issue.id,
@@ -163,7 +183,7 @@ def route(
 
     grouped: dict[str | None, list[Issue]] = {}
     for issue in routable:
-        grouped.setdefault(issue.target_slice, []).append(issue)
+        grouped.setdefault(owner(issue), []).append(issue)
 
     batches = [
         Batch(

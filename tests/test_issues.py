@@ -338,3 +338,37 @@ def test_an_issue_naming_a_slice_that_does_not_exist_escalates():
     batches, escalations = route(Manifest(project="m", slices={}), graph, [issue])
     assert batches == []
     assert [e.reason for e in escalations] == [UNOWNED]
+
+
+def test_the_owning_slice_is_projected_not_trusted_from_the_issue():
+    """An issue raised before slicing recorded target_slice: None. After
+    ratification its target belongs to a slice, but the stored field still
+    said None -- so two issues against the SAME entry routed differently,
+    one batched and one escalated as unowned. Membership lives in the
+    manifest; a copy on the issue is a second statement of the same fact,
+    and it goes stale the moment slicing runs.
+    """
+    from mu_spec.graph import Entry, Graph
+    from mu_spec.identifiers import parse
+    from mu_spec.issues import Issue
+    from mu_spec.reconcile import route
+    from mu_spec.storage import Manifest, Slice
+
+    graph = Graph([Entry(id=parse("B·19"), title="b")])
+    manifest = Manifest(
+        project="m",
+        slices={"accounts": Slice(name="accounts", members={parse("B·19")})},
+    )
+    stale = Issue(
+        id="iss-0009", project="m", target="B·19", target_slice=None,
+        raised_by=None, kind="additive", claim="raised before slicing", round=1,
+    )
+    fresh = Issue(
+        id="iss-0011", project="m", target="B·19", target_slice="accounts",
+        raised_by=None, kind="additive", claim="raised after", round=1,
+    )
+    batches, escalations = route(manifest, graph, [stale, fresh])
+    assert escalations == []
+    assert len(batches) == 1
+    assert batches[0].slice == "accounts"
+    assert {i.id for i in batches[0].issues} == {"iss-0009", "iss-0011"}
