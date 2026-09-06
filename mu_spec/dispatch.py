@@ -161,16 +161,30 @@ def select(
 
     # 2. The wave that just ended left issues open.
     if batches:
-        batch = batches[0]
+        # Every open batch, not the first. Batches are one per slice and are
+        # independent of each other by construction, so nothing is gained by
+        # spreading them over separate runs -- and a great deal is lost: each
+        # session pays a fixed startup cost of tens of thousands of tokens
+        # before it reads anything, and the first full run spent seventeen of
+        # them on four slices.
+        total = sum(len(b.issues) for b in batches)
+        names = [b.slice for b in batches]
         return dispatch(
             REPAIR,
             {
-                "slice": batch.slice,
-                "wave": batch.wave,
-                "issues": [i.header() for i in batch.issues],
-                "rerun": list(batch.rerun),
+                "slices": ", ".join(names),
+                "batches": [
+                    {
+                        "slice": b.slice,
+                        "wave": b.wave,
+                        "issues": [i.header() for i in b.issues],
+                        "rerun": list(b.rerun),
+                    }
+                    for b in batches
+                ],
             },
-            f"{len(batch.issues)} open issue(s) against {batch.slice}",
+            f"{total} open issue(s) across {len(batches)} slice(s), "
+            "in dependency order",
         )
 
     # 3. New input at the door.

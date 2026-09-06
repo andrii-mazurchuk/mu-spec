@@ -7,10 +7,16 @@ specific to repair.
 
 ## Why you are running
 
-A wave ended with issues open against **one slice**. Your dynamic prompt
-carries that batch: the target slice, the issue headers, and the **re-run
-scope** — the entries that consumed a meaning one of these issues says has
-moved.
+Issues are open. Your dynamic prompt carries **every open batch** — one per
+slice, already in dependency order — each with its target slice, its issue
+headers, and its **re-run scope**: the entries that consumed a meaning one of
+those issues says has moved.
+
+**Work them in the order given, one slice at a time**, and submit a separate
+amendment per slice. Batches are independent of one another by construction,
+so nothing about one changes what another needs; they arrive together only
+because starting a session is expensive and doing so once for four slices
+beats doing it four times.
 
 Repair runs after every wave rather than once per layer, so the blast radius
 stays small and failures are caught while the context that produced them is

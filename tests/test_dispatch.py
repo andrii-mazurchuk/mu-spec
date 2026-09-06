@@ -87,7 +87,7 @@ def test_an_open_batch_dispatches_repair():
     got = select(manifest, graph, batches=(batch,))
     assert got is not None
     assert got.session_type == REPAIR
-    assert got.scope["slice"] == "listings"
+    assert got.scope["slices"] == "listings"
 
 
 def test_a_pending_request_dispatches_triage():
@@ -244,3 +244,28 @@ def test_build_takes_the_earliest_wave_first():
     assert got is not None
     assert got.session_type == BUILD
     assert got.scope["slice"] == "base"
+
+
+def test_every_open_batch_goes_to_one_repair_session():
+    """Repair ran 17 times across 4 slices in the first full run, each paying
+    the fixed cost of starting a session -- ~27,500 cache-creation tokens
+    before reading anything -- to fix one or two issues. Batches are
+    independent of each other by construction, so one session takes them
+    all, in dependency order."""
+    manifest, graph = _complete()
+    batches = (
+        Batch(slice="capture", wave=0, issues=(), rerun=()),
+        Batch(slice="reporting", wave=1, issues=(), rerun=()),
+    )
+    got = select(manifest, graph, batches=batches)
+    assert got is not None and got.session_type == REPAIR
+    assert [b["slice"] for b in got.scope["batches"]] == ["capture", "reporting"]
+    assert got.scope["slices"] == "capture, reporting"
+
+
+def test_one_batch_still_reads_as_one_batch():
+    manifest, graph = _complete()
+    got = select(manifest, graph,
+                 batches=(Batch(slice="capture", wave=0, issues=(), rerun=()),))
+    assert got.scope["slices"] == "capture"
+    assert len(got.scope["batches"]) == 1

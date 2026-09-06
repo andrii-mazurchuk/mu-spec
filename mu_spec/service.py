@@ -1269,7 +1269,7 @@ def _fingerprint(
 # The scope keys that identify a piece of work, as opposed to describing its
 # contents. Repair against `accounts` is the same work whether two issues are
 # open against it or three.
-_WORK_KEYS = ("slice", "layer", "request")
+_WORK_KEYS = ("slice", "slices", "layer", "request")
 
 
 def _signature(dispatch: Dispatch) -> str:
@@ -1489,7 +1489,11 @@ def run_pipeline(
 
         # Collect. The local record lands first and unconditionally; the copy
         # for whoever aggregates is best-effort and never changes the answer.
-        refs = [chosen.scope[k] for k in ("request", "slice") if k in chosen.scope]
+        refs = [
+            chosen.scope[k]
+            for k in ("request", "slice", "slices")
+            if k in chosen.scope
+        ]
         events.record(
             lc.SESSION,
             chosen.project or None,
