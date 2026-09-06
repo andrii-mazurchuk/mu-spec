@@ -1839,3 +1839,18 @@ def test_a_refused_amendment_burns_no_identifiers(store, prompts):
     )
     assert status == 200, payload
     assert payload["created"] == ["A·02"]
+
+
+def test_the_documented_tool_count_matches_the_manifest(store, prompts):
+    """UNIT_CONTRACT.md states a number. It drifted twice already."""
+    import re as _re
+
+    from mu_spec.server import _tools
+
+    text = Path("UNIT_CONTRACT.md").read_text(encoding="utf-8")
+    words = {
+        "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
+        "twenty-nine": 29, "thirty": 30, "thirty-one": 31, "thirty-two": 32,
+    }
+    stated = next(n for w, n in words.items() if f"— {w} of them" in text)
+    assert stated == len(_tools())

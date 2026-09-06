@@ -697,6 +697,35 @@ copy of the graph.
 restrain itself.** The scope is computed before the process starts. This is the
 same principle as the work package, applied one level up.
 
+### Two things the loop tracks besides the graph
+
+**Progress, which is not the exit code.** A session can end cleanly having
+changed nothing at all -- the first live run produced four of those, one of
+which read its brief as a greeting and replied "I'm ready. What do you
+need?". The loop fingerprints everything a session is able to change on
+either side of the run. A dispatch that changes nothing twice running is not
+launched a third time; it stops and says a human should look. *Consecutive*
+is the point, so a session that is merely slow is not mistaken for one that
+is stuck.
+
+**A proposal waiting on a human.** Slicing is the one session whose output is
+a decision somebody else has to make, and before the first live run there was
+nowhere for that output to live -- a six-slice proposal with its rationale
+and score evaporated when the process exited, and the ladder dispatched
+slicing again on identical input.
+
+The proposal is stored, and deliberately *not* in the manifest: it is not a
+partition until somebody rules on it, and holding it as one would mean an
+agent had cut the system up on its own authority. While a proposal is pending
+the slicing rung goes quiet -- nothing an agent can do advances a decision
+that is not an agent's, and a fresh session would overwrite what a human is
+halfway through reading. Rejection keeps the reason, and the next slicing
+session is told to read it first.
+
+Ratifying and rejecting are HTTP routes but deliberately not declared tools.
+A slicing session able to ratify its own proposal would be doing the one
+thing its contract forbids.
+
 ### Two obligations that hold across all six
 
 **A session is not exempt from enclosure.** Sessions run with `cwd` inside this
@@ -739,6 +768,13 @@ anything that exists.
   parentage and spread are weak. Whether they correlate with change locality is an
   empirical question that needs projects to have run, and until then they are reported
   and believed cautiously.
+- ~~**A holding place for behaviour written before slicing**~~ — **closed.** It was
+  listed as unbuilt and turned out to be load-bearing: storage demanded a slice name
+  for layer B, while slices are cut *after* behaviour is complete, so the designed
+  order could not be executed at all. Behaviour with no slice goes to a holding file
+  and belongs to no slice, which is precisely what makes it visible to the slicing
+  rung.
+
 - ~~**Interface-change detection**~~ — **closed.** It looked isolated at spec level only
   while consumption was invisible. It is an edge now: a consumer declares `depends_on`,
   so superseding an entry leaves every consumer pointing at something retired, the

@@ -23,10 +23,13 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — twenty-seven of them,
+Everything beyond the four is declared in `/tools` — twenty-nine of them,
 covering the inbox, amendments, slice classification, waves, the issue queue
 and its reconciliation, module backlinks, planning, the audit, the work
-package, and the measurement surface. Tool names are action-style rather than
+package, the slicing proposal awaiting ratification, and the measurement
+surface. Ratifying and rejecting a proposal are routes but deliberately not
+tools: a slicing session able to ratify its own proposal would be doing the
+one thing its contract forbids. Tool names are action-style rather than
 path echoes, so one route served under two methods is declared twice under
 two names.
 
