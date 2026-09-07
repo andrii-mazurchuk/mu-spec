@@ -1,111 +1,163 @@
-# Intake interview — reference
+# Writing into the derivation graph
 
-**Status: scaffold. The output contract below is settled and enforced. The
-interview technique is not, and is deliberately left to be filled in.**
+The mechanical contract. What this unit accepts, what it refuses, and why
+each refusal exists. Fetched by anything about to write.
 
-Fetched on demand by an agent that has picked up an `initiate` request from
-this unit's inbox and is about to turn a raw idea into intent entries. It is
-a `reference` tier prompt: no peer loads it by default, and nothing else in
-the pipeline depends on its contents.
+The judgement half -- what belongs at which layer, and how to run an effort
+that fills the graph in -- is `GET /prompts/wayfinding`.
 
 ---
 
-## When this runs
+## The shape of an entry
 
-Exactly one place: an `initiate` request has arrived, a project has been
-created, and no intent entries exist yet.
-
-It is **not** the inbox. The inbox is how change arrives at a system that
-already exists — a feature, a correction, a comment against a design someone
-can already read. This is the other thing: there is no design yet, the
-requester has an idea, and somebody has to find out what they actually mean
-before a single entry is written.
-
-Corrections and features never run this. They arrive against existing
-structure, and the agent handling them reads the spine to find what they
-touch.
-
----
-
-## What it must produce
-
-This half is settled, because it is what the unit enforces.
-
-The interview ends by submitting **one amendment containing intent entries
-only**, citing the `initiate` request. Concretely:
-
-```
-POST /projects/{project}/amendments
-{ "in_response_to": "msg-0001",
-  "entries": [ {"layer": "I", "title": "...", "body": "..."} , ... ] }
+```json
+{"layer": "S",
+ "title": "capture/store.py: an append-only store whose every read names an account",
+ "derives_from": ["A·04"],
+ "depends_on":   ["S·02"],
+ "emits_into":   ["S·31"],
+ "body": "Module capture/store.py. CapturedRecord is frozen ..."}
 ```
 
-Constraints that are not negotiable, and why:
+- **`layer`** is one of `I`, `B`, `A`, `S`. You never choose the identifier;
+  this unit allocates it.
+- **`title`** is one line, and it is what everyone reads in the spine
+  forever. Write it as a claim, not a label: `A person can see where one
+  month's money went`, never `Reporting`.
+- **`body`** carries the substance, and at spec level it carries enough to
+  implement and test from.
 
-- **Intent entries only.** An `initiate` request may originate at `I` and
-  nowhere else. An interview that produces behaviour has skipped the step
-  where a human could still disagree cheaply.
-- **Every entry is a problem, not a solution.** Intent is the buyer's
-  problem in the buyer's terms. "Search must use an index" is an
-  architectural decision wearing an intent costume, and once it is at the
-  top of the graph nothing below can contradict it.
-- **Titles are one line and testable-ish.** They are what everyone reads in
-  the spine forever. `Buyers can find the right seller quickly` — not
-  `Search`.
-- **Bodies carry the why.** What breaks today, for whom, and what it costs.
-  This is the only layer where that context can live.
-- **Nothing is invented.** Anything the requester did not say and was not
-  asked is not intent. If it matters and they were not asked, ask.
+Three kinds of edge, answering three different questions:
 
-After submission every intent entry will report as `unserved`. That is
-correct and expected — it is the to-do list, not a defect.
+| edge | means | direction |
+|---|---|---|
+| `derives_from` | what this **serves** | vertical, exactly one layer up |
+| `depends_on` | what this **needs** | horizontal, same layer |
+| `emits_into` | what this **publishes** | horizontal, into a cross-cutting slice only |
 
----
-
-## What is still open
-
-The interview *technique* is being researched separately. This section is
-the placeholder, and what lands here should answer at least:
-
-- **How many questions, and when to stop.** An interview that never
-  terminates is as useless as one that never happens.
-- **How to detect thin intent.** "Build me a marketplace" needs
-  interrogation; a three-page brief needs summarising. Same skill, opposite
-  behaviour.
-- **What must be asked versus what may be assumed.** Anything assumed has to
-  be flagged as a judgement call rather than quietly absorbed — an agent
-  that only ever reports confidence makes every gate downstream theatre.
-- **How to split one idea into several intent entries.** One `initiate`
-  request almost never means one intent entry, and where the seams go
-  decides what the rest of the pipeline can slice cleanly.
-- **When to refuse.** Some ideas are too vague to start, and saying so is a
-  better outcome than a graph built on guesses.
-
-### Where the multi-unit architecture bites
-
-Worth settling before the technique is written, because it constrains it:
-
-- **mu-spec cannot conduct the interview.** It stores and computes; it does
-  not reason and has no way to talk to a person. The agent that runs this
-  lives elsewhere and calls in.
-- **Whoever talks to the human owns the transport.** This unit never learns
-  who the user is or how they were reached; it sees a request with an
-  `origin` string and nothing more. Keep it that way — the moment this unit
-  knows about chat threads it is coupled to whichever unit provides them.
-- **The interview may need several turns, and the inbox is one-shot.** A
-  request arrives, an agent asks four questions, the human answers over an
-  hour. Where that conversation is held is an open question: it is not in
-  this unit, and it probably should not be. One option is that the
-  interviewing agent holds it and only writes here at the end; another is a
-  `question`-type request per open point, answered by further requests.
-  Undecided.
+`depends_on` is the only edge that imposes an order, which is why the wave
+schedule is computed from it and from nothing else. An emission imposes no
+order at all: nothing comes back, so nothing waits.
 
 ---
 
-## Adding the technique
+## Writing
 
-Replace the "What is still open" section with the real procedure. Nothing
-else needs to change: this file is already served at
-`GET /prompts/reference`, already declared in the unit's manifest entry, and
-already linked from the default prompt, so a finished version is live the
-moment it is written.
+**Everything from outside goes to `POST /inbox`.** You never name a layer
+there, and there is deliberately no way to. The request's `type` decides how
+deep the change it authorises may reach:
+
+| type | may originate at |
+|---|---|
+| `initiate` | intent, and creates the project |
+| `feature` | intent |
+| `correction` | intent or behaviour |
+| `comment` | nothing |
+| `question` | nothing |
+
+Then `POST /projects/{project}/amendments`, citing the request:
+
+```
+curl -sS -X POST "$BASE/projects/$P/amendments" \
+  -H 'Content-Type: application/json' -d @- <<'JSON'
+{"in_response_to": "msg-0001", "slice": "capture", "entries": [ ... ]}
+JSON
+```
+
+**Send the body on stdin, not as one long argument.** A command line of a
+few kilobytes gets truncated by the shell, and a truncated amendment is a
+malformed one.
+
+---
+
+## What will be refused, and why
+
+Each of these is a hard error the caller sees, not a warning in a log.
+
+**An amendment that cites no request.** Every entry traces out past the graph
+to the person who wanted it. An amendment nobody asked for has no such trace.
+
+**An amendment carrying two layers.** One writer, one layer. A writer that
+produces behaviour and then the architecture beneath it already knows why it
+wrote the behaviour, so it never reads it, and the `derives_from` edge claims
+a derivation nobody performed. Every gate still passes; the graph is well
+formed and lying. Submit the upper layer and let the next pass derive from
+what is actually written. The rule is one layer, not one entry -- serving six
+parents is six entries in one transaction.
+
+**A `derives_from` that skips a layer.** The layer jumped over can never be
+reviewed and can never be re-derived when the intent above it changes.
+
+**An orphan** -- anything below intent that derives from nothing, or from
+something retired or out of layer.
+
+**A same-layer edge pointing at nothing**, at itself, or across layers.
+
+**A second owner for an entry.** One entry belongs to exactly one slice.
+Two owners means two writers may edit it, both do, neither knows, and the
+audit passes for both.
+
+**A slice cycle**, or a cross-cutting slice reaching into a feature slice.
+
+**Architecture or spec with no slice.** Both are derived after slicing, so
+an owner always exists. Behaviour is the exception: slices are cut *after*
+behaviour is complete, so behaviour with no slice is normal and goes to a
+holding place until a partition is ratified.
+
+**An entry deeper than the citing request may originate at.** Fixing
+something low while the layers above still say the old thing is exactly how
+the artifacts start lying.
+
+---
+
+## Reading
+
+**Load the spine first.** `GET /projects/{project}/spine` returns
+identifier, one-line title and all three edge lists, with no bodies. Filter
+it with `?layer=B`. Then fetch only the bodies you actually need with
+`GET /projects/{project}/entries/{id}`.
+
+Retrieval is graph traversal. There is no similarity search and you should
+not want one: `blast radius`, `ancestors` and `dependents` are exact answers,
+and an approximate one would be worse.
+
+Identifiers contain `·` (U+00B7). Raw or percent-encoded both work.
+
+---
+
+## Two health questions, reported separately
+
+- **Sound** -- every edge lands where it should. Unsound **blocks**: writes
+  are refused and no work package is issued. Fix the graph; do not work
+  around it.
+- **Complete** -- knowledge has reached spec on every branch. Incomplete
+  **never blocks**. It is the to-do list, and `unserved` findings are that
+  list rather than defects.
+
+---
+
+## An assumption that is not an issue is a bug
+
+You will hit things you cannot derive: a parent that does not say enough, an
+ambiguous contract, a requirement that wants something nobody wrote down.
+
+`POST /projects/{project}/issues` against the entry it is about, state the
+assumption in the body of what you write, and carry on. Never block, never
+wait, and never message another agent -- there is no mechanism for it and
+there deliberately isn't one.
+
+Silently guessing is the failure this rule exists to prevent. Anything that
+only ever reports confidence makes every gate downstream theatre.
+
+An issue against an entry no slice owns -- intent, most often -- is not a
+defect anyone can repair. It is a question for whoever asked, and it comes
+back as an escalation rather than as work.
+
+---
+
+## Amendments are append-only
+
+Nothing is edited in place. A superseding entry carries a marker and the
+original stays. Identifiers are never reused and never renumbered, and they
+encode **layer and creation order only, never slice** -- which is what lets a
+slice split later without renumbering anything.

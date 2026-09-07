@@ -31,7 +31,7 @@ from mu_spec.shipping import ship
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
-PROMPT_TIERS = ("default", "reference")
+PROMPT_TIERS = ("default", "reference", "wayfinding")
 # Where the session-type directories live. Each is a directory holding a
 # CLAUDE.md, discovered from the filesystem rather than a manifest.
 
@@ -455,6 +455,53 @@ def _tools() -> list[dict[str, Any]]:
     ]
 
 
+def _skills() -> dict[str, Any]:
+    """The skills an effort against this unit expects to exist.
+
+    None of them ship from here. Skills have no sharing standard in this
+    system yet, and a unit that started shipping them would be setting that
+    standard by accident. This declares the dependency and leaves obtaining
+    it to whoever assembles the session -- the same way `peers.json` names
+    units without carrying them.
+    """
+    def skill(name, why):
+        return {"name": name, "why": why, "shipped_by_this_unit": False}
+
+    return {
+        "unit": UNIT_NAME,
+        "prompt": "/prompts/wayfinding",
+        "skills": [
+            skill(
+                "wayfinder",
+                "Charts an effort as a map of decision tickets and works "
+                "them one at a time. User-invoked: a person runs it, and it "
+                "drives everything this unit stores.",
+            ),
+            skill(
+                "grilling",
+                "Settles what somebody actually means. The default way a "
+                "decision gets resolved, and what replaced this unit's own "
+                "intake interview.",
+            ),
+            skill(
+                "domain-modeling",
+                "Keeps a glossary of what the words mean. Complementary: "
+                "this unit holds claims, that holds definitions.",
+            ),
+            skill(
+                "research",
+                "Resolves a fact a decision waits on, unattended. The one "
+                "kind of ticket that needs no human in the loop.",
+            ),
+            skill(
+                "prototype",
+                "Answers 'how should it behave' with something cheap to "
+                "react to, when arguing about it in prose is slower.",
+            ),
+        ],
+    }
+
+
 def read_prompt(prompts_dir: Path, tier: str) -> str | None:
     """A missing prompt file is a normal outcome, not an error. The tier is
     checked against a closed set *before* a path is built, so an arbitrary
@@ -471,6 +518,10 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/health$"), "health"),
     ("GET", re.compile(r"^/stats$"), "stats"),
     ("GET", re.compile(r"^/tools$"), "tools"),
+    # What a caller should already have. A declaration, not a
+    # delivery mechanism -- this system has no standard for sharing
+    # skills yet, and inventing one here would prejudge it.
+    ("GET", re.compile(r"^/skills$"), "skills"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
     # The single external door.
     ("POST", re.compile(r"^/inbox$"), "post_inbox"),
@@ -569,6 +620,9 @@ def handle(
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
+
+        if name == "skills":
+            return 200, JSON, json.dumps(_skills())
 
         if name == "propose":
             return 200, JSON, json.dumps(service.propose(store, project, body))

@@ -55,9 +55,15 @@ corrections entered, how cohesive each slice is, and the whole lifecycle of a
 project in order. All of that is **reported and never enforced** — no gate
 fires on any of it.
 
-Agents turning a raw idea into intent should fetch `GET /prompts/reference`
-first — it carries the intake interview and the rules about what intent
-entries may and may not contain.
+Two further tiers say how to use it. `GET /prompts/reference` is the
+authoring contract: the shape of an entry, what will be refused and why, and
+how to read without loading everything. `GET /prompts/wayfinding` is the
+other half: how to run an effort that fills the graph in, one layer per map,
+and which skills resolve which kind of open question.
+
+`GET /skills` names those skills. None of them ship from here — this system
+has no standard for sharing skills yet, and a unit that started shipping
+them would be setting that standard by accident.
 
 Identifiers are permanent — never reused, never renumbered — and encode
 layer and creation order only, never slice. Amendments are append-only.

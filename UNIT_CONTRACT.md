@@ -9,7 +9,15 @@ This file only says what's specific to mu-spec.
 ## What mu-spec implements
 
 The standard four endpoints (`/health`, `/stats`, `/tools`,
-`/prompts/<tier>`) in `mu_spec/server.py`. `unit_type: memory`,
+`/prompts/<tier>`) in `mu_spec/server.py`, plus `GET /skills`.
+
+Three prompt tiers rather than the minimum one: `default` orients a peer,
+`reference` is the authoring contract, and `wayfinding` is how to run an
+effort that fills the graph in. `/skills` names the skills such an effort
+expects — `wayfinder` and the ones it calls — and declares plainly that none
+of them ship from here. Skills have no sharing standard in this system yet,
+and a unit that started shipping them would be setting that standard by
+accident. `unit_type: memory`,
 `lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
 
 `/stats` carries **already-processed** aggregates — counts per layer, how

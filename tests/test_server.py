@@ -176,13 +176,12 @@ def test_missing_prompt_file_404s_rather_than_raising(store, prompts):
     assert status == 404
 
 
-def test_the_shipped_reference_tier_carries_the_intake_interview(store):
-    """The interview skill is served through the standard prompts mechanism,
-    so a finished version goes live without any new endpoint. Declared in
-    this unit's manifest entry and linked from the default prompt."""
+def test_the_shipped_reference_tier_carries_the_authoring_contract(store):
+    """Served through the standard prompts mechanism, so it goes live
+    without any new endpoint."""
     status, body = call(store, Path("prompts"), "GET", "/prompts/reference")
     assert status == 200
-    assert "intent entries" in body
+    assert "will be refused" in body
 
 
 def test_the_default_prompt_points_at_the_reference_tier(store):
@@ -1793,7 +1792,9 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "stats": None,
     }
     for _, _, name in _ROUTES:
-        if name in ("health", "tools", "prompts"):
+        # health, tools, prompts and skills are the standard meta surface:
+        # a peer reads them to learn what this unit is, not to do work.
+        if name in ("health", "tools", "prompts", "skills"):
             continue
         assert name in exposed, f"route {name!r} is exposed by no tool"
         if exposed[name]:
@@ -1887,3 +1888,38 @@ def test_many_entries_at_one_layer_are_still_fine(store, prompts):
          ]},
     )
     assert status == 200
+
+
+# -- the skills declaration --------------------------------------------------
+
+
+def test_skills_declares_what_a_caller_should_have(store, prompts):
+    """Not a shipping mechanism. There is no standard for sharing skills
+    across this system yet, so this says which ones an effort against this
+    unit expects and why, and leaves obtaining them to the caller."""
+    status, payload = call(store, prompts, "GET", "/skills")
+    assert status == 200
+    assert payload["unit"] == UNIT_NAME
+    names = {s["name"] for s in payload["skills"]}
+    assert {"wayfinder", "grilling", "research", "prototype"} <= names
+    for skill in payload["skills"]:
+        assert skill["why"], skill["name"]
+        assert skill["shipped_by_this_unit"] is False
+
+
+def test_skills_points_at_the_tier_that_explains_the_effort(store, prompts):
+    _status, payload = call(store, prompts, "GET", "/skills")
+    assert payload["prompt"] == "/prompts/wayfinding"
+
+
+def test_the_wayfinding_tier_is_servable(store):
+    status, body = call(store, Path("prompts"), "GET", "/prompts/wayfinding")
+    assert status == 200
+    assert "One map per layer" in body
+
+
+def test_reference_is_the_authoring_contract_now(store):
+    """It used to carry an intake interview. `grilling` owns that."""
+    _status, body = call(store, Path("prompts"), "GET", "/prompts/reference")
+    assert "one layer, not one entry" in body
+    assert "intake interview" not in body.lower()
