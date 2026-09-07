@@ -614,133 +614,24 @@ Steering on any of this, when there is evidence for it, belongs in what a propos
 
 ---
 
-## 10b. The sessions, and the loop that runs them
+## 10b. One writer, one layer
 
-Everything above is mechanical. This is where judgement enters, and the whole
-design of it is the boundaries between the six places it is allowed to.
+The rule the rest of the pipeline is arranged around, and the one thing here
+that is enforced rather than asked for.
 
-A session is one headless `claude -p` run: a prompt in, tool calls out, no
-conversation. Bounded work followed by a clean exit is success, not a crash.
+**An amendment writes entries at one layer.** If a single writer produces
+behaviour and then the architecture beneath it, it already knows why it wrote
+the behaviour, so it never reads it -- and the `derives_from` edge claims a
+derivation nobody performed. **Every gate still passes.** The graph is well
+formed and it is lying, which is the one failure mode the gates are
+structurally unable to see.
 
-### The six types
+That was prose in six prompts for a while, and a repair agent duly wrote two
+layers in one amendment. It is a refusal now: a mechanical check does not
+need an agent, it needs a function.
 
-| Session | Starts when | Scope of one run | The judgement it owns |
-|---|---|---|---|
-| **triage** | anything lands in the inbox | one request | what the request means, and which layer it enters at |
-| **back-check** | a correction is placed, before it flows down | one correction | whether it still satisfies everything above it claimed to serve |
-| **slicing** | behaviour is complete and uncut | all behaviour, once | grouping behaviours by what they are about, and each group's type |
-| **derivation** | a parent is unserved in the current wave | one layer, one slice | authoring the entries |
-| **repair** | a wave ends with issues open | one batch, one slice | additive or semantic, and what the fix is |
-| **build** | spec is complete for a slice | one work package | how to implement it |
-
-Two of these replaced earlier shapes. **Intake is not a session type** — it is
-triage's cold-start mode, and the mode switch already exists as the request
-type's `originates_at` table. A **cross-slice check** was a session until slice
-dependency became projected rather than authored; there is now nothing for it
-to record, and what it used to catch is either a gate or an audit finding.
-
-A **question is not a session at all.** One answerable from the graph is a
-read, and making it a run would add latency and judgement to something already
-deterministic. One that cannot be answered from the graph was never a question:
-it is a gap, and the artifact for that is an issue or a correction.
-
-### One session writes one layer, of one slice
-
-This is the rule the rest is arranged around, and it is bought at real cost in
-re-reading.
-
-If a single run writes behaviour and then the architecture beneath it, it
-already knows why it wrote the behaviour. The architecture entry then derives
-from the session's own reasoning rather than from the entry it cites, and the
-`derives_from` edge claims a derivation that was never performed. **Every gate
-still passes.** The graph is well-formed and it is lying — which is the one
-failure mode the gates are structurally unable to see, and the reason
-architecture and spec stay apart even though they are the closest pair.
-
-The same argument keeps back-check out of triage: the session that decided a
-correction belongs at behaviour should not also rule on whether it contradicts
-intent.
-
-### The ladder
-
-Selection is arithmetic. Everything it asks — unserved entries, slice
-membership, wave order, open batches — is already computable, so nothing about
-picking the next session is a judgement about what is worth doing.
-
-    back-check → repair → triage → slicing → derivation → build → nothing
-
-Two rules produced that order. **In flight beats new**: an unvalidated
-correction and a wave's own fallout finish before fresh input is let in, or a
-wave's failures trail into the next one and the blast radius stops being
-bounded. **Structure beats content**: slicing outranks derivation, because
-deriving into a partition that is about to move cuts it around work already
-done.
-
-The floor is load-bearing. With nothing eligible the loop runs nothing — a
-ladder without one launches a session whose only finding is that there was no
-work.
-
-### How a session is started
-
-A session type is a **directory containing a `CLAUDE.md`**, discovered from the
-filesystem so there is no manifest to disagree with what is on disk. The
-process starts with that directory as `cwd`, Claude Code loads the file
-natively, and only the dynamic half — scope, project, base URL — goes over
-`-p`.
-
-The brief is deliberately thin: it names the scope and where to reach the unit,
-and pre-loads nothing. The session has HTTP access and its own prompt says what
-to fetch; copying graph content into the brief would make it a second, staler
-copy of the graph.
-
-**Guardrails are enforced by what a session is handed, never by asking it to
-restrain itself.** The scope is computed before the process starts. This is the
-same principle as the work package, applied one level up.
-
-### Two things the loop tracks besides the graph
-
-**Progress, which is not the exit code.** A session can end cleanly having
-changed nothing at all -- the first live run produced four of those, one of
-which read its brief as a greeting and replied "I'm ready. What do you
-need?". The loop fingerprints everything a session is able to change on
-either side of the run. A dispatch that changes nothing twice running is not
-launched a third time; it stops and says a human should look. *Consecutive*
-is the point, so a session that is merely slow is not mistaken for one that
-is stuck.
-
-**A proposal waiting on a human.** Slicing is the one session whose output is
-a decision somebody else has to make, and before the first live run there was
-nowhere for that output to live -- a six-slice proposal with its rationale
-and score evaporated when the process exited, and the ladder dispatched
-slicing again on identical input.
-
-The proposal is stored, and deliberately *not* in the manifest: it is not a
-partition until somebody rules on it, and holding it as one would mean an
-agent had cut the system up on its own authority. While a proposal is pending
-the slicing rung goes quiet -- nothing an agent can do advances a decision
-that is not an agent's, and a fresh session would overwrite what a human is
-halfway through reading. Rejection keeps the reason, and the next slicing
-session is told to read it first.
-
-Ratifying and rejecting are HTTP routes but deliberately not declared tools.
-A slicing session able to ratify its own proposal would be doing the one
-thing its contract forbids.
-
-### Two obligations that hold across all six
-
-**A session is not exempt from enclosure.** Sessions run with `cwd` inside this
-unit's own repository, which makes reading storage directly trivially easy and
-would bypass every admission gate. They talk to the unit over HTTP like any
-other caller. Putting the gates here is only worth anything if a session in a
-hurry cannot route around them.
-
-**An assumption that is not an issue is a bug.** A session that cannot derive
-something files an issue against the entry, states the assumption in what it
-writes, and carries on. It never blocks, never waits, and never messages
-another session — anything that blocks makes the pipeline nondeterministic and
-destroys the audit property. Silently guessing is the failure this rule exists
-to prevent: an agent that only ever reports confidence makes every gate
-downstream theatre.
+The rule is one layer, not one entry. Serving six parents is six entries in
+one transaction.
 
 ---
 

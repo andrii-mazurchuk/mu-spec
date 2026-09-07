@@ -231,19 +231,6 @@ def test_a_proposal_is_stored_and_read_back(tmp_path):
     assert service.get_proposal(store, "m")["proposal"]["capture"] == ["B·01", "B·02"]
 
 
-def test_slicing_is_not_dispatched_while_a_proposal_waits(tmp_path):
-    """Nothing an agent can do advances a decision that is a human's."""
-    from mu_spec.dispatch import SLICING, select
-    from mu_spec.graph import Entry, Graph
-    from mu_spec.identifiers import parse
-    from mu_spec.storage import Manifest
-
-    graph = Graph([Entry(id=parse("B·01"), title="b")])
-    manifest = Manifest(project="m", slices={})
-    assert select(manifest, graph).session_type == SLICING
-    assert select(manifest, graph, proposal_pending=True) is None
-
-
 def test_ratifying_creates_the_slices(tmp_path):
     from mu_spec import service
 

@@ -52,7 +52,7 @@ it.
 
 ## The boundary
 
-**mu-spec computes and dispatches. It never reasons.**
+**mu-spec computes. It never reasons, and it never executes.**
 
 Every operation is deterministic and derivable from the graph: storage,
 identifier permanence, spine generation, retrieval by identifier, the
@@ -61,15 +61,7 @@ grouping, spec diffs, and the measurement surface. Anything needing
 judgement — authoring entries, classifying a correction to its layer, ruling
 a slice cross-cutting, calling an issue additive or semantic, grouping
 behaviours by what they are about, deciding whether a slicing is any good —
-belongs to a **session** -- a headless `claude -p` run this unit launches,
-which calls back in over HTTP like any other caller.
-
-It runs the pipeline loop itself: `POST /trigger` selects the next session
-from the graph, launches it, and collects the result. Selection is
-arithmetic over state that already exists, so nothing about it is a
-judgement -- it picks the next item off a queue, and never rules that the
-queue deserves attention. Six session types live in `session_types/`, each a
-directory holding the `CLAUDE.md` that is its whole static contract.
+belongs to whoever calls this one.
 
 That split is deliberate. `docs/DESIGN.md` §6 calls admission gates
 "mechanical, run by the agent, human sees only failures" — and a mechanical

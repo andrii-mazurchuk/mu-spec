@@ -29,11 +29,6 @@ def main(argv: list[str] | None = None) -> int:
         help="directory backing GET /prompts/<tier>",
     )
     parser.add_argument(
-        "--session-types",
-        default=os.environ.get("MU_SPEC_SESSION_TYPES", "session_types"),
-        help="directory of session-type directories, each holding a CLAUDE.md",
-    )
-    parser.add_argument(
         "--root",
         default=os.environ.get("MU_SPEC_ROOT", "state/projects"),
         help="this unit's private storage -- where projects live",
@@ -43,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mu-spec serving on http://{args.host}:{args.port} (root: {args.root})")
     store = ProjectStore(Path(args.root))
     Path(args.root).mkdir(parents=True, exist_ok=True)
-    serve(args.host, args.port, store, Path(args.prompts_dir), Path(args.session_types))
+    serve(args.host, args.port, store, Path(args.prompts_dir))
     return 0
 
 

@@ -1783,7 +1783,6 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "entry": "get_entry",
         "gates": "check_gates",
         "list_projects": "list_projects",
-        "trigger": "run_pipeline",
         "propose": "submit_proposal",
         "get_proposal": "get_proposal",
         # Ratifying and rejecting are the human's decision. Deliberately not

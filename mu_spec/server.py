@@ -15,7 +15,6 @@ deliberately allowed to differ -- /health and /tools are never declared.
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,18 +34,7 @@ UNIT_NAME = "mu-spec"
 PROMPT_TIERS = ("default", "reference")
 # Where the session-type directories live. Each is a directory holding a
 # CLAUDE.md, discovered from the filesystem rather than a manifest.
-SESSION_TYPES_DIR = "session_types"
 
-
-def _budget() -> float | None:
-    """What one project may spend across all its sessions, from the
-    environment. Absent means uncapped, which is how the first full run
-    reached an account session limit."""
-    raw = os.environ.get("MU_SPEC_BUDGET_USD")
-    try:
-        return float(raw) if raw else None
-    except ValueError:
-        return None
 
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
@@ -464,22 +452,6 @@ def _tools() -> list[dict[str, Any]]:
             "/projects",
             {},
         ),
-        tool(
-            "run_pipeline",
-            "Advance the pipeline by exactly one agent session, across "
-            "every project. Picks what to run from the graph alone -- an "
-            "unchecked correction first, then a wave's open issues, then "
-            "a waiting request, then unsliced behaviour, then anything "
-            "unserved, then unbuilt spec -- launches it, and reports what "
-            "happened. Runs nothing and reports why when nothing is "
-            "eligible or another run holds the lock. What runs next is "
-            "computed, never chosen -- the only argument is dry_run, which "
-            "selects and renders the session's exact prompt without "
-            "launching anything.",
-            "POST",
-            "/trigger",
-            {"dry_run": {"type": "boolean"}},
-        ),
     ]
 
 
@@ -500,9 +472,6 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/stats$"), "stats"),
     ("GET", re.compile(r"^/tools$"), "tools"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
-    # Advance the pipeline by one session. The gateway pokes this rather
-    # than restarting the process.
-    ("POST", re.compile(r"^/trigger$"), "trigger"),
     # The single external door.
     ("POST", re.compile(r"^/inbox$"), "post_inbox"),
     ("GET", re.compile(r"^/inbox$"), "list_inbox"),
@@ -562,8 +531,6 @@ def handle(
     inbox: Inbox | None = None,
     issues: IssueLog | None = None,
     events: Lifecycle | None = None,
-    session_root: Path | None = None,
-    base_url: str = "",
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -617,26 +584,6 @@ def handle(
                 200,
                 JSON,
                 json.dumps(service.reject_proposal(store, project, body)),
-            )
-
-        if name == "trigger":
-            return (
-                200,
-                JSON,
-                json.dumps(
-                    service.run_pipeline(
-                        store,
-                        inbox,
-                        issues,
-                        events,
-                        session_root=Path(session_root or SESSION_TYPES_DIR),
-                        base_url=base_url,
-                        now_fn=now_fn,
-                        build_root=os.environ.get("MU_SPEC_BUILD_ROOT") or None,
-                        budget_usd=_budget(),
-                        dry_run=bool(body.get("dry_run")),
-                    )
-                ),
             )
 
         if name == "stats":
@@ -831,10 +778,7 @@ def handle(
 
 
 def build_handler(
-    store: ProjectStore,
-    prompts_dir: Path,
-    session_root: Path | None = None,
-    base_url: str = "",
+    store: ProjectStore, prompts_dir: Path
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         def _respond(self, method: str) -> None:
@@ -852,13 +796,7 @@ def build_handler(
                     )
                     return
             status, content_type, body = handle(
-                method,
-                self.path,
-                store,
-                prompts_dir,
-                payload,
-                session_root=session_root,
-                base_url=base_url,
+                method, self.path, store, prompts_dir, payload
             )
             self._write(status, content_type, body)
 
@@ -883,16 +821,5 @@ def build_handler(
     return _Handler
 
 
-def serve(
-    host: str,
-    port: int,
-    store: ProjectStore,
-    prompts_dir: Path,
-    session_root: Path | None = None,
-) -> None:
-    # A session reaches this unit the same way any other caller does, so
-    # it needs the address the unit is actually answering on.
-    handler = build_handler(
-        store, prompts_dir, session_root, f"http://{host}:{port}"
-    )
-    ThreadingHTTPServer((host, port), handler).serve_forever()
+def serve(host: str, port: int, store: ProjectStore, prompts_dir: Path) -> None:
+    ThreadingHTTPServer((host, port), build_handler(store, prompts_dir)).serve_forever()
