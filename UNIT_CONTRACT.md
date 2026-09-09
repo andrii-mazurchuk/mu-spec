@@ -45,6 +45,13 @@ code, as `entry_type: project_event`. Best-effort in both directions: the
 local log is the durable record, and a logs unit that is down, absent, or
 that refuses the type changes nothing here.
 
+## Private storage
+
+One directory, learned from `HOLONIC_STATE_DIR`, holding the projects
+under `projects/` -- the standard's "Private storage" section. `--root`
+and the older `MU_SPEC_ROOT` both still override it, in that order, so an
+existing deployment pinning either keeps working untouched.
+
 ## What's specific to mu-spec
 
 The derivation graph of a project: a five-layer specification — intent,
