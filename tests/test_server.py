@@ -1782,6 +1782,8 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "entry": "get_entry",
         "gates": "check_gates",
         "list_projects": "list_projects",
+        "docs_index": "list_docs",
+        "get_doc": "get_doc",
         "propose": "submit_proposal",
         "get_proposal": "get_proposal",
         # Ratifying and rejecting are the human's decision. Deliberately not
@@ -1923,3 +1925,26 @@ def test_reference_is_the_authoring_contract_now(store):
     _status, body = call(store, Path("prompts"), "GET", "/prompts/reference")
     assert "one layer, not one entry" in body
     assert "intake interview" not in body.lower()
+
+
+def test_docs_index_is_derived_from_the_files_this_repo_ships(store, prompts):
+    status, payload = call(store, prompts, "GET", "/docs")
+    assert status == 200
+    assert payload["unit"] == UNIT_NAME
+    names = [d["name"] for d in payload["docs"]]
+    assert "unit_contract" in names and "readme" in names
+    entry = next(d for d in payload["docs"] if d["name"] == "unit_contract")
+    assert entry["bytes"] and entry["title"]
+
+
+def test_get_doc_returns_markdown_and_refuses_anything_not_in_the_index(store, prompts):
+    status, content_type, text = handle(
+        "GET", "/docs/unit_contract", store, prompts, None
+    )
+    assert status == 200
+    assert content_type.startswith("text/markdown")
+    assert text.startswith("#")
+
+    for name in ["nope", "..%2F..%2Funits.yaml", "pyproject"]:
+        status, _ = call(store, prompts, "GET", f"/docs/{name}")
+        assert status == 404

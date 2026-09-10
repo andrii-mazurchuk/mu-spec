@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mu_spec import service
+from mu_spec import docs, service
 from mu_spec.service import ServiceError
 from mu_spec.inbox import Inbox, InboxError
 from mu_spec.issues import IssueError, IssueLog
@@ -38,6 +38,7 @@ PROMPT_TIERS = ("default", "reference", "wayfinding")
 
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
+MARKDOWN = "text/markdown; charset=utf-8"
 
 _ID = r"[A-Z]·[0-9]+"
 _P = r"(?P<project>[A-Za-z0-9_-]+)"
@@ -452,6 +453,21 @@ def _tools() -> list[dict[str, Any]]:
             "/projects",
             {},
         ),
+        tool(
+            "list_docs",
+            "Index of this unit's own documentation: name, title, summary, size.",
+            "GET",
+            "/docs",
+            {},
+        ),
+        tool(
+            "get_doc",
+            "One of this unit's documents, as Markdown. Names come from list_docs.",
+            "GET",
+            "/docs/{name}",
+            {"name": s},
+            ("name",),
+        ),
     ]
 
 
@@ -523,6 +539,10 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # skills yet, and inventing one here would prejudge it.
     ("GET", re.compile(r"^/skills$"), "skills"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
+    # Documentation: derived from the files this repo already ships. See
+    # the node's docs/UNIT_STANDARDS.md, "Documentation: two endpoints".
+    ("GET", re.compile(r"^/docs$"), "docs_index"),
+    ("GET", re.compile(r"^/docs/(?P<name>[^/]+)$"), "get_doc"),
     # The single external door.
     ("POST", re.compile(r"^/inbox$"), "post_inbox"),
     ("GET", re.compile(r"^/inbox$"), "list_inbox"),
@@ -665,6 +685,23 @@ def handle(
                     json.dumps({"error": f"no prompt for tier {params['tier']!r}"}),
                 )
             return 200, TEXT, text
+
+        if name == "docs_index":
+            return (
+                200,
+                JSON,
+                json.dumps({"unit": UNIT_NAME, "docs": docs.build_index()}),
+            )
+
+        if name == "get_doc":
+            text = docs.read_doc(unquote(params["name"]))
+            if text is None:
+                return (
+                    404,
+                    JSON,
+                    json.dumps({"error": f"no document named {params['name']!r}"}),
+                )
+            return 200, MARKDOWN, text
 
         if name == "list_projects":
             return 200, JSON, json.dumps({"projects": store.list_projects()})
