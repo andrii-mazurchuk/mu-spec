@@ -1948,3 +1948,14 @@ def test_get_doc_returns_markdown_and_refuses_anything_not_in_the_index(store, p
     for name in ["nope", "..%2F..%2Funits.yaml", "pyproject"]:
         status, _ = call(store, prompts, "GET", f"/docs/{name}")
         assert status == 404
+
+
+def test_every_declared_prompt_tier_ships_a_file():
+    """A tier in PROMPT_TIERS with no file behind it serves a 404 to
+    whoever asks for it -- and the caller that asks is another unit, so
+    the failure is silent and remote. AU reads the insights tier."""
+    from mu_spec.server import PROMPT_TIERS
+
+    prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
+    missing = [t for t in PROMPT_TIERS if not (prompts_dir / f"{t}.md").is_file()]
+    assert not missing, f"declared but not shipped: {missing}"

@@ -31,7 +31,7 @@ from mu_spec.shipping import ship
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
-PROMPT_TIERS = ("default", "reference", "wayfinding")
+PROMPT_TIERS = ("default", "reference", "wayfinding", "insights")
 # Where the session-type directories live. Each is a directory holding a
 # CLAUDE.md, discovered from the filesystem rather than a manifest.
 
