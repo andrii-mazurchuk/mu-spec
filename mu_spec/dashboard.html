@@ -1,0 +1,902 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="holonic-tokens" content="1">
+<title>mu-spec</title>
+<style>
+/* Own palette as the standalone default; the node overwrites these on the
+   frame's root element when this page is served under the console, so the
+   reader's chosen theme wins there. Names come from the token contract --
+   a name not in the contract is never injected. */
+:root{
+  --ground:#f6f6f4; --panel:#fff; --panel-alt:#f0efec; --panel-3:#e7e5e1;
+  --ink:#1b1a18; --ink-soft:#4a4843; --dim:#8a877f;
+  --rule:#d9d6d0; --rule-soft:#eceae6;
+  --brand:#2f6f6b; --brand-ink:#fff; --brand-soft:#2f6f6b22;
+  --ok:#2e7d4f; --warn:#9a6b12; --down:#a13a2c;
+  --ok-bg:#2e7d4f1f; --warn-bg:#9a6b121f; --down-bg:#a13a2c1f;
+  --shadow:0 1px 2px #0000000f; --radius:8px;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+  color-scheme:light;
+}
+/* Standalone fallback only. Framed, the node's injected .dark class is the
+   answer and this must not fight the reader's own choice. */
+@media (prefers-color-scheme:dark){:root:not(.light){
+  --ground:#141413; --panel:#1c1c1a; --panel-alt:#232321; --panel-3:#2b2b28;
+  --ink:#eceae6; --ink-soft:#b9b6b0; --dim:#807d76;
+  --rule:#343430; --rule-soft:#262624; --brand:#6fb3ad; --brand-ink:#101010;
+  --brand-soft:#6fb3ad26; --ok:#6bbf8c; --warn:#d2a33f; --down:#d6705e;
+  --ok-bg:#6bbf8c24; --warn-bg:#d2a33f24; --down-bg:#d6705e24;
+  color-scheme:dark;
+}}
+:root.dark{
+  --ground:#141413; --panel:#1c1c1a; --panel-alt:#232321; --panel-3:#2b2b28;
+  --ink:#eceae6; --ink-soft:#b9b6b0; --dim:#807d76;
+  --rule:#343430; --rule-soft:#262624; --brand:#6fb3ad; --brand-ink:#101010;
+  --brand-soft:#6fb3ad26; --ok:#6bbf8c; --warn:#d2a33f; --down:#d6705e;
+  --ok-bg:#6bbf8c24; --warn-bg:#d2a33f24; --down-bg:#d6705e24;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.45 var(--sans);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+.bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;flex:none;
+  padding:9px 16px;border-bottom:1px solid var(--rule);background:var(--panel)}
+.bar select{background:var(--panel-alt);color:var(--ink);border:1px solid var(--rule);
+  border-radius:var(--radius);padding:4px 8px;font:inherit;max-width:220px}
+.kpi{display:flex;flex-direction:column;line-height:1.15}
+.kpi b{font-size:15px;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.flag{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.ok{background:var(--ok-bg);color:var(--ok)}
+.warn{background:var(--warn-bg);color:var(--warn)}
+.down{background:var(--down-bg);color:var(--down)}
+#offline{flex:none;padding:7px 16px;background:var(--warn-bg);color:var(--warn);font-size:12.5px}
+#offline[hidden]{display:none}
+
+main{flex:1;display:grid;grid-template-columns:190px 1fr 330px;min-height:0}
+
+nav{border-right:1px solid var(--rule);padding:12px 10px;background:var(--panel);
+  overflow:auto;display:flex;flex-direction:column;gap:4px}
+nav button.view{display:block;width:100%;text-align:left;background:none;border:0;
+  color:var(--ink-soft);font:inherit;padding:6px 9px;border-radius:var(--radius);cursor:pointer}
+nav button.view[aria-current=true]{background:var(--brand-soft);color:var(--brand);font-weight:600}
+nav h2{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);
+  margin:18px 0 6px;padding:0 9px}
+.leg{display:flex;align-items:center;gap:7px;width:100%;background:none;border:0;cursor:pointer;
+  font:inherit;color:var(--ink-soft);padding:4px 9px;border-radius:var(--radius);text-align:left}
+.leg:hover{background:var(--panel-alt)}
+.leg[aria-pressed=true]{background:var(--brand-soft);color:var(--ink);font-weight:600}
+.leg i{width:9px;height:9px;border-radius:2px;background:var(--sl);flex:none}
+.leg em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
+  font-variant-numeric:tabular-nums}
+.leg.xc i{border-radius:99px}
+label.tog{display:flex;gap:7px;align-items:center;padding:4px 9px;color:var(--ink-soft);font-size:13px}
+label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
+  font-variant-numeric:tabular-nums}
+
+.stage{position:relative;min-width:0;overflow:hidden}
+.canvas{position:absolute;inset:0;cursor:grab;overflow:hidden}
+.canvas.dragging{cursor:grabbing}
+.canvas svg{display:block;width:100%;height:100%}
+.zoom{position:absolute;right:12px;bottom:12px;display:flex;gap:4px;z-index:2}
+.zoom button{width:28px;height:28px;border:1px solid var(--rule);background:var(--panel);
+  color:var(--ink-soft);border-radius:6px;cursor:pointer;font:13px var(--sans);box-shadow:var(--shadow)}
+.hint{position:absolute;left:14px;bottom:12px;color:var(--dim);font-size:11px;z-index:2;
+  pointer-events:none;max-width:58%}
+.pane{position:absolute;inset:0;overflow:auto;padding:20px 24px;background:var(--ground)}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--dim);font-size:13px;text-align:center;padding:0 40px}
+.hide{display:none}
+
+.colhead{font:600 11px var(--sans);letter-spacing:.09em;text-transform:uppercase;fill:var(--dim)}
+.colrule{stroke:var(--rule-soft);stroke-width:1}
+.node rect{fill:var(--panel);stroke:var(--rule);stroke-width:1;rx:6}
+.node .accent{fill:var(--sl);stroke:none}
+.node .id{font:600 11px var(--mono);fill:var(--ink)}
+.node .sl{font:500 10px var(--mono);fill:var(--sl)}
+.node .t{font:11.5px var(--sans);fill:var(--ink-soft)}
+.node{cursor:pointer}
+.node:hover rect{stroke:var(--brand)}
+.node.sel rect{stroke:var(--brand);stroke-width:2}
+.node.mod rect{stroke-dasharray:3 3}
+.node.dim{opacity:.16}
+.far .t{display:none}
+.edge{fill:none;stroke:var(--rule);stroke-width:1.4;marker-end:url(#a-idle)}
+.edge.e{stroke-dasharray:3 4}
+.edge.lit{stroke:var(--brand);stroke-width:2;marker-end:url(#a-lit)}
+.edge.lit.h{stroke:var(--warn);marker-end:url(#a-h)}
+.edge.dim{opacity:.12}
+.edge.off{display:none}
+
+.wave{display:flex;gap:12px;align-items:stretch;margin-bottom:14px;flex-wrap:wrap}
+.wave .lbl{width:78px;color:var(--dim);font-size:11px;text-transform:uppercase;
+  letter-spacing:.06em;padding-top:12px;flex:none}
+.slice{background:var(--panel);border:1px solid var(--rule);border-top:3px solid var(--sl);
+  border-radius:var(--radius);padding:9px 12px;min-width:180px;box-shadow:var(--shadow)}
+.slice b{display:block}
+.slice em{font-style:normal;color:var(--dim);font-size:11px;display:block;margin-top:2px}
+.slice code{font-size:10.5px;color:var(--dim)}
+
+table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:24px}
+th{text-align:left;color:var(--dim);font-weight:600;font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;padding:5px 7px;border-bottom:1px solid var(--rule)}
+td{padding:6px 7px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+code{font-family:var(--mono);font-size:12px}
+h3{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin:0 0 10px}
+
+aside{border-left:1px solid var(--rule);background:var(--panel);padding:16px;overflow:auto}
+aside h3{margin:18px 0 8px}
+aside h3:first-child{margin-top:0}
+.body{white-space:pre-wrap;background:var(--panel-alt);border-radius:var(--radius);
+  padding:9px 10px;font-size:12.5px;color:var(--ink-soft);margin:8px 0 4px;
+  max-height:44vh;overflow:auto}
+.edgelist{margin:0 0 12px}
+.edgelist span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em;
+  display:block;margin-bottom:3px}
+.pill{display:inline-block;background:var(--panel-alt);border:1px solid var(--rule);
+  border-radius:5px;padding:1px 6px;margin:2px 3px 0 0;font-family:var(--mono);font-size:11.5px;
+  cursor:pointer;color:var(--ink)}
+.pill:hover{border-color:var(--brand);color:var(--brand)}
+.muted{color:var(--dim);font-size:12px}
+</style>
+
+<div class="bar">
+  <select id="proj" title="project"></select>
+  <span class="flag" id="f-sound">—</span>
+  <span class="flag" id="f-complete">—</span>
+  <div class="kpi"><b id="k-entries">–</b><span>entries</span></div>
+  <div class="kpi"><b id="k-slices">–</b><span>slices</span></div>
+  <div class="kpi"><b id="k-waves">–</b><span>waves</span></div>
+  <div class="kpi"><b id="k-xing">–</b><span>crossings</span></div>
+  <div class="kpi"><b id="k-issues">–</b><span>open issues</span></div>
+  <div class="kpi"><b id="k-loc">–</b><span>change locality</span></div>
+</div>
+<div id="offline" hidden></div>
+
+<main>
+  <nav>
+    <button class="view" data-v="spine" aria-current="true">Spine</button>
+    <button class="view" data-v="waves">Waves</button>
+    <button class="view" data-v="queues">Queues</button>
+    <h2>Slices</h2>
+    <div id="legend"></div>
+    <h2>Edges</h2>
+    <label class="tog"><input type="checkbox" id="t-h" checked> depends_on <em id="n-h"></em></label>
+    <label class="tog"><input type="checkbox" id="t-e" checked> emits_into <em id="n-e"></em></label>
+  </nav>
+
+  <section class="stage">
+    <div class="canvas" id="canvas">
+      <svg id="svg">
+        <defs>
+          <marker id="a-idle" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6"
+            orient="auto-start-reverse"><path d="M0 1 L7 4 L0 7 z" fill="var(--rule)"/></marker>
+          <marker id="a-lit" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6"
+            orient="auto-start-reverse"><path d="M0 1 L7 4 L0 7 z" fill="var(--brand)"/></marker>
+          <marker id="a-h" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6"
+            orient="auto-start-reverse"><path d="M0 1 L7 4 L0 7 z" fill="var(--warn)"/></marker>
+        </defs>
+        <g id="scene"></g>
+      </svg>
+      <div class="zoom">
+        <button id="zout" title="zoom out">–</button>
+        <button id="zin" title="zoom in">+</button>
+        <button id="zfit" title="fit">⤢</button>
+      </div>
+      <div class="hint" id="hint"></div>
+      <div class="empty hide" id="empty"></div>
+    </div>
+    <div class="pane hide" id="waves"></div>
+    <div class="pane hide" id="queues"></div>
+  </section>
+
+  <aside id="detail"></aside>
+</main>
+
+<script>
+"use strict";
+/* =============================================================
+   DATA
+
+   Every fetch is RELATIVE and does not begin with a slash. Served
+   at /dashboard on this unit, a relative path lands at the unit's
+   own root; served at /dashboard/mu-spec/ through the node's read
+   proxy, the same string lands inside the proxied prefix. One
+   file, both contexts, no conditional. An absolute path would
+   reach the NODE, which answers with plausible JSON of the wrong
+   shape rather than an error.
+   ============================================================= */
+const enc = encodeURIComponent;
+
+async function get(path){
+  const r = await fetch(path, {headers:{accept:"application/json"}});
+  if(!r.ok) throw new Error(path + " → " + r.status);
+  return r.json();
+}
+/* An optional read degrades to a default. Absence is normal here:
+   a project with no issues, no modules and no insights yet is a
+   new project, not a broken one. */
+const soft = (path, fallback) => get(path).catch(() => fallback);
+
+const LAYERS=[["I","Intent"],["B","Behaviour"],["A","Architecture"],["S","Spec"],["M","Modules"]];
+const LIX = Object.fromEntries(LAYERS.map((l,i)=>[l[0],i]));
+const MODULE_LAYER = LIX.M;
+
+/* Slice names are data, so colours are assigned by position in the
+   sorted name list rather than written down anywhere. */
+const PALETTE = ["#2f6f6b","#7a5cc4","#9a6b12","#2e7d4f","#a13a2c",
+                 "#3a6ea5","#9c4f7c","#6b7a2f","#a5622c","#4a4f8c"];
+const UNSLICED = "#8a877f";
+
+const STATE = {
+  project:null, projects:[], entries:[], byId:{},
+  slices:{},          // name -> {type, hue, wave, deps, size, cohesion}
+  waves:[], gates:null, issues:[], requests:[], modules:[],
+  locality:null, bodies:{}, live:false
+};
+
+async function loadProjects(){
+  const d = await get("projects");
+  return Array.isArray(d.projects) ? d.projects : [];
+}
+
+async function loadProject(project){
+  const base = "projects/" + enc(project);
+  const [spine, gates, waves, insights, issues, inbox, modules] = await Promise.all([
+    get(base + "/spine"),                               // the only hard requirement
+    soft(base + "/gates", null),
+    soft(base + "/waves", {waves:[], wave_of:{}}),
+    soft(base + "/insights", {slices:[], change_locality:{}}),
+    soft(base + "/issues", {issues:[]}),
+    soft("inbox?project=" + enc(project), {messages:[]}),
+    soft(base + "/modules", {modules:[]})
+  ]);
+
+  const entries = (spine.spine || []).map(e => ({
+    id: e.id,
+    title: e.title || "",
+    layer: LIX[e.id[0]],
+    slice: e.slice || "unsliced",
+    derives: e.derives_from || [],
+    deps: e.depends_on || [],
+    emits: e.emits_into || []
+  })).filter(e => e.layer !== undefined);
+
+  /* A module is not an entry in the graph -- code never is -- but its
+     declared backlink is the only thing tying a file to the reasoning
+     that produced it, so it is drawn as the bottom column and takes
+     the slice colour of what it implements. */
+  const byId = Object.fromEntries(entries.map(e=>[e.id,e]));
+  for(const m of (modules.modules || [])){
+    const impl = m.implements || [];
+    entries.push({
+      id: m.path, title: m.path, layer: MODULE_LAYER, module: true,
+      slice: (byId[impl[0]] || {}).slice || "unsliced",
+      derives: impl, deps: [], emits: []
+    });
+  }
+
+  const names = [...new Set(entries.map(e=>e.slice))].filter(s=>s!=="unsliced").sort();
+  const info = Object.fromEntries((insights.slices||[]).map(s=>[s.slice,s]));
+  const slices = {};
+  names.forEach((n,i)=>{
+    const s = info[n] || {};
+    slices[n] = {
+      type: s.type || "slice",
+      hue: PALETTE[i % PALETTE.length],
+      wave: (waves.wave_of || {})[n],
+      deps: s.depends_on || [],
+      size: entries.filter(e=>e.slice===n).length,
+      cohesion: s.cohesion
+    };
+  });
+
+  Object.assign(STATE, {
+    project, entries, byId: Object.fromEntries(entries.map(e=>[e.id,e])),
+    slices, waves: waves.waves || [], gates,
+    issues: issues.issues || [],
+    requests: (inbox.messages || []).slice().sort((a,b)=>(b.at||0)-(a.at||0)),
+    modules: modules.modules || [],
+    locality: (insights.change_locality || {}).mean,
+    bodies: {}
+  });
+}
+
+const hueOf = s => s==="unsliced" ? UNSLICED : (STATE.slices[s]||{}).hue || UNSLICED;
+const isXC  = s => (STATE.slices[s]||{}).type === "cross_cutting";
+
+const kids   = id => STATE.entries.filter(e=>e.derives.includes(id));
+const downTo = id => {const s=new Set();(function w(x){for(const k of kids(x))
+  if(!s.has(k.id)){s.add(k.id);w(k.id)}})(id);return s};
+const upFrom = id => {const s=new Set();(function u(x){const n=STATE.byId[x];if(!n)return;
+  for(const p of n.derives) if(!s.has(p)){s.add(p);u(p)}})(id);return s};
+const sideOf = id => {
+  const need=new Set(), served=new Set();
+  (function u(x){const n=STATE.byId[x];if(!n)return;
+    for(const d of n.deps) if(!need.has(d)){need.add(d);u(d)}})(id);
+  (function d(x){for(const e of STATE.entries)
+    if(e.deps.includes(x)&&!served.has(e.id)){served.add(e.id);d(e.id)}})(id);
+  return {need,served};
+};
+
+/* =============================================================
+   LAYOUT — the layered pipeline, adapted from pu's.
+
+   One structural difference: a layer here is NOT computed by
+   longest path. It is fixed by the identifier prefix, because
+   derives_from runs exactly one layer up by construction. That
+   removes the cycle-breaking and dummy-node steps entirely --
+   no vertical edge can ever span more than one column.
+
+   What remains is ordering within a column so the edges between
+   columns stop crossing, and coordinate assignment that
+   guarantees separation.
+   ============================================================= */
+const NODE_W=212, NODE_H=46, NODE_GAP=26, LAYER_GAP=392, SWEEPS=14;
+const COL_X = i => i*LAYER_GAP;
+
+function adjacency(){
+  const adj=new Map(), link=(a,b)=>{
+    if(!adj.has(a))adj.set(a,[]); adj.get(a).push(b);
+    if(!adj.has(b))adj.set(b,[]); adj.get(b).push(a);};
+  for(const e of STATE.entries) for(const p of e.derives) if(STATE.byId[p]) link(p,e.id);
+  return adj;
+}
+
+function countCrossings(order,adj){
+  let total=0;
+  for(let i=0;i<order.length-1;i++){
+    const up=new Map(order[i].map((id,n)=>[id,n]));
+    const lo=new Map(order[i+1].map((id,n)=>[id,n]));
+    const pairs=[];
+    for(const id of order[i]) for(const o of adj.get(id)||[])
+      if(lo.has(o)) pairs.push([up.get(id),lo.get(o)]);
+    for(let a=0;a<pairs.length;a++) for(let b=a+1;b<pairs.length;b++)
+      if((pairs[a][0]-pairs[b][0])*(pairs[a][1]-pairs[b][1])<0) total++;
+  }
+  return total;
+}
+
+/* Median heuristic (Eades & Wells): a node wants the median slot of
+   its neighbours in the adjacent column. Median beats barycentre on
+   uneven degree, and a derivation graph always has uneven degree --
+   one intent with nine behaviours under it is the normal case.
+   Every sweep is scored and only an improvement is kept.
+   ponytail: O(e^2) crossing count per layer pair. Instant at a few
+   hundred entries; past that, cap the drawn graph rather than
+   optimising this -- a thousand-node picture does not read anyway. */
+function reduceCrossings(byLayer,adj){
+  let best=byLayer.map(l=>[...l]), bestScore=countCrossings(best,adj);
+  let cur=best.map(l=>[...l]);
+  for(let s=0;s<SWEEPS&&bestScore>0;s++){
+    const down=s%2===0;
+    const range=down?[...cur.keys()].slice(1):[...cur.keys()].slice(0,-1).reverse();
+    for(const i of range){
+      const fixed=cur[down?i-1:i+1], pos=new Map(fixed.map((id,n)=>[id,n]));
+      const key=new Map();
+      for(const id of cur[i]){
+        const ns=(adj.get(id)||[]).map(o=>pos.get(o)).filter(p=>p!==undefined).sort((a,b)=>a-b);
+        if(!ns.length){key.set(id,Infinity);continue}
+        const m=Math.floor(ns.length/2);
+        key.set(id, ns.length%2?ns[m]:(ns[m-1]+ns[m])/2);
+      }
+      let prev=0;                        // a node with no neighbour keeps its place
+      for(const id of cur[i]){ if(key.get(id)===Infinity) key.set(id,prev); else prev=key.get(id); }
+      cur[i]=[...cur[i]].sort((a,b)=>key.get(a)-key.get(b));
+    }
+    const sc=countCrossings(cur,adj);
+    if(sc<bestScore){bestScore=sc;best=cur.map(l=>[...l])}
+  }
+  return {order:best,crossings:bestScore};
+}
+
+/* Align to the mean of neighbours so long derivation chains draw
+   straight, then a hard separation pass. Separation runs LAST on
+   purpose: whatever the alignment wanted, nothing is allowed to
+   end up on top of anything else. */
+function assignY(order,adj){
+  const y=new Map();
+  for(const col of order){ let c=0; for(const id of col){ y.set(id,c+NODE_H/2); c+=NODE_H+NODE_GAP; } }
+  const separate=col=>{
+    const s=[...col].sort((a,b)=>y.get(a)-y.get(b));
+    for(let i=1;i<s.length;i++){
+      const floor=y.get(s[i-1])+NODE_H+NODE_GAP;
+      if(y.get(s[i])<floor) y.set(s[i],floor);
+    }
+  };
+  for(let pass=0;pass<5;pass++){
+    const cols=pass%2===0?order:[...order].reverse();
+    for(const col of cols){
+      for(const id of col){
+        const ns=(adj.get(id)||[]).map(o=>y.get(o)).filter(v=>v!==undefined);
+        if(ns.length) y.set(id, ns.reduce((a,b)=>a+b,0)/ns.length);
+      }
+      separate(col);
+    }
+  }
+  const vals=[...y.values()];
+  if(!vals.length) return y;
+  const top=Math.min(...vals);
+  for(const [id,v] of y) y.set(id,v-top);
+  return y;
+}
+
+/* Same-layer edges share one gutter per column, so they need lanes
+   or they draw on top of each other. Greedy interval packing: an
+   edge takes the innermost lane whose occupied spans it does not
+   overlap. Short hops stay close to the column, long ones bow out. */
+function laneFor(edges){
+  const lanes=[];
+  for(const e of [...edges].sort((a,b)=>(a.hi-a.lo)-(b.hi-b.lo))){
+    let n=0;
+    while(lanes[n]&&lanes[n].some(s=>!(e.hi<s.lo-4||e.lo>s.hi+4))) n++;
+    (lanes[n]=lanes[n]||[]).push(e); e.lane=n;
+  }
+}
+
+function buildScene(){
+  const order0=LAYERS.map((L,i)=>STATE.entries.filter(e=>e.layer===i).map(e=>e.id));
+  const adj=adjacency();
+  const {order,crossings}=reduceCrossings(order0,adj);
+  const y=assignY(order,adj);
+  const pos=new Map();
+  order.forEach((col,i)=>col.forEach(id=>pos.set(id,{x:COL_X(i),y:y.get(id),col:i})));
+
+  const vEdges=[];
+  for(const e of STATE.entries) for(const p of e.derives)
+    if(pos.has(p)&&pos.has(e.id)) vEdges.push({kind:"v",from:p,to:e.id});
+
+  const hEdges=[];
+  for(const e of STATE.entries){
+    for(const d of e.deps)  if(pos.has(d)&&pos.has(e.id)) hEdges.push({kind:"h",from:d,to:e.id});
+    for(const m of e.emits) if(pos.has(m)&&pos.has(e.id)) hEdges.push({kind:"e",from:e.id,to:m});
+  }
+  const byCol={};
+  for(const h of hEdges){
+    const a=pos.get(h.from),b=pos.get(h.to);
+    h.lo=Math.min(a.y,b.y); h.hi=Math.max(a.y,b.y); h.col=a.col;
+    (byCol[a.col]=byCol[a.col]||[]).push(h);
+  }
+  for(const c in byCol) laneFor(byCol[c]);
+
+  const ys=[...y.values()];
+  return {pos,order,vEdges,hEdges,crossings,
+          width:COL_X(LAYERS.length-1)+NODE_W, height:ys.length?Math.max(...ys)+NODE_H:0};
+}
+
+/* A vertical edge leaves the right edge of its parent and arrives at
+   the left edge of its child. */
+function vPath(a,b){
+  const x1=a.x+NODE_W, y1=a.y, x2=b.x, y2=b.y, mid=(x1+x2)/2;
+  return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
+}
+/* A same-layer edge bows out to the left of its own column, in its
+   assigned lane, and re-enters the left edge of the target. */
+function hPath(a,b,lane){
+  const gx=a.x-30-lane*17;
+  return `M ${a.x} ${a.y} C ${gx} ${a.y}, ${gx} ${b.y}, ${b.x} ${b.y}`;
+}
+
+/* =============================================================
+   RENDER
+   ============================================================= */
+const $=id=>document.getElementById(id);
+const svgEl=(t,at)=>{const n=document.createElementNS("http://www.w3.org/2000/svg",t);
+  for(const k in at) n.setAttribute(k,at[k]); return n};
+const clip=(s,n)=>(s||"").length>n?(s||"").slice(0,n-1)+"…":(s||"");
+/* Bodies, titles and claims were written by whoever could reach this
+   unit. They are shown as text, never parsed as markup -- the same
+   rule the standard states for a `text` panel source. */
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const short=p=>{const b=String(p).split(/[\\/]/).pop();return b||String(p)};
+
+let SCENE=null, sel=null, focusSlice=null;
+let view={x:40,y:30,k:1};
+
+function drawSpine(){
+  SCENE=buildScene();
+  const g=$("scene"); g.innerHTML="";
+
+  $("empty").classList.toggle("hide", STATE.entries.length>0);
+  if(!STATE.entries.length){
+    $("empty").textContent = STATE.project
+      ? "No entries in " + STATE.project + " yet. The graph appears once an amendment lands."
+      : "No projects yet.";
+    $("k-xing").textContent="0";
+    $("n-h").textContent="0"; $("n-e").textContent="0";
+    return;
+  }
+
+  // Only columns that hold something. An empty Modules column labelled
+  // anyway reads as "nothing here yet" occupying a fifth of the width.
+  LAYERS.forEach((L,i)=>{
+    if(!STATE.entries.some(e=>e.layer===i)) return;
+    const t=svgEl("text",{class:"colhead",x:COL_X(i),y:-26}); t.textContent=L[1];
+    g.appendChild(t);
+    g.appendChild(svgEl("line",{class:"colrule",x1:COL_X(i),y1:-18,x2:COL_X(i)+NODE_W,y2:-18}));
+  });
+
+  for(const e of SCENE.vEdges){
+    const a=SCENE.pos.get(e.from),b=SCENE.pos.get(e.to);
+    g.appendChild(svgEl("path",{class:"edge",d:vPath(a,b),
+      "data-from":e.from,"data-to":e.to,"data-kind":"v"}));
+  }
+  for(const e of SCENE.hEdges){
+    const a=SCENE.pos.get(e.from),b=SCENE.pos.get(e.to);
+    g.appendChild(svgEl("path",{class:"edge "+e.kind,d:hPath(a,b,e.lane),
+      "data-from":e.from,"data-to":e.to,"data-kind":e.kind}));
+  }
+
+  for(const [id,p] of SCENE.pos){
+    const e=STATE.byId[id], hue=hueOf(e.slice);
+    const n=svgEl("g",{class:"node"+(e.module?" mod":""),
+      transform:`translate(${p.x} ${p.y-NODE_H/2})`,
+      "data-id":id,"data-slice":e.slice,style:`--sl:${hue}`,tabindex:"0"});
+    n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
+    n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
+    const label = e.module ? short(e.id) : e.id;
+    const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=clip(label,24);
+    const s=svgEl("text",{class:"sl",x:12+Math.min(label.length,24)*7.2+8,y:17});
+    s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14)+(isXC(e.slice)?" ✳":"");
+    const t=svgEl("text",{class:"t",x:12,y:34});
+    t.textContent=clip(e.module?"implements "+e.derives.join(", "):e.title,30);
+    const tip=svgEl("title"); tip.textContent=e.module?e.id:e.title;
+    n.append(i,s,t,tip);
+    g.appendChild(n);
+  }
+
+  $("k-xing").textContent=SCENE.crossings;
+  $("n-h").textContent=SCENE.hEdges.filter(e=>e.kind==="h").length;
+  $("n-e").textContent=SCENE.hEdges.filter(e=>e.kind==="e").length;
+  $("hint").textContent="drag to pan · wheel to zoom · click an entry for its chain · "+
+    "click a slice in the rail to isolate it";
+  applyView(); requestAnimationFrame(fit);
+}
+
+function applyView(){
+  $("scene").setAttribute("transform",`translate(${view.x} ${view.y}) scale(${view.k})`);
+  $("svg").classList.toggle("far",view.k<0.72);   // level of detail
+}
+function fitTo(box){
+  const c=$("canvas").getBoundingClientRect();
+  if(!box.width||!box.height) return;
+  // Never open below the legibility floor. A real project is wider than
+  // the pane, and a whole graph scaled until nothing can be read is a
+  // worse first screen than a readable corner you can pan out of.
+  const k=Math.max(0.55,Math.min(1.3,
+    Math.min((c.width-90)/box.width,(c.height-110)/box.height)));
+  view.k=k;
+  view.x=(c.width-box.width*k)/2-box.x*k;
+  const drawn=box.height*k;
+  view.y = drawn>c.height-140 ? (c.height-drawn)/2-box.y*k : 64-box.y*k;
+  applyView();
+}
+const fit=()=>{ try{ fitTo($("scene").getBBox()); }catch(_){} };
+
+/* A real graph is wider than the pane, so an entry reached from the
+   issue queue is routinely off-screen. Selecting it without moving
+   there makes the click look inert -- the inspector fills in somewhere
+   the reader is not looking. Pan only when it is actually outside;
+   recentring on something already visible is its own kind of wrong. */
+function reveal(id){
+  if(!SCENE || !SCENE.pos.has(id)) return;
+  const p=SCENE.pos.get(id), c=$("canvas").getBoundingClientRect();
+  const sx=view.x+p.x*view.k, sy=view.y+p.y*view.k;
+  const pad=80;
+  if(sx>pad && sx<c.width-NODE_W*view.k-pad && sy>pad && sy<c.height-pad) return;
+  view.x=c.width/2-(p.x+NODE_W/2)*view.k;
+  view.y=c.height/2-p.y*view.k;
+  applyView();
+}
+
+/* Everything a selection lights, in one place, so nothing computes
+   a different set than the thing next to it. */
+function litSet(){
+  if(!sel) return null;
+  const side=sideOf(sel);
+  return new Set([sel,...upFrom(sel),...downTo(sel),...side.need,...side.served]);
+}
+
+/* THE only writer of visual state. Every control calls this and
+   nothing else touches a class -- which is what makes "clear it" a
+   real operation rather than a second code path that has to
+   remember to undo whatever the first one did. */
+function repaint(){
+  const g=$("scene"), lit=litSet();
+  for(const n of g.querySelectorAll(".node")){
+    const inSlice = !focusSlice || n.dataset.slice===focusSlice;
+    n.classList.toggle("sel", n.dataset.id===sel);
+    n.classList.toggle("dim", !inSlice || !!(lit && !lit.has(n.dataset.id)));
+  }
+  for(const p of g.querySelectorAll(".edge")){
+    const k=p.dataset.kind;
+    // A kind switched off is HIDDEN, not dimmed. Dimming a dashed
+    // 1.4px arc to 12% is indistinguishable from it still being on.
+    const shown = (k==="v") || (k==="h"&&$("t-h").checked) || (k==="e"&&$("t-e").checked);
+    p.classList.toggle("off", !shown);
+    const ends=[p.dataset.from,p.dataset.to];
+    const inSlice = !focusSlice || ends.every(i=>(STATE.byId[i]||{}).slice===focusSlice);
+    const on = inSlice && !!lit && ends.every(i=>lit.has(i));
+    p.classList.toggle("lit", on);
+    p.classList.toggle("dim", !inSlice || !!(lit && !on));
+  }
+}
+
+/* Selection and slice focus are two answers to the same question --
+   "what am I looking at" -- so setting either clears the other. Left
+   as independent filters they intersect, and an entry selected
+   outside the focused slice dims the whole graph with no way back. */
+function pick(id){
+  const e=STATE.byId[id]; if(!e) return;
+  focusSlice=null; syncLegend();
+  sel=id; repaint(); reveal(id);
+  const down=downTo(id), side=sideOf(id);
+  const pills=(label,ids)=>ids.length
+    ? `<div class="edgelist"><span>${esc(label)}</span>${ids.map(i=>
+        `<button class="pill" data-goto="${esc(i)}">${esc(STATE.byId[i]?
+          (STATE.byId[i].module?short(i):i):i)}</button>`).join("")}</div>` : "";
+  $("detail").innerHTML=
+    `<h3>${e.module?"Module":"Entry"}</h3>
+     <p><code>${esc(e.module?e.id:e.id)}</code>${e.module?"":" · <b>"+esc(e.title)+"</b>"}</p>
+     <p class="muted">slice <b style="color:${hueOf(e.slice)}">${esc(e.slice)}</b>${
+        isXC(e.slice)?" · cross-cutting":""} · layer ${esc(LAYERS[e.layer][1])}</p>
+     <div class="body" id="body">${e.module?"Code is not an entry in this graph. This is the "+
+        "declared backlink — the only thing tying the file to the reasoning that produced it.":
+        "loading…"}</div>
+     <h3>Edges</h3>
+     ${pills(e.module?"implements":"derives from — one layer up", e.derives)}
+     ${pills("depends on — same layer, imposes order", e.deps)}
+     ${pills("emits into — cross-cutting, no order", e.emits)}
+     ${pills("derived below", kids(e.id).map(k=>k.id))}
+     <h3>Radius</h3>
+     <p class="muted"><b style="color:var(--ink);font-size:15px">${down.size}</b> entries downstream ·
+        <b style="color:var(--ink);font-size:15px">${side.served.size}</b> waiting on it in-layer</p>`;
+  if(!e.module) loadBody(id);
+}
+
+/* A body is fetched only when an entry is actually opened. The spine
+   deliberately carries none: loading every body to draw a graph that
+   shows none of them is the thing the split exists to prevent. */
+async function loadBody(id){
+  const el=()=>$("body");
+  if(STATE.bodies[id]!==undefined){ if(el()) el().textContent=STATE.bodies[id]; return; }
+  if(!STATE.live){
+    STATE.bodies[id]="(sample data — no body)";
+    if(el()) el().textContent=STATE.bodies[id]; return;
+  }
+  try{
+    const d=await get("projects/"+enc(STATE.project)+"/entries/"+enc(id));
+    STATE.bodies[id]=d.body||"(no body)";
+  }catch(_){ STATE.bodies[id]="(body unavailable)"; }
+  if(sel===id && el()) el().textContent=STATE.bodies[id];
+}
+
+function resetInspector(){
+  $("detail").innerHTML=`<h3>Entry</h3>
+  <p class="muted">Pick an entry in the spine. Click blank canvas or press Esc to release.</p>
+  <h3>Legend</h3>
+  <p class="muted"><b>—→</b> derives_from, one layer up. The only edge that crosses a column.</p>
+  <p class="muted"><b>⌒</b> depends_on, same layer. This is what slice dependency is projected
+  from — and it routinely crosses slices.</p>
+  <p class="muted"><b>⌒ dashed</b> emits_into, same layer, only into a cross-cutting slice.
+  Imposes no order.</p>
+  <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>`;
+}
+
+/* Blank canvas, or Escape, releases whichever mode is active. */
+function clearAll(){ sel=null; focusSlice=null; syncLegend(); repaint(); resetInspector(); }
+function syncLegend(){
+  for(const o of $("legend").querySelectorAll(".leg"))
+    o.setAttribute("aria-pressed", o.dataset.s===focusSlice);
+}
+
+/* =============================================================
+   WAVES — computed by the unit, displayed here. The page projects
+   nothing: two statements of the same fact drift.
+   ============================================================= */
+function drawWaves(){
+  const names=Object.keys(STATE.slices);
+  if(!names.length){
+    $("waves").innerHTML=`<h3>Execution order</h3>
+      <p class="muted">No slices yet — a partition is not a partition until a human ratifies one.</p>`;
+    $("k-waves").textContent="0"; return;
+  }
+  const rows=(STATE.waves.length?STATE.waves:[{wave:0,slices:names}]).map(w=>
+    `<div class="wave"><div class="lbl">wave ${w.wave}</div>`+
+    (w.slices||[]).map(s=>{
+      const info=STATE.slices[s]||{};
+      const on=info.deps||[];
+      return `<div class="slice" style="--sl:${hueOf(s)}">
+        <b>${esc(s)}</b>
+        <em>${info.type==="cross_cutting"?"cross-cutting ✳":"feature"} · ${info.size||0} entries${
+          info.cohesion!=null?" · cohesion "+Number(info.cohesion).toFixed(2):""}</em>
+        <em>${on.length?"after "+on.map(x=>`<code>${esc(x)}</code>`).join(", ")
+                       :"depends on nothing"}</em></div>`;}).join("")+`</div>`).join("");
+  $("waves").innerHTML=`<h3>Execution order</h3>${rows}
+    <p class="muted" style="max-width:64ch">A slice's wave is the <b>longest</b> path from it to a
+    slice that depends on nothing — projected from entry <code>depends_on</code> edges that cross a
+    slice boundary, never authored anywhere. Two slices in the same wave provably have no edge
+    between them, so they can be worked in parallel with nothing to coordinate; every earlier wave
+    is finished before the next starts, so a wave-N agent reads its dependencies as frozen.
+    A cross-cutting slice lands in wave 0 by construction — the edge rules leave it no outbound
+    dependency to have.</p>`;
+  $("k-waves").textContent=STATE.waves.length||1;
+}
+
+/* =============================================================
+   QUEUES
+   ============================================================= */
+const when=t=>{ if(!t) return ""; const d=new Date(t*1000);
+  return isNaN(d) ? "" : d.toISOString().slice(0,16).replace("T"," "); };
+
+function drawQueues(){
+  const reqs=STATE.requests, iss=STATE.issues;
+  $("queues").innerHTML=
+  `<h3>Requests — the single external door</h3>`+
+  (reqs.length?`<table><tr><th>id</th><th>type</th><th>title</th><th>status</th><th>at</th></tr>`+
+   reqs.map(r=>`<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.type)}</td>
+     <td>${esc(r.title)}</td>
+     <td><span class="flag ${r.status==="pending"?"warn":r.status==="rejected"?"down":"ok"}">${
+       esc(r.status)}</span></td>
+     <td class="muted">${when(r.at)}</td></tr>`).join("")+`</table>`
+   :`<p class="muted">Nothing in the queue.</p>`)+
+  `<h3>Issues — one part of the pipeline asking another</h3>`+
+  (iss.length?`<table>
+   <tr><th>id</th><th>target</th><th>slice</th><th>kind</th><th>claim</th><th>round</th><th></th></tr>`+
+   iss.map(i=>`<tr><td><code>${esc(i.id)}</code></td>
+     <td><button class="pill" data-goto="${esc(i.target)}">${esc(i.target)}</button></td>
+     <td>${esc(i.target_slice||"—")}</td><td>${esc(i.kind)}</td><td>${esc(i.claim)}</td>
+     <td>${esc(i.round==null?"":i.round)}</td>
+     <td><span class="flag ${i.status==="escalated"?"down":i.status==="resolved"?"ok":"warn"}">${
+       esc(i.status)}</span></td></tr>`).join("")+`</table>`
+   :`<p class="muted">No issues raised.</p>`)+
+  `<p class="muted" style="max-width:64ch">A <b>semantic</b> issue invalidates the entries that
+   consumed the old meaning — that set is the re-run scope, computed at entry level. An
+   <b>additive</b> one re-runs nothing. Round 2 with nothing resolved escalates to a human.</p>`;
+}
+
+/* One delegated handler for every id link on the page: an identifier
+   interpolated into an inline onclick would be markup built from
+   stored data, which is the thing esc() exists to avoid. */
+document.addEventListener("click",e=>{
+  const n=e.target.closest(".node");
+  if(n){ pick(n.dataset.id); return; }
+  const b=e.target.closest("[data-goto]");
+  if(!b) return;
+  show("spine"); pick(b.dataset.goto);
+});
+
+/* =============================================================
+   RAIL, VIEWS, PAN/ZOOM
+   ============================================================= */
+function drawLegend(){
+  const names=Object.keys(STATE.slices);
+  const unsliced=STATE.entries.filter(e=>e.slice==="unsliced").length;
+  $("legend").innerHTML = (names.length||unsliced)
+    ? names.map(s=>{
+        const i=STATE.slices[s];
+        return `<button class="leg ${i.type==="cross_cutting"?"xc":""}" data-s="${esc(s)}"
+          style="--sl:${i.hue}" aria-pressed="false" title="${
+            i.wave==null?"":"wave "+i.wave}"><i></i>${esc(s)}<em>${i.size}</em></button>`;}).join("")+
+      (unsliced?`<button class="leg" data-s="unsliced" style="--sl:${UNSLICED}"
+          aria-pressed="false"><i></i>unsliced<em>${unsliced}</em></button>`:"")
+    : `<p class="muted" style="padding:0 9px">none yet</p>`;
+
+  for(const b of $("legend").querySelectorAll(".leg")) b.onclick=()=>{
+    focusSlice = focusSlice===b.dataset.s ? null : b.dataset.s;
+    sel=null; resetInspector();          // the other mode releases
+    syncLegend(); show("spine"); repaint();
+    if(focusSlice){
+      const ids=STATE.entries.filter(e=>e.slice===focusSlice).map(e=>e.id)
+        .filter(i=>SCENE&&SCENE.pos.has(i));
+      if(!ids.length){ fit(); return; }
+      const xs=ids.map(i=>SCENE.pos.get(i).x), ys=ids.map(i=>SCENE.pos.get(i).y);
+      fitTo({x:Math.min(...xs)-20,y:Math.min(...ys)-NODE_H,
+             width:Math.max(...xs)-Math.min(...xs)+NODE_W+40,
+             height:Math.max(...ys)-Math.min(...ys)+NODE_H*2});
+    } else fit();
+  };
+}
+
+function show(v){
+  for(const b of document.querySelectorAll("nav .view")) b.setAttribute("aria-current",b.dataset.v===v);
+  $("canvas").classList.toggle("hide",v!=="spine");
+  $("waves").classList.toggle("hide",v!=="waves");
+  $("queues").classList.toggle("hide",v!=="queues");
+}
+for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
+$("t-h").onchange=repaint;
+$("t-e").onchange=repaint;
+addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
+
+(()=>{
+  const c=$("canvas"); let down=null, moved=0;
+  c.addEventListener("pointerdown",e=>{
+    if(e.target.closest(".node")||e.target.closest("button")) return;
+    down={x:e.clientX-view.x,y:e.clientY-view.y}; moved=0; c.classList.add("dragging");});
+  addEventListener("pointermove",e=>{ if(!down)return;
+    moved=Math.max(moved,Math.abs(e.clientX-down.x-view.x)+Math.abs(e.clientY-down.y-view.y));
+    view.x=e.clientX-down.x; view.y=e.clientY-down.y; applyView();});
+  // A press on blank canvas that did not become a drag is a click,
+  // and a click on nothing means "I am looking at nothing".
+  addEventListener("pointerup",()=>{
+    if(down && moved<4) clearAll();
+    down=null; c.classList.remove("dragging")});
+  c.addEventListener("wheel",e=>{
+    e.preventDefault();
+    const r=c.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+    const k=Math.min(2.4,Math.max(0.22,view.k*(e.deltaY<0?1.12:0.89)));
+    view.x=mx-(mx-view.x)*(k/view.k); view.y=my-(my-view.y)*(k/view.k);
+    view.k=k; applyView();},{passive:false});
+  $("zin").onclick=()=>{view.k=Math.min(2.4,view.k*1.2);applyView()};
+  $("zout").onclick=()=>{view.k=Math.max(0.22,view.k/1.2);applyView()};
+  $("zfit").onclick=()=>{fit()};
+})();
+
+/* =============================================================
+   STRIP + BOOT
+   ============================================================= */
+function drawStrip(){
+  const g=STATE.gates;
+  const sound=$("f-sound"), comp=$("f-complete");
+  if(!g){ sound.textContent="gates unknown"; sound.className="flag warn";
+          comp.textContent=""; comp.className="flag hide"; }
+  else{
+    sound.textContent = g.sound ? "sound" : "UNSOUND";
+    sound.className   = "flag " + (g.sound ? "ok" : "down");
+    const unserved=(g.findings||[]).filter(f=>f.kind==="unserved").length;
+    comp.textContent = g.complete ? "complete"
+      : "incomplete" + (unserved ? " · " + unserved + " unserved" : "");
+    comp.className   = "flag " + (g.complete ? "ok" : "warn");
+  }
+  $("k-entries").textContent=STATE.entries.filter(e=>!e.module).length;
+  $("k-slices").textContent=Object.keys(STATE.slices).length;
+  $("k-issues").textContent=STATE.issues.filter(i=>i.status==="open").length;
+  $("k-loc").textContent=STATE.locality==null?"–":Number(STATE.locality).toFixed(2);
+}
+
+function redraw(){
+  drawStrip(); drawLegend(); drawSpine(); drawWaves(); drawQueues();
+  clearAll();
+}
+
+async function selectProject(p){
+  try{
+    await loadProject(p);
+  }catch(err){
+    $("offline").hidden=false;
+    $("offline").textContent="Could not load "+p+": "+err.message;
+    Object.assign(STATE,{entries:[],byId:{},slices:{},waves:[],gates:null,
+                         issues:[],requests:[],modules:[],locality:null});
+  }
+  redraw();
+}
+
+(async ()=>{
+  resetInspector();
+  let projects=[];
+  try{
+    projects=await loadProjects();
+    STATE.live=true;
+  }catch(err){
+    STATE.live=false;
+    $("offline").hidden=false;
+    $("offline").textContent=
+      "Not connected to a running mu-spec — this unit's API did not answer. "+
+      "Everything below is empty rather than wrong.";
+  }
+  STATE.projects=projects;
+  const sel=$("proj");
+  sel.innerHTML=projects.length
+    ? projects.map(p=>`<option>${esc(p)}</option>`).join("")
+    : `<option>— no projects —</option>`;
+  sel.onchange=()=>selectProject(sel.value);
+  if(projects.length) await selectProject(projects[0]);
+  else redraw();
+})();
+
+addEventListener("resize",()=>{ if(!focusSlice) fit(); });
+</script>

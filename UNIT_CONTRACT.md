@@ -20,6 +20,19 @@ and a unit that started shipping them would be setting that standard by
 accident. `unit_type: memory`,
 `lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
 
+`GET /dashboard` answers **page tier** — one self-contained HTML file,
+served to a human in a browser and framed below the node's chrome. The
+spec tier was the default to beat and it cannot draw this: no panel kind
+in the node's vocabulary renders a five-column derivation graph with
+same-layer dependency edges, and that graph is the one thing here worth
+looking at. Taking the escape hatch means owning the cost of matching the
+console, which is what the `holonic-tokens` opt-in and the contract token
+names in the page's `<head>` are for. It is deliberately absent from
+`/tools`: a model offered it would fetch HTML in place of the data behind
+it. `tests/test_dashboard.py` asserts the page survives packaging — read
+**as installed**, never from the checkout, because a checkout-relative
+check passes exactly when the real failure happens.
+
 `/stats` carries **already-processed** aggregates — counts per layer, how
 many projects are sound, mean change locality, where corrections entered —
 with no text and no per-item detail. An analytical unit reads it without

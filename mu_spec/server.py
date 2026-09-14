@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mu_spec import docs, service
+from mu_spec import dashboard, docs, service
 from mu_spec.service import ServiceError
 from mu_spec.inbox import Inbox, InboxError
 from mu_spec.issues import IssueError, IssueLog
@@ -39,6 +39,7 @@ PROMPT_TIERS = ("default", "reference", "wayfinding", "insights")
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
 MARKDOWN = "text/markdown; charset=utf-8"
+HTML = "text/html; charset=utf-8"
 
 _ID = r"[A-Z]·[0-9]+"
 _P = r"(?P<project>[A-Za-z0-9_-]+)"
@@ -541,6 +542,9 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
     # Documentation: derived from the files this repo already ships. See
     # the node's docs/UNIT_STANDARDS.md, "Documentation: two endpoints".
+    # For a human, not a model: page tier, rendered in a frame below the
+    # node's chrome. Deliberately absent from /tools.
+    ("GET", re.compile(r"^/dashboard$"), "dashboard"),
     ("GET", re.compile(r"^/docs$"), "docs_index"),
     ("GET", re.compile(r"^/docs/(?P<name>[^/]+)$"), "get_doc"),
     # The single external door.
@@ -685,6 +689,12 @@ def handle(
                     json.dumps({"error": f"no prompt for tier {params['tier']!r}"}),
                 )
             return 200, TEXT, text
+
+        if name == "dashboard":
+            page = dashboard.read_page()
+            if page is None:
+                return 404, JSON, json.dumps({"error": "no dashboard"})
+            return 200, HTML, page
 
         if name == "docs_index":
             return (

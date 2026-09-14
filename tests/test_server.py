@@ -1796,7 +1796,10 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
     for _, _, name in _ROUTES:
         # health, tools, prompts and skills are the standard meta surface:
         # a peer reads them to learn what this unit is, not to do work.
-        if name in ("health", "tools", "prompts", "skills"):
+        # dashboard is the same exemption for the other audience: it
+        # serves a page to a human in a browser, and a model offered it
+        # would fetch HTML in place of the data behind it.
+        if name in ("health", "tools", "prompts", "skills", "dashboard"):
             continue
         assert name in exposed, f"route {name!r} is exposed by no tool"
         if exposed[name]:

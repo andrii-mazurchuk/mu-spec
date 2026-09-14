@@ -19,3 +19,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["mu_spec*"]
+
+# The dashboard is a non-code asset that must survive packaging. Without
+# this, the wheel ships without it, GET /dashboard 404s, and the node
+# reads that as "this unit has no dashboard" -- a packaging bug wearing
+# the exact appearance of a deliberate choice.
+[tool.setuptools.package-data]
+mu_spec = ["dashboard.html"]
