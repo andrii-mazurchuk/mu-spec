@@ -20,18 +20,67 @@ and a unit that started shipping them would be setting that standard by
 accident. `unit_type: memory`,
 `lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
 
-`GET /dashboard` answers **page tier** — one self-contained HTML file,
-served to a human in a browser and framed below the node's chrome. The
-spec tier was the default to beat and it cannot draw this: no panel kind
-in the node's vocabulary renders a five-column derivation graph with
-same-layer dependency edges, and that graph is the one thing here worth
-looking at. Taking the escape hatch means owning the cost of matching the
-console, which is what the `holonic-tokens` opt-in and the contract token
-names in the page's `<head>` are for. It is deliberately absent from
-`/tools`: a model offered it would fetch HTML in place of the data behind
-it. `tests/test_dashboard.py` asserts the page survives packaging — read
-**as installed**, never from the checkout, because a checkout-relative
-check passes exactly when the real failure happens.
+## The dashboard
+
+**mu-spec serves the page tier, and that required sign-off.**
+
+`GET /dashboard` returns `text/html`: one self-contained file drawing a
+five-column derivation graph, served to a human in a browser and framed
+below the node's chrome. The bar for this tier is *inexpressible in the
+node's panel vocabulary*, not *inconvenient* — see the gateway repo's
+`docs/UNIT_STANDARDS.md`, "Taking the page tier requires the standards
+owner's sign-off", which is where the rule and the procedure live. A
+derivation DAG clears that bar, because no panel kind renders five layers
+with same-layer dependency edges between them. Almost nothing else in this
+unit does.
+
+**That decision is made and does not need remaking.** What it obliges a
+future session here is narrower, and easier to lose: the standard's seven
+page-tier requirements apply to **every change to `dashboard.html`**, not
+just to the first one.
+
+Below is not that list — the canonical seven live in the gateway's
+`UNIT_STANDARDS.md` and restating them here would be a second copy that
+drifts. This is what is easiest to lose in *this* page, which is a mix of
+those requirements and two traps that are not in them at all.
+
+- Zero absolute fetches. Every path relative, none starting with `/` — an
+  absolute one reaches the *node*, which answers with plausible JSON of the
+  wrong shape rather than an error.
+- No external resources. One file, inline CSS and JS, no build step.
+- The `holonic-tokens` opt-in and contract token names, so the node's
+  injected palette wins when framed and the page still works standalone.
+- `aria-pressed` and every selected state derived from **current** state,
+  never written at construction. Written once at build time, the control
+  describes the mount-time selection permanently and a screen reader
+  announces the wrong thing with nothing to contradict it.
+- Stored text escaped or set through `textContent`, never interpolated as
+  markup. Entry bodies and issue claims were written by whoever could reach
+  this unit.
+- The page proven readable **as installed**, through `importlib.resources`
+  and never a checkout path — a checkout-relative check passes exactly when
+  the real failure happens.
+- Degrades on empty, which is the one that rots silently once the store
+  fills and nobody opens the empty case again.
+
+- Same-origin only, and no navigation of its own. The topbar and unit
+  switcher belong to the node and never unmount; the rail here is in-page
+  scope, not navigation.
+
+The two that are not in the standard's seven — `aria-pressed` and escaping —
+are here because they are the two this page got right that a rewrite would
+most plausibly get wrong. pu shipped the `aria-pressed` bug.
+
+`tests/test_dashboard.py` asserts these, one test per item.
+
+**Do not propose a `graph` panel kind to the gateway.** It has been rejected
+twice, once here and once with pu, for the same reason each time: a kind
+general enough for every unit's graph expresses none of them well, and
+adding one for a single unit shapes every other unit's dashboard around that
+unit's problem.
+
+The page is deliberately absent from `/tools`: a model offered it would
+fetch HTML in place of the data behind it.
 
 `/stats` carries **already-processed** aggregates — counts per layer, how
 many projects are sound, mean change locality, where corrections entered —
