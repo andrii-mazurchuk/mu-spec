@@ -114,6 +114,74 @@ def test_page_draws_no_navigation_of_its_own():
     assert not re.search(r'<a\s[^>]*href="https?://', text, re.I)
 
 
+# -- requirement 5: degrades on empty ----------------------------------
+#
+# The half that rots silently. Once a store has data in it nobody opens
+# the empty case again, and the failure is invisible until the day a new
+# project is created -- which is exactly when somebody is watching.
+
+
+def _fresh_project(store, prompts, name="fresh"):
+    """A project that exists and holds nothing, built the way the pipeline
+    builds one: a request, then a project citing it."""
+    _, _, raw = handle(
+        "POST", "/inbox", store, prompts,
+        {"type": "initiate", "title": "t", "project": name},
+    )
+    mid = json.loads(raw)["message_id"]
+    handle("POST", "/projects", store, prompts,
+           {"project": name, "in_response_to": mid})
+    return name
+
+
+def test_every_endpoint_the_page_reads_answers_on_an_empty_project(store, prompts):
+    """The page degrades only if the API does. A 500 or a missing key on a
+    project with nothing in it renders as a broken dashboard, not an empty
+    one -- so this is tested at the source rather than in the markup."""
+    name = _fresh_project(store, prompts)
+    for path, key, empty in [
+        (f"/projects/{name}/spine", "spine", []),
+        (f"/projects/{name}/waves", "waves", []),
+        (f"/projects/{name}/issues", "issues", []),
+        (f"/projects/{name}/modules", "modules", []),
+        (f"/inbox?project={name}", "messages", None),
+    ]:
+        status, _, raw = handle("GET", path, store, prompts)
+        assert status == 200, f"{path} did not answer on an empty project"
+        payload = json.loads(raw)
+        assert key in payload, f"{path} omitted {key!r} rather than returning it empty"
+        if empty is not None:
+            assert payload[key] == empty
+
+    status, _, raw = handle("GET", f"/projects/{name}/gates", store, prompts)
+    assert status == 200 and json.loads(raw)["sound"] is True
+
+    status, _, raw = handle("GET", f"/projects/{name}/insights", store, prompts)
+    assert status == 200
+    # No changes yet means no mean, not a zero. A zero would read as a
+    # measured score of nought on a page that shows it as one.
+    assert json.loads(raw)["change_locality"]["mean"] is None
+
+
+def test_no_projects_at_all_is_an_empty_list_not_an_error(store, prompts):
+    status, _, raw = handle("GET", "/projects", store, prompts)
+    assert status == 200
+    assert json.loads(raw)["projects"] == []
+
+
+def test_page_has_an_empty_branch_for_each_region_it_draws():
+    """Weaker than the API test above and deliberately kept beside it: this
+    one only catches an empty-state branch being deleted, which is the way
+    this requirement is actually lost."""
+    text = page()
+    assert 'id="empty"' in text, "no empty-state element for the graph"
+    for marker in ("No projects yet", "No entries in", "No slices yet",
+                   "Nothing in the queue", "No issues raised"):
+        assert marker in text, f"no empty state for {marker!r}"
+    # A null mean must not be printed as a number.
+    assert "locality==null" in text.replace(" ", "")
+
+
 def test_page_escapes_stored_text():
     """Entry bodies, titles and issue claims were written by whoever
     could reach this unit. They are shown as text, never parsed as
