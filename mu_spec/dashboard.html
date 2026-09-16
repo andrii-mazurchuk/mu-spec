@@ -211,15 +211,13 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 .btn.no{border-color:var(--down);color:var(--down)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .acts .spacer{margin-left:auto;color:var(--dim);font-size:12px}
-#rejectbox{margin-top:12px}
-#rejectbox[hidden]{display:none}
-#rejectbox textarea{width:100%;min-height:76px;background:var(--panel-alt);color:var(--ink);
-  border:1px solid var(--rule);border-radius:var(--radius);padding:8px 10px;font:inherit;
-  font-size:12.5px;resize:vertical}
-#rejectbox p{color:var(--dim);font-size:11.5px;margin:6px 0 10px}
-#outcome{margin-top:12px;padding:10px 12px;border-radius:var(--radius);font-size:12.5px;
-  background:var(--warn-bg);color:var(--warn);white-space:pre-wrap}
-#outcome[hidden]{display:none}
+/* Leads the panel. A reader must know the controls are inert before
+   forming the intention to press one, not after. */
+.inert{background:var(--warn-bg);color:var(--warn);border-radius:var(--radius);
+  padding:10px 12px;font-size:12.5px;margin:0 0 14px;max-width:80ch}
+.inert b{display:block;margin-bottom:4px}
+.inert code{display:block;background:var(--panel);color:var(--ink);border-radius:5px;
+  padding:4px 8px;margin-top:6px;font-size:11.5px;user-select:all}
 </style>
 
 <div class="bar">
@@ -1122,9 +1120,22 @@ function proposalHTML(){
   const scored=p.score!=null;
   return `<div class="qsec"><div class="decide">
     <h3>Awaiting your ratification</h3>
+    <div class="inert">
+      <b>These two controls do not work yet, and are disabled rather than drawn.</b>
+      A dashboard page cannot write: the node forwards GET only, and the audited
+      alternative dispatches tools by name &mdash; and ratify is deliberately not a
+      tool, because a slicing session able to ratify its own proposal would be the one
+      thing its contract forbids. The missing piece is authentication in front of this
+      page, without which nothing can tell a human's decision from a session's.
+      Until then, rule on it by calling this unit directly:
+      <code>POST projects/${esc(STATE.project)}/slicing/proposal/ratify</code>
+      <code>POST projects/${esc(STATE.project)}/slicing/proposal/reject
+        &nbsp;{"note": "why this cut is wrong"}</code>
+    </div>
     <p class="lede">A slicing session proposed this partition. It is recorded and nothing
       exists yet &mdash; slices are created only when you ratify, and <b>slices split,
-      never merge</b>, so this is close to one-way.</p>
+      never merge</b>, so this is close to one-way. Everything below is readable now;
+      only the deciding is blocked.</p>
     <div class="cards">${cards}</div>
     ${scored?`<div class="verdict">
       <span>${s.legal===false
@@ -1138,56 +1149,26 @@ function proposalHTML(){
       without it means deciding on the slice names alone</span></div>`}
     ${p.note?`<div class="note">${esc(p.note)}</div>`:""}
     <div class="acts">
-      <button class="btn go" id="do-ratify">Ratify &mdash; create these slices</button>
-      <button class="btn no" id="do-reject">Reject&hellip;</button>
+      <button class="btn go" id="do-ratify" disabled
+        title="No write path from this page yet">Ratify &mdash; create these slices</button>
+      <button class="btn no" id="do-reject" disabled
+        title="No write path from this page yet">Reject&hellip;</button>
       <button class="btn" id="do-preview">${
         STATE.preview?"Stop previewing":"Preview in the spine"}</button>
-      <span class="spacer">Nothing happens until you press one.</span>
+      <span class="spacer">Preview works &mdash; it only reads.</span>
     </div>
-    <div id="rejectbox" hidden>
-      <textarea id="reject-note" placeholder="Why is this cut wrong?"></textarea>
-      <p>Required. It is kept and shown to the next slicing session as
-         <code>last_rejection</code>, so it does not propose the same cut again.</p>
-      <button class="btn no" id="do-reject-confirm" disabled>Confirm rejection</button>
-      <button class="btn" id="do-reject-cancel">Cancel</button>
-    </div>
-    <div id="outcome" hidden></div>
   </div></div>`;
 }
 
+/* Only the preview is wired, because only the preview reads. The two
+   deciding controls are disabled in the markup and there is deliberately
+   no handler for them -- an explanation reachable by pressing is one the
+   reader gets after forming an intention and spending it, which on a gate
+   whose whole point is a deliberate decision is exactly the wrong order.
+   The reason leads the panel instead. */
 function wireProposal(){
   if(!STATE.proposal) return;
-  const g=id=>document.getElementById(id);
-  g("do-preview").onclick=togglePreview;
-  g("do-reject").onclick=()=>{ g("rejectbox").hidden=false; g("reject-note").focus(); };
-  g("do-reject-cancel").onclick=()=>{ g("rejectbox").hidden=true; };
-  g("reject-note").oninput=e=>{ g("do-reject-confirm").disabled=!e.target.value.trim(); };
-  g("do-ratify").onclick=()=>decide("ratify");
-  g("do-reject-confirm").onclick=()=>decide("reject",g("reject-note").value.trim());
-}
-
-/* Both endpoints exist -- POST .../slicing/proposal/ratify and .../reject --
-   and are deliberately absent from /tools, because a slicing session that
-   could ratify its own proposal would be the one thing its contract forbids.
-   What is missing is a way for a HUMAN to reach them from here: the node's
-   dashboard proxy forwards GET only, and the audited write path it points at
-   dispatches tools by name. That is a gateway decision, not a mu-spec one.
-
-   This says so rather than failing silently or pretending to work. A button
-   that looks like it ratified and did not is worse than one that explains. */
-function decide(what, note){
-  const out=document.getElementById("outcome");
-  out.hidden=false;
-  const base="projects/"+STATE.project+"/slicing/proposal/";
-  out.textContent = what==="ratify"
-    ? "Not wired up yet \u2014 nothing was ratified and nothing changed.\n\n"+
-      "POST "+base+"ratify exists and works today. What is missing is a human write "+
-      "path from a framed page: the dashboard proxy forwards GET only, and POST /route "+
-      "dispatches tools by name \u2014 and ratify is deliberately not a tool, because an "+
-      "agent must never be able to ratify its own proposal.\n\n"+
-      "Until that exists, ratify by calling the endpoint on this unit directly."
-    : "Not wired up yet \u2014 nothing was rejected and nothing changed.\n\n"+
-      "Your note would go to POST "+base+"reject and be kept as last_rejection:\n\n  "+note;
+  document.getElementById("do-preview").onclick=togglePreview;
 }
 
 function togglePreview(){

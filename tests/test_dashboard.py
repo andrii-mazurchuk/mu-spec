@@ -191,13 +191,29 @@ def test_page_carries_the_ratification_decision():
         assert marker in text, f"the decision surface lost {marker!r}"
 
 
-def test_the_page_never_claims_to_have_written_anything():
-    """The write path does not exist yet: the node's dashboard proxy
-    forwards GET only, and the audited alternative dispatches tools by name
-    -- and ratify is deliberately not a tool. A button that looks like it
-    ratified and did not is worse than one that explains."""
+def test_the_deciding_controls_are_disabled_not_merely_explained():
+    """The write path does not exist: the node's dashboard proxy forwards
+    GET only, and the audited alternative dispatches tools by name -- and
+    ratify is deliberately not a tool.
+
+    An enabled button that explains itself after being pressed is a drawing
+    the reader discovers in retrospect, once they have formed an intention
+    and spent it. On a gate whose whole purpose is a deliberate human
+    decision, a moment of believing you ratified something is the thing
+    that cannot be afforded. So the controls carry `disabled` in the markup
+    and have no handler at all, and the reason leads the panel.
+    """
     text = page()
-    assert "Not wired up yet" in text
+    for control in ("do-ratify", "do-reject"):
+        m = re.search(r'id="' + control + r'"[^>]*', text)
+        assert m, f"{control} is gone"
+        assert "disabled" in m.group(0), f"{control} is drawn as if it worked"
+        assert f'"{control}").onclick' not in text, f"{control} has a handler"
+    # The explanation is in the panel, above the controls, not behind them.
+    assert 'class="inert"' in text
+    assert text.index('class="inert"') < text.index('id="do-ratify"')
+    # Preview is the one control that works, because it only reads.
+    assert '"do-preview").onclick' in text
     # Still no absolute path, and still nothing but GET on the wire.
     assert not re.search(r"fetch\(\s*[\"'`]\s*/", text)
     assert 'method:"POST"' not in text.replace(" ", "")
