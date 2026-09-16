@@ -212,6 +212,39 @@ def test_preview_does_not_overwrite_real_slice_membership():
     assert "previewflag" in text
 
 
+def test_page_carries_both_graph_views():
+    """Spine answers what derives from what. Order answers what waits on
+    what -- the question the spine answers badly, because depends_on is
+    same-layer and lands as one arc among a hundred."""
+    text = page()
+    for marker in ('data-v="order"', "drawOrder", "buildOrderScene", "stepDepth",
+                   "drawScene"):
+        assert marker in text, f"the order view lost {marker!r}"
+
+
+def test_the_order_view_cannot_hang_on_a_dependency_cycle():
+    """The gates refuse a cycle, but this view has to survive drawing a
+    graph that has not passed them yet."""
+    text = page()
+    assert "seen.has(id)) return 0" in text.replace("  ", " ") or            "if(seen.has(id)) return 0" in text
+
+
+def test_grouped_columns_share_a_midline():
+    """Layers are wildly uneven -- nine intents against thirty-four
+    architecture entries -- and hanging every column from the top puts the
+    short one opposite the start of the long one."""
+    text = page()
+    assert "assignYGrouped" in text
+    assert "tallest" in text and "t-group" in text
+
+
+def test_the_order_view_does_not_write_into_the_crossings_kpi():
+    """Cross-slice dependencies and edge crossings are different numbers.
+    One under the other's label is how a dashboard starts lying quietly."""
+    text = page()
+    assert "crossSlice" in text, "the cross-slice count lost its own name"
+
+
 def test_page_escapes_stored_text():
     """Entry bodies, titles and issue claims were written by whoever
     could reach this unit. They are shown as text, never parsed as

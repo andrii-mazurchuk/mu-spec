@@ -142,6 +142,31 @@ aside h3:first-child{margin-top:0}
 .muted{color:var(--dim);font-size:12px}
 .warnish{color:var(--warn)}
 
+/* ── slice grouping + the order view ────────────────────────────── */
+.sliceband{fill:var(--sl);opacity:.055}
+.sliceband.alt{opacity:.1}
+.slicetag{font:600 9.5px var(--mono);fill:var(--sl);letter-spacing:.04em}
+.lanerule{stroke:var(--rule-soft);stroke-width:1;stroke-dasharray:2 4}
+.stephead{font:600 10px var(--sans);letter-spacing:.09em;text-transform:uppercase;fill:var(--dim)}
+.lanelabel{font:600 12px var(--sans);fill:var(--sl)}
+.lanemeta{font:10.5px var(--sans);fill:var(--dim)}
+/* In the order view depends_on IS the subject, so it is drawn rather than
+   hinted at. A dependency inside one lane is ordinary sequencing; one that
+   crosses a lane is a slice waiting on a slice, which is the fact worth
+   seeing -- and the only reason the slice graph and the waves exist. */
+.edge.ord{stroke:var(--ink-soft);stroke-opacity:.35;stroke-width:1.2}
+.edge.ord.x{stroke:var(--warn);stroke-opacity:.75;stroke-width:1.6;marker-end:url(#a-h)}
+.edge.ord.lit{stroke:var(--brand);stroke-opacity:1;stroke-width:2.2}
+.viewbar{position:absolute;left:14px;top:12px;z-index:2;display:flex;gap:8px;align-items:center;
+  background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);
+  padding:5px 9px;box-shadow:var(--shadow);font-size:12.5px}
+.viewbar[hidden]{display:none}
+.viewbar select{background:var(--panel-alt);color:var(--ink);border:1px solid var(--rule);
+  border-radius:6px;padding:2px 6px;font:inherit}
+.viewbar label{display:flex;gap:6px;align-items:center;color:var(--ink-soft);cursor:pointer}
+.viewbar .sep{width:1px;height:16px;background:var(--rule)}
+.viewbar .muted{font-size:11.5px}
+
 /* ── a decision waiting on a human ──────────────────────────────── */
 #pending{flex:none;display:flex;align-items:center;gap:12px;padding:8px 16px;
   background:var(--brand-soft);border-bottom:1px solid var(--rule);font-size:13px}
@@ -218,6 +243,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 <main>
   <nav>
     <button class="view" data-v="spine" aria-current="true">Spine</button>
+    <button class="view" data-v="order">Order</button>
     <button class="view" data-v="waves">Waves</button>
     <button class="view" data-v="queues">Queues<span class="dot" id="qdot" hidden></span></button>
     <h2>Slices</h2>
@@ -244,6 +270,16 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
         <button id="zout" title="zoom out">–</button>
         <button id="zin" title="zoom in">+</button>
         <button id="zfit" title="fit">⤢</button>
+      </div>
+      <div class="viewbar" id="viewbar">
+        <span id="vb-spine">
+          <label><input type="checkbox" id="t-group"> group columns by slice</label>
+        </span>
+        <span id="vb-order" hidden>
+          <label>layer <select id="ord-layer"></select></label>
+        </span>
+        <span class="sep"></span>
+        <span class="muted" id="vb-note"></span>
       </div>
       <div class="hint" id="hint"></div>
       <div class="empty hide" id="empty"></div>
@@ -410,6 +446,9 @@ const sideOf = id => {
    guarantees separation.
    ============================================================= */
 const NODE_W=212, NODE_H=46, NODE_GAP=26, LAYER_GAP=392, SWEEPS=14;
+const GROUP_GAP=44;                                // between slice groups in a column
+const STEP_GAP=300, LANE_PAD=30, LANE_LABEL=190;   // the order view
+let GROUPED=false;
 const COL_X = i => i*LAYER_GAP;
 
 function adjacency(){
@@ -511,11 +550,74 @@ function laneFor(edges){
   }
 }
 
+/* Slices ranked for display: by the wave the unit computed, then by name,
+   with unsliced last. Two slices in one wave have no edge between them, so
+   any order within a wave is as good as any other -- name keeps it stable
+   across reloads, which matters more than which of them comes first. */
+function sliceRank(){
+  const names=Object.keys(STATE.slices);
+  const rank=Object.fromEntries(names
+    .sort((a,b)=>{
+      const wa=STATE.slices[a].wave, wb=STATE.slices[b].wave;
+      if(wa!==wb) return (wa==null?99:wa)-(wb==null?99:wb);
+      return a<b?-1:1;})
+    .map((n,i)=>[n,i]));
+  rank.unsliced=names.length+1;
+  return rank;
+}
+
+/* Grouped layout: slice members sit together in a column instead of being
+   scattered wherever crossing-reduction put them.
+
+   The intra-group order is still the crossing-minimised one -- grouping
+   constrains where a block goes, not what happens inside it -- so this
+   costs crossings rather than discarding the optimisation. The count stays
+   on screen either way, because the trade is the reader's to make: grouped
+   reads better by subject, ungrouped reads better by derivation.
+
+   Columns are then centred on a shared midline rather than hung from the
+   top. Layers are wildly uneven -- nine intents against thirty-four
+   architecture entries -- and top-alignment puts the short column opposite
+   the start of the long one, so every edge out of it rakes downward and
+   the picture reads as lopsided rather than as layered. */
+function assignYGrouped(order,adj){
+  const rank=sliceRank(), y=new Map(), bands=[];
+  const cols=[];
+  let tallest=0;
+  for(let col=0;col<order.length;col++){
+    const groups=new Map();
+    for(const id of order[col]){              // preserves the optimised order
+      const s=(STATE.byId[id]||{}).slice||"unsliced";
+      (groups.get(s)||groups.set(s,[]).get(s)).push(id);
+    }
+    const ordered=[...groups.entries()].sort((a,b)=>(rank[a[0]]??99)-(rank[b[0]]??99));
+    let cursor=0;
+    const local=[], localBands=[];
+    for(const [name,members] of ordered){
+      const top=cursor;
+      for(const id of members){ local.push([id,cursor+NODE_H/2]); cursor+=NODE_H+NODE_GAP; }
+      localBands.push({col,slice:name,top:top-10,height:cursor-top-NODE_GAP+20});
+      cursor+=GROUP_GAP;
+    }
+    const height=Math.max(0,cursor-GROUP_GAP-NODE_GAP+NODE_H);
+    cols.push({local,localBands,height});
+    tallest=Math.max(tallest,height);
+  }
+  for(const c of cols){
+    const off=(tallest-c.height)/2;
+    for(const [id,v] of c.local) y.set(id,v+off);
+    for(const b of c.localBands) bands.push({...b,top:b.top+off});
+  }
+  return {y,bands};
+}
+
 function buildScene(){
   const order0=LAYERS.map((L,i)=>STATE.entries.filter(e=>e.layer===i).map(e=>e.id));
   const adj=adjacency();
   const {order,crossings}=reduceCrossings(order0,adj);
-  const y=assignY(order,adj);
+  const grouped=GROUPED?assignYGrouped(order,adj):null;
+  const y=grouped?grouped.y:assignY(order,adj);
+  const bands=grouped?grouped.bands:[];
   const pos=new Map();
   order.forEach((col,i)=>col.forEach(id=>pos.set(id,{x:COL_X(i),y:y.get(id),col:i})));
 
@@ -537,7 +639,7 @@ function buildScene(){
   for(const c in byCol) laneFor(byCol[c]);
 
   const ys=[...y.values()];
-  return {pos,order,vEdges,hEdges,crossings,
+  return {pos,order,vEdges,hEdges,crossings,bands,
           width:COL_X(LAYERS.length-1)+NODE_W, height:ys.length?Math.max(...ys)+NODE_H:0};
 }
 
@@ -570,6 +672,7 @@ const short=p=>{const b=String(p).split(/[\\/]/).pop();return b||String(p)};
 
 let SCENE=null, sel=null, focusSlice=null;
 let view={x:40,y:30,k:1};
+let MODE="spine", ORDER_LAYER=1;    // Behaviour: the first layer that has depends_on
 
 function drawSpine(){
   SCENE=buildScene();
@@ -592,6 +695,19 @@ function drawSpine(){
     const t=svgEl("text",{class:"colhead",x:COL_X(i),y:-26}); t.textContent=L[1];
     g.appendChild(t);
     g.appendChild(svgEl("line",{class:"colrule",x1:COL_X(i),y1:-18,x2:COL_X(i)+NODE_W,y2:-18}));
+  });
+
+  // Bands first, so every edge and node draws over them.
+  (SCENE.bands||[]).forEach((b,i)=>{
+    g.appendChild(svgEl("rect",{class:"sliceband"+(i%2?" alt":""),
+      x:COL_X(b.col)-10, y:b.top, width:NODE_W+20, height:b.height, rx:6,
+      style:`--sl:${hueOf(b.slice)}`}));
+    if(b.slice!=="unsliced"){
+      const t=svgEl("text",{class:"slicetag",x:COL_X(b.col)-8,y:b.top-4,
+        style:`--sl:${hueOf(b.slice)}`});
+      t.textContent=b.slice.toUpperCase();
+      g.appendChild(t);
+    }
   });
 
   for(const e of SCENE.vEdges){
@@ -630,6 +746,175 @@ function drawSpine(){
     "click a slice in the rail to isolate it";
   applyView(); requestAnimationFrame(fit);
 }
+
+
+/* =============================================================
+   ORDER VIEW
+
+   The spine answers "what derives from what", which is vertical. It
+   answers "what waits on what" badly, because depends_on is same-layer
+   and lands as one arc in a gutter beside a hundred others.
+
+   This view answers only that question, and drops everything else to do
+   it. One layer at a time -- depends_on never crosses a layer, so a
+   cross-layer dependency view would be drawing edges that cannot exist.
+
+     x = how many steps of dependency deep an entry sits
+     y = which slice owns it, lanes ordered by the slice's own wave
+
+   So the left edge is what can be worked first, and a lane above another
+   is a slice the one below waits on. Both orderings are computed from the
+   same entry edges; neither is authored anywhere.
+   ============================================================= */
+
+/* Longest path over depends_on, cycle-guarded. Longest and not shortest
+   for the same reason waves use it: an entry blocked by both a one-step
+   and a four-step chain belongs after the four, or it draws an edge
+   leaping backwards. The guard is there because nothing structurally
+   prevents a depends_on cycle -- the gates refuse one, but this view has
+   to survive drawing a graph that has not passed them yet. */
+function stepDepth(ids, depsOf){
+  const memo=new Map();
+  const walk=(id,seen)=>{
+    if(memo.has(id)) return memo.get(id);
+    if(seen.has(id)) return 0;                 // cycle: stop, never hang
+    seen.add(id);
+    const ds=depsOf(id);
+    const v=ds.length?Math.max(...ds.map(d=>walk(d,seen)+1)):0;
+    seen.delete(id);
+    memo.set(id,v);
+    return v;
+  };
+  for(const id of ids) walk(id,new Set());
+  return memo;
+}
+
+function buildOrderScene(layerIdx){
+  const ents=STATE.entries.filter(e=>e.layer===layerIdx);
+  const ids=new Set(ents.map(e=>e.id));
+  const depsOf=id=>((STATE.byId[id]||{}).deps||[]).filter(d=>ids.has(d));
+  const depth=stepDepth([...ids],depsOf);
+  const maxStep=Math.max(0,...[...depth.values()]);
+
+  const rank=sliceRank();
+  const present=[...new Set(ents.map(e=>e.slice))]
+    .sort((a,b)=>(rank[a]??99)-(rank[b]??99));
+
+  const pos=new Map(), lanes=[];
+  let cursor=0;
+  for(const name of present){
+    const mine=ents.filter(e=>e.slice===name);
+    const cells=new Map();
+    for(const e of mine){
+      const d=depth.get(e.id)||0;
+      (cells.get(d)||cells.set(d,[]).get(d)).push(e.id);
+    }
+    const tallest=Math.max(1,...[...cells.values()].map(c=>c.length));
+    const h=LANE_PAD*2+tallest*NODE_H+(tallest-1)*NODE_GAP;
+    for(const [d,members] of cells)
+      members.forEach((id,i)=>pos.set(id,{
+        x:LANE_LABEL+d*STEP_GAP,
+        y:cursor+LANE_PAD+i*(NODE_H+NODE_GAP)+NODE_H/2,
+        step:d, lane:name}));
+    lanes.push({slice:name,top:cursor,height:h,count:mine.length,
+                deps:(STATE.slices[name]||{}).deps||[],
+                wave:(STATE.slices[name]||{}).wave,
+                xc:isXC(name)});
+    cursor+=h;
+  }
+
+  /* A dependency inside one lane is ordinary sequencing. One that crosses a
+     lane is a slice waiting on another slice -- what slice dependency is
+     projected FROM, and the reason a wave exists. Marked because it is a
+     different fact, not a louder one. */
+  const edges=[];
+  const sliceOf=id=>(STATE.byId[id]||{}).slice;
+  for(const e of ents){
+    for(const d of e.deps) if(pos.has(d)&&pos.has(e.id))
+      edges.push({kind:"h",from:d,to:e.id,cross:sliceOf(d)!==sliceOf(e.id)});
+    for(const m of e.emits) if(pos.has(m)&&pos.has(e.id))
+      edges.push({kind:"e",from:e.id,to:m,cross:sliceOf(m)!==sliceOf(e.id)});
+  }
+  return {pos,lanes,edges,maxStep,height:cursor,
+          crossSlice:edges.filter(x=>x.cross&&x.kind==="h").length,
+          width:LANE_LABEL+(maxStep+1)*STEP_GAP};
+}
+
+function oPath(a,b){
+  const x1=a.x+NODE_W, y1=a.y, x2=b.x, y2=b.y;
+  const bow=Math.max(40,(x2-x1)/2);
+  return `M ${x1} ${y1} C ${x1+bow} ${y1}, ${x2-bow} ${y2}, ${x2} ${y2}`;
+}
+
+function drawOrder(){
+  const S=buildOrderScene(ORDER_LAYER);
+  SCENE={pos:S.pos,order:[],vEdges:[],hEdges:S.edges,crossings:0,bands:[]};
+  const g=$("scene"); g.innerHTML="";
+
+  $("empty").classList.toggle("hide", S.pos.size>0);
+  if(!S.pos.size){
+    $("empty").textContent="Nothing in "+LAYERS[ORDER_LAYER][1]+" yet.";
+    $("k-xing").textContent="0"; $("vb-note").textContent="";
+    return;
+  }
+
+  for(let s=0;s<=S.maxStep;s++){
+    const t=svgEl("text",{class:"stephead",x:LANE_LABEL+s*STEP_GAP,y:-22});
+    t.textContent = s===0 ? "STEP 0 · NOTHING FIRST" : "STEP "+s;
+    g.appendChild(t);
+  }
+
+  S.lanes.forEach((L,i)=>{
+    g.appendChild(svgEl("rect",{class:"sliceband"+(i%2?" alt":""),
+      x:LANE_LABEL-16, y:L.top, width:S.width-LANE_LABEL+40, height:L.height, rx:8,
+      style:`--sl:${hueOf(L.slice)}`}));
+    g.appendChild(svgEl("line",{class:"lanerule",x1:LANE_LABEL-16,y1:L.top,
+      x2:S.width+24,y2:L.top}));
+    const nm=svgEl("text",{class:"lanelabel",x:0,y:L.top+26,style:`--sl:${hueOf(L.slice)}`});
+    nm.textContent=clip(L.slice,20)+(L.xc?" ✳":"");
+    const meta=svgEl("text",{class:"lanemeta",x:0,y:L.top+42});
+    meta.textContent=(L.wave==null?"":"wave "+L.wave+" · ")+L.count+" entries";
+    const after=svgEl("text",{class:"lanemeta",x:0,y:L.top+57});
+    after.textContent=L.deps.length?"after "+clip(L.deps.join(", "),24):"waits on nothing";
+    g.append(nm,meta,after);
+  });
+
+  for(const e of S.edges){
+    const a=S.pos.get(e.from), b=S.pos.get(e.to);
+    g.appendChild(svgEl("path",{
+      class:"edge ord "+(e.kind==="e"?"e":"h")+(e.cross?" x":""),d:oPath(a,b),
+      "data-from":e.from,"data-to":e.to,"data-kind":e.kind}));
+  }
+
+  for(const [id,p] of S.pos){
+    const e=STATE.byId[id], hue=hueOf(e.slice);
+    const n=svgEl("g",{class:"node",transform:`translate(${p.x} ${p.y-NODE_H/2})`,
+      "data-id":id,"data-slice":e.slice,style:`--sl:${hue}`,tabindex:"0"});
+    n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
+    n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
+    const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=id;
+    const t=svgEl("text",{class:"t",x:12,y:34}); t.textContent=clip(e.title,30);
+    const tip=svgEl("title"); tip.textContent=e.title;
+    n.append(i,t,tip);
+    g.appendChild(n);
+  }
+
+  // NOT the crossings KPI: that counts edges crossing each other in the
+  // spine, and this is a different number entirely. Writing one into the
+  // other's label is how a dashboard starts lying quietly.
+  $("k-xing").textContent="—";
+  $("n-h").textContent=S.edges.filter(e=>e.kind==="h").length;
+  $("n-e").textContent=S.edges.filter(e=>e.kind==="e").length;
+  $("vb-note").textContent=S.maxStep===0
+    ? "no dependencies in this layer — everything can be worked at once"
+    : (S.maxStep+1)+" steps deep · "+S.crossSlice+" of "+
+      S.edges.filter(e=>e.kind==="h").length+" dependencies cross a slice";
+  $("hint").textContent="left to right is dependency order · a lane above another is a "+
+    "slice it waits on · click an entry for its chain";
+  applyView(); requestAnimationFrame(fit);
+}
+
+function drawScene(){ MODE==="order" ? drawOrder() : drawSpine(); }
 
 function applyView(){
   $("scene").setAttribute("transform",`translate(${view.x} ${view.y}) scale(${view.k})`);
@@ -913,7 +1198,7 @@ function togglePreview(){
   }
   document.getElementById("previewflag").hidden=!STATE.preview;
   focusSlice=null; sel=null;
-  drawLegend(); drawSpine(); resetInspector(); drawQueues();
+  drawLegend(); drawScene(); resetInspector(); drawQueues();
   show("spine");
 }
 
@@ -993,7 +1278,7 @@ function drawLegend(){
   for(const b of $("legend").querySelectorAll(".leg")) b.onclick=()=>{
     focusSlice = focusSlice===b.dataset.s ? null : b.dataset.s;
     sel=null; resetInspector();          // the other mode releases
-    syncLegend(); show("spine"); repaint();
+    syncLegend(); repaint();
     if(focusSlice){
       const ids=STATE.entries.filter(e=>e.slice===focusSlice).map(e=>e.id)
         .filter(i=>SCENE&&SCENE.pos.has(i));
@@ -1007,14 +1292,29 @@ function drawLegend(){
 }
 
 function show(v){
-  for(const b of document.querySelectorAll("nav .view")) b.setAttribute("aria-current",b.dataset.v===v);
-  $("canvas").classList.toggle("hide",v!=="spine");
+  for(const b of document.querySelectorAll("nav .view"))
+    b.setAttribute("aria-current",b.dataset.v===v);
+  const onCanvas = v==="spine" || v==="order";
+  $("canvas").classList.toggle("hide",!onCanvas);
   $("waves").classList.toggle("hide",v!=="waves");
   $("queues").classList.toggle("hide",v!=="queues");
+  $("viewbar").hidden=!onCanvas;
+  if(onCanvas){
+    $("vb-spine").hidden = v!=="spine";
+    $("vb-order").hidden = v!=="order";
+    if(v!==MODE){
+      MODE=v; sel=null; focusSlice=null;
+      syncLegend(); drawScene(); resetInspector();
+    }
+  }
 }
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
 $("t-e").onchange=repaint;
+$("t-group").onchange=()=>{ GROUPED=$("t-group").checked; sel=null; focusSlice=null;
+  syncLegend(); drawScene(); resetInspector(); };
+$("ord-layer").onchange=()=>{ ORDER_LAYER=+$("ord-layer").value; sel=null;
+  syncLegend(); drawOrder(); resetInspector(); };
 addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
 
 (()=>{
@@ -1063,8 +1363,27 @@ function drawStrip(){
   $("k-loc").textContent=STATE.locality==null?"–":Number(STATE.locality).toFixed(2);
 }
 
+/* Only layers that hold entries, and each labelled with whether it has any
+   dependencies at all -- offering Intent here would promise a dependency
+   view of a layer that structurally cannot have one. */
+function drawLayerPicker(){
+  const sel=$("ord-layer");
+  const opts=LAYERS.map((L,i)=>({i,name:L[1],
+      n:STATE.entries.filter(e=>e.layer===i).length,
+      d:STATE.entries.filter(e=>e.layer===i).reduce((a,e)=>a+e.deps.length,0)}))
+    .filter(o=>o.n>0);
+  sel.innerHTML=opts.map(o=>
+    `<option value="${o.i}">${esc(o.name)} · ${o.n} entries${
+      o.d?" · "+o.d+" deps":" · no dependencies"}</option>`).join("");
+  // Open on the layer with the most to show, not the first that exists.
+  const best=opts.filter(o=>o.d>0).sort((a,b)=>b.d-a.d)[0] || opts[0];
+  if(best && !opts.some(o=>o.i===ORDER_LAYER && o.d>0)) ORDER_LAYER=best.i;
+  if(opts.length) sel.value=String(ORDER_LAYER);
+}
+
 function redraw(){
-  drawStrip(); drawPending(); drawLegend(); drawSpine(); drawWaves(); drawQueues();
+  drawStrip(); drawPending(); drawLegend(); drawLayerPicker();
+  drawScene(); drawWaves(); drawQueues();
   clearAll();
 }
 
