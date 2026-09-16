@@ -182,6 +182,36 @@ def test_page_has_an_empty_branch_for_each_region_it_draws():
     assert "locality==null" in text.replace(" ", "")
 
 
+def test_page_carries_the_ratification_decision():
+    """A pending partition is a decision waiting on a human, so it lives in
+    Queues beside the other two -- no page and no rail item of its own."""
+    text = page()
+    for marker in ("Awaiting your ratification", "do-ratify", "do-reject",
+                   "slicing/proposal", "Preview in the spine"):
+        assert marker in text, f"the decision surface lost {marker!r}"
+
+
+def test_the_page_never_claims_to_have_written_anything():
+    """The write path does not exist yet: the node's dashboard proxy
+    forwards GET only, and the audited alternative dispatches tools by name
+    -- and ratify is deliberately not a tool. A button that looks like it
+    ratified and did not is worse than one that explains."""
+    text = page()
+    assert "Not wired up yet" in text
+    # Still no absolute path, and still nothing but GET on the wire.
+    assert not re.search(r"fetch\(\s*[\"'`]\s*/", text)
+    assert 'method:"POST"' not in text.replace(" ", "")
+
+
+def test_preview_does_not_overwrite_real_slice_membership():
+    """Previewing a decision must never look like having taken it, so the
+    proposed membership is held beside the real one rather than replacing
+    it, and the strip carries a flag while it is on."""
+    text = page()
+    assert "trueSlice" in text and "propSlice" in text
+    assert "previewflag" in text
+
+
 def test_page_escapes_stored_text():
     """Entry bodies, titles and issue claims were written by whoever
     could reach this unit. They are shown as text, never parsed as

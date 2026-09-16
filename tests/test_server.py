@@ -1724,6 +1724,73 @@ def test_a_proposal_that_would_be_illegal_says_so_without_refusing(store, prompt
     assert any("probably not a slice" in w for w in payload["warnings"])
 
 
+def test_a_pending_proposal_comes_back_already_scored(store, prompts):
+    """The score is attached to the GET rather than left for a second call.
+
+    The only caller needing both is deciding whether to ratify, and one of
+    them is a human at a dashboard -- which can issue a GET and nothing
+    else. Two round trips for one decision, the second of which is a POST
+    the reader cannot make, is a shape worth not having.
+    """
+    _two_columns(store, prompts)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slicing/proposal",
+        {"proposal": {"a": ["S·01"], "b": ["S·02"]}, "note": "split by subject"},
+    )
+    status, payload = call(store, prompts, "GET", "/projects/m/slicing/proposal")
+    assert (status, payload["status"]) == (200, "pending")
+    score = payload["score"]
+    # Everything a human needs to rule on the cut, not just its slice names.
+    assert score["legal"] is True
+    assert {s["slice"] for s in score["slices"]} == {"a", "b"}
+    assert "waves" in score and "unassigned" in score
+    # Still creates nothing.
+    assert "a" not in store.load_manifest("m").slices
+
+
+def test_nothing_pending_carries_no_score(store, prompts):
+    """There is nothing to score, and an empty score object would read as a
+    cut that scored empty rather than as no cut at all."""
+    _two_columns(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/slicing/proposal")
+    assert payload["status"] == "none"
+    assert "score" not in payload
+
+
+def test_an_illegal_pending_proposal_is_still_described(store, prompts):
+    """A cut the gates would refuse must still be readable, and must say so.
+
+    Hiding a pending decision because it scores badly hides the decision,
+    not the problem -- and rejecting it is exactly what the human is there
+    to do.
+    """
+    mid = _two_columns(store, prompts)
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
+             depends_on=["S·01"])
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slicing/proposal",
+        {"proposal": {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]}},
+    )
+    _, payload = call(store, prompts, "GET", "/projects/m/slicing/proposal")
+    assert payload["status"] == "pending"
+    assert payload["score"] is not None
+
+
+def test_ratifying_is_still_not_reachable_as_a_tool(store, prompts):
+    """The dashboard now has a Ratify button, which is a good moment to
+    re-assert the thing it must not become. A slicing session that could
+    ratify its own proposal would be the one thing its contract forbids."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    paths = {t["path"] for t in payload["tools"]}
+    assert not any(p.endswith("/ratify") or p.endswith("/reject") for p in paths)
+
+
 def test_every_declared_tool_path_actually_routes(store, prompts):
     """The manifest is hand-written, so it can drift from the routing table.
     A tool declaring a path nothing serves is a 404 that a model walks into

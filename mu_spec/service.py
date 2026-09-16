@@ -1272,8 +1272,21 @@ def propose(store: ProjectStore, project: str, body: dict) -> dict:
 
 
 def get_proposal(store: ProjectStore, project: str) -> dict:
+    """The pending proposal, with its score already attached.
+
+    The score is the same thing `score_slicing` computes and is included
+    here rather than left for a second call, because the only caller that
+    needs both is deciding whether to ratify -- and one of them is a human
+    at a dashboard, which can issue a GET and nothing else. Two round trips
+    for one decision, where the second is a POST the reader cannot make, is
+    a shape worth not having.
+
+    A proposal that cannot be scored still returns; `score` is None and the
+    proposal is shown without it. Refusing to describe a pending decision
+    because a metric failed would hide the decision, not protect it.
+    """
     state = _read_proposal(store, project)
-    return {
+    out = {
         "project": project,
         "status": state.get("status", "none"),
         "proposal": state.get("proposal", {}),
@@ -1281,6 +1294,17 @@ def get_proposal(store: ProjectStore, project: str) -> dict:
         "note": state.get("note", ""),
         "last_rejection": state.get("last_rejection"),
     }
+    if out["status"] == "pending":
+        try:
+            out["score"] = score(
+                store.load_manifest(project),
+                store.load_graph(project),
+                out["proposal"],
+                out["types"],
+            )
+        except (ValueError, KeyError):
+            out["score"] = None
+    return out
 
 
 def _parse_proposal_members(

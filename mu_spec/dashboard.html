@@ -140,6 +140,61 @@ aside h3:first-child{margin-top:0}
   cursor:pointer;color:var(--ink)}
 .pill:hover{border-color:var(--brand);color:var(--brand)}
 .muted{color:var(--dim);font-size:12px}
+.warnish{color:var(--warn)}
+
+/* ── a decision waiting on a human ──────────────────────────────── */
+#pending{flex:none;display:flex;align-items:center;gap:12px;padding:8px 16px;
+  background:var(--brand-soft);border-bottom:1px solid var(--rule);font-size:13px}
+#pending[hidden]{display:none}
+#pending b{color:var(--brand)}
+#pending button{margin-left:auto;background:var(--brand);color:var(--brand-ink);border:0;
+  border-radius:var(--radius);padding:4px 12px;font:inherit;font-weight:600;cursor:pointer}
+#previewflag{background:var(--warn-bg);color:var(--warn);padding:2px 9px;border-radius:99px;
+  font-size:12px;font-weight:600}
+#previewflag[hidden]{display:none}
+/* The rail dot: Queues holds three things now, and only one of them can
+   need you. Without a mark, a pending decision is invisible from the view
+   you are actually on. */
+nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--brand);margin-left:6px;vertical-align:middle}
+
+/* Queues is three sections now. The two queues are tables; the decision is
+   not a table, and must not read as one. */
+.qsec{margin-bottom:30px}
+.qsec > h3{display:flex;align-items:baseline;gap:8px}
+.qsec > h3 .n{color:var(--ink);font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums;text-transform:none;letter-spacing:0}
+.decide{border:1px solid var(--brand);border-radius:var(--radius);background:var(--panel);
+  padding:14px 16px;box-shadow:var(--shadow)}
+.decide > h3{color:var(--brand);margin:0 0 4px}
+.decide .lede{color:var(--ink-soft);font-size:13px;margin:0 0 14px;max-width:78ch}
+.cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.card{border:1px solid var(--rule);border-top:3px solid var(--sl);border-radius:var(--radius);
+  padding:8px 11px;min-width:150px;background:var(--panel-alt)}
+.card b{display:block;font-size:13px}
+.card em{font-style:normal;display:block;color:var(--dim);font-size:11px;margin-top:2px}
+.verdict{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:12px;
+  padding:8px 11px;background:var(--panel-alt);border-radius:var(--radius);font-size:12.5px}
+.verdict b{font-variant-numeric:tabular-nums}
+.note{white-space:pre-wrap;background:var(--panel-alt);border-radius:var(--radius);
+  padding:10px 12px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;
+  max-height:30vh;overflow:auto}
+.acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid var(--rule);background:var(--panel);color:var(--ink);font:inherit;
+  border-radius:var(--radius);padding:6px 14px;cursor:pointer}
+.btn.go{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);font-weight:600}
+.btn.no{border-color:var(--down);color:var(--down)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.acts .spacer{margin-left:auto;color:var(--dim);font-size:12px}
+#rejectbox{margin-top:12px}
+#rejectbox[hidden]{display:none}
+#rejectbox textarea{width:100%;min-height:76px;background:var(--panel-alt);color:var(--ink);
+  border:1px solid var(--rule);border-radius:var(--radius);padding:8px 10px;font:inherit;
+  font-size:12.5px;resize:vertical}
+#rejectbox p{color:var(--dim);font-size:11.5px;margin:6px 0 10px}
+#outcome{margin-top:12px;padding:10px 12px;border-radius:var(--radius);font-size:12.5px;
+  background:var(--warn-bg);color:var(--warn);white-space:pre-wrap}
+#outcome[hidden]{display:none}
 </style>
 
 <div class="bar">
@@ -152,14 +207,19 @@ aside h3:first-child{margin-top:0}
   <div class="kpi"><b id="k-xing">–</b><span>crossings</span></div>
   <div class="kpi"><b id="k-issues">–</b><span>open issues</span></div>
   <div class="kpi"><b id="k-loc">–</b><span>change locality</span></div>
+  <span id="previewflag" hidden>previewing proposal</span>
 </div>
 <div id="offline" hidden></div>
+<div id="pending" hidden>
+  <span>A slicing proposal is waiting on you — <b id="pending-what"></b></span>
+  <button id="pending-go">Review it</button>
+</div>
 
 <main>
   <nav>
     <button class="view" data-v="spine" aria-current="true">Spine</button>
     <button class="view" data-v="waves">Waves</button>
-    <button class="view" data-v="queues">Queues</button>
+    <button class="view" data-v="queues">Queues<span class="dot" id="qdot" hidden></span></button>
     <h2>Slices</h2>
     <div id="legend"></div>
     <h2>Edges</h2>
@@ -234,7 +294,9 @@ const STATE = {
   project:null, projects:[], entries:[], byId:{},
   slices:{},          // name -> {type, hue, wave, deps, size, cohesion}
   waves:[], gates:null, issues:[], requests:[], modules:[],
-  locality:null, bodies:{}, live:false
+  locality:null, bodies:{}, live:false,
+  proposal:null,        // the pending slicing decision, if any
+  preview:false         // spine recoloured by the proposal rather than the manifest
 };
 
 async function loadProjects(){
@@ -244,14 +306,16 @@ async function loadProjects(){
 
 async function loadProject(project){
   const base = "projects/" + enc(project);
-  const [spine, gates, waves, insights, issues, inbox, modules] = await Promise.all([
+  const [spine, gates, waves, insights, issues, inbox, modules, proposal] =
+    await Promise.all([
     get(base + "/spine"),                               // the only hard requirement
     soft(base + "/gates", null),
     soft(base + "/waves", {waves:[], wave_of:{}}),
     soft(base + "/insights", {slices:[], change_locality:{}}),
     soft(base + "/issues", {issues:[]}),
     soft("inbox?project=" + enc(project), {messages:[]}),
-    soft(base + "/modules", {modules:[]})
+    soft(base + "/modules", {modules:[]}),
+    soft(base + "/slicing/proposal", {status:"none"})
   ]);
 
   const entries = (spine.spine || []).map(e => ({
@@ -300,8 +364,19 @@ async function loadProject(project){
     requests: (inbox.messages || []).slice().sort((a,b)=>(b.at||0)-(a.at||0)),
     modules: modules.modules || [],
     locality: (insights.change_locality || {}).mean,
-    bodies: {}
+    bodies: {},
+    proposal: proposal && proposal.status === "pending" ? proposal : null,
+    preview: false
   });
+  /* Which slice each entry WOULD belong to if the proposal were ratified.
+     Held beside the real membership rather than replacing it -- previewing a
+     decision must never look like having taken it. */
+  if(STATE.proposal){
+    const map = {};
+    for(const [name, ids] of Object.entries(STATE.proposal.proposal || {}))
+      for(const id of ids) map[id] = name;
+    for(const e of entries){ e.trueSlice = e.slice; e.propSlice = map[e.id] || "unsliced"; }
+  }
 }
 
 const hueOf = s => s==="unsliced" ? UNSLICED : (STATE.slices[s]||{}).hue || UNSLICED;
@@ -732,18 +807,146 @@ function drawWaves(){
 const when=t=>{ if(!t) return ""; const d=new Date(t*1000);
   return isNaN(d) ? "" : d.toISOString().slice(0,16).replace("T"," "); };
 
+/* The proposal lives in Queues because Queues already means "things waiting
+   on a human" -- pending requests, escalated issues. A pending partition is
+   the same kind of thing, so it needs no page and no rail item of its own.
+   The banner is the notification; this is the decision.
+
+   It is deliberately not a third table. Two buttons over a list of slice
+   names would be a rubber stamp, and rubber-stamping is the one outcome
+   this gate exists to prevent -- so it shows what the unit already computed:
+   whether the cut is legal, what execution order it produces, and what it
+   fails to place. */
+function proposalHTML(){
+  const p=STATE.proposal;
+  if(!p) return "";
+  const s=p.score||{}, slices=s.slices||[];
+  const names=Object.keys(p.proposal||{});
+  const cards=(slices.length?slices:names.map(n=>({slice:n,size:(p.proposal[n]||[]).length})))
+    .map(x=>{
+      const xc=(p.types||{})[x.slice]==="cross_cutting"||x.type==="cross_cutting";
+      return `<div class="card" style="--sl:${hueOf(x.slice)}">
+        <b>${esc(x.slice)}</b>
+        <em>${xc?"cross-cutting &#10003;":"feature"} &middot; ${x.size} entries</em>
+        <em>${x.cohesion==null?"cohesion n/a":"cohesion "+Number(x.cohesion).toFixed(2)}</em>
+        <em>${(x.depends_on||[]).length?"after "+x.depends_on.map(esc).join(", ")
+                                      :"depends on nothing"}</em></div>`;}).join("");
+  const wv=(s.waves||[]).map(w=>"w"+w.wave+": "+(w.slices||[]).map(esc).join(", "))
+    .join("  &middot;  ");
+  const un=(s.unassigned||[]).length;
+  const scored=p.score!=null;
+  return `<div class="qsec"><div class="decide">
+    <h3>Awaiting your ratification</h3>
+    <p class="lede">A slicing session proposed this partition. It is recorded and nothing
+      exists yet &mdash; slices are created only when you ratify, and <b>slices split,
+      never merge</b>, so this is close to one-way.</p>
+    <div class="cards">${cards}</div>
+    ${scored?`<div class="verdict">
+      <span>${s.legal===false
+        ? '<span class="flag down">illegal</span> the gates would refuse this cut'
+        : '<span class="flag ok">legal</span> passes every gate'}</span>
+      ${wv?`<span>projected waves &nbsp;<b>${wv}</b></span>`:""}
+      <span class="${un?"warnish":""}">unassigned &nbsp;<b>${un}</b>${un
+        ?" entries this cut does not place \u2014 any of them currently owned by a slice "
+         +"named above would hold no slice after ratifying":""}</span>
+    </div>`:`<div class="verdict"><span class="warnish">not scored &mdash; deciding
+      without it means deciding on the slice names alone</span></div>`}
+    ${p.note?`<div class="note">${esc(p.note)}</div>`:""}
+    <div class="acts">
+      <button class="btn go" id="do-ratify">Ratify &mdash; create these slices</button>
+      <button class="btn no" id="do-reject">Reject&hellip;</button>
+      <button class="btn" id="do-preview">${
+        STATE.preview?"Stop previewing":"Preview in the spine"}</button>
+      <span class="spacer">Nothing happens until you press one.</span>
+    </div>
+    <div id="rejectbox" hidden>
+      <textarea id="reject-note" placeholder="Why is this cut wrong?"></textarea>
+      <p>Required. It is kept and shown to the next slicing session as
+         <code>last_rejection</code>, so it does not propose the same cut again.</p>
+      <button class="btn no" id="do-reject-confirm" disabled>Confirm rejection</button>
+      <button class="btn" id="do-reject-cancel">Cancel</button>
+    </div>
+    <div id="outcome" hidden></div>
+  </div></div>`;
+}
+
+function wireProposal(){
+  if(!STATE.proposal) return;
+  const g=id=>document.getElementById(id);
+  g("do-preview").onclick=togglePreview;
+  g("do-reject").onclick=()=>{ g("rejectbox").hidden=false; g("reject-note").focus(); };
+  g("do-reject-cancel").onclick=()=>{ g("rejectbox").hidden=true; };
+  g("reject-note").oninput=e=>{ g("do-reject-confirm").disabled=!e.target.value.trim(); };
+  g("do-ratify").onclick=()=>decide("ratify");
+  g("do-reject-confirm").onclick=()=>decide("reject",g("reject-note").value.trim());
+}
+
+/* Both endpoints exist -- POST .../slicing/proposal/ratify and .../reject --
+   and are deliberately absent from /tools, because a slicing session that
+   could ratify its own proposal would be the one thing its contract forbids.
+   What is missing is a way for a HUMAN to reach them from here: the node's
+   dashboard proxy forwards GET only, and the audited write path it points at
+   dispatches tools by name. That is a gateway decision, not a mu-spec one.
+
+   This says so rather than failing silently or pretending to work. A button
+   that looks like it ratified and did not is worse than one that explains. */
+function decide(what, note){
+  const out=document.getElementById("outcome");
+  out.hidden=false;
+  const base="projects/"+STATE.project+"/slicing/proposal/";
+  out.textContent = what==="ratify"
+    ? "Not wired up yet \u2014 nothing was ratified and nothing changed.\n\n"+
+      "POST "+base+"ratify exists and works today. What is missing is a human write "+
+      "path from a framed page: the dashboard proxy forwards GET only, and POST /route "+
+      "dispatches tools by name \u2014 and ratify is deliberately not a tool, because an "+
+      "agent must never be able to ratify its own proposal.\n\n"+
+      "Until that exists, ratify by calling the endpoint on this unit directly."
+    : "Not wired up yet \u2014 nothing was rejected and nothing changed.\n\n"+
+      "Your note would go to POST "+base+"reject and be kept as last_rejection:\n\n  "+note;
+}
+
+function togglePreview(){
+  STATE.preview=!STATE.preview;
+  for(const e of STATE.entries){
+    if(e.propSlice===undefined) continue;
+    e.slice = STATE.preview ? e.propSlice : e.trueSlice;
+  }
+  document.getElementById("previewflag").hidden=!STATE.preview;
+  focusSlice=null; sel=null;
+  drawLegend(); drawSpine(); resetInspector(); drawQueues();
+  show("spine");
+}
+
+function drawPending(){
+  const el=$("pending"), dot=$("qdot");
+  if(!STATE.proposal){ el.hidden=true; dot.hidden=true; return; }
+  const n=Object.keys(STATE.proposal.proposal||{}).length;
+  $("pending-what").textContent=n+" slice"+(n===1?"":"s")+" proposed for "+STATE.project;
+  el.hidden=false; dot.hidden=false;
+  $("pending-go").onclick=()=>{
+    show("queues");
+    const d=document.querySelector(".decide");
+    if(d) d.scrollIntoView({block:"start"});
+  };
+}
+
 function drawQueues(){
   const reqs=STATE.requests, iss=STATE.issues;
-  $("queues").innerHTML=
-  `<h3>Requests — the single external door</h3>`+
+  const open=reqs.filter(r=>r.status==="pending").length;
+  const live=iss.filter(i=>i.status!=="resolved").length;
+  $("queues").innerHTML= proposalHTML()+
+  `<div class="qsec"><h3>Requests <span class="n">${open} pending</span>
+     <span class="muted" style="font-weight:400">the single external door</span></h3>`+
   (reqs.length?`<table><tr><th>id</th><th>type</th><th>title</th><th>status</th><th>at</th></tr>`+
    reqs.map(r=>`<tr><td><code>${esc(r.id)}</code></td><td>${esc(r.type)}</td>
      <td>${esc(r.title)}</td>
      <td><span class="flag ${r.status==="pending"?"warn":r.status==="rejected"?"down":"ok"}">${
        esc(r.status)}</span></td>
      <td class="muted">${when(r.at)}</td></tr>`).join("")+`</table>`
-   :`<p class="muted">Nothing in the queue.</p>`)+
-  `<h3>Issues — one part of the pipeline asking another</h3>`+
+   :`<p class="muted">Nothing in the queue.</p>`)+`</div>`+
+  `<div class="qsec"><h3>Issues <span class="n">${live} open</span>
+     <span class="muted" style="font-weight:400">one part of the pipeline asking
+     another</span></h3>`+
   (iss.length?`<table>
    <tr><th>id</th><th>target</th><th>slice</th><th>kind</th><th>claim</th><th>round</th><th></th></tr>`+
    iss.map(i=>`<tr><td><code>${esc(i.id)}</code></td>
@@ -755,7 +958,9 @@ function drawQueues(){
    :`<p class="muted">No issues raised.</p>`)+
   `<p class="muted" style="max-width:64ch">A <b>semantic</b> issue invalidates the entries that
    consumed the old meaning — that set is the re-run scope, computed at entry level. An
-   <b>additive</b> one re-runs nothing. Round 2 with nothing resolved escalates to a human.</p>`;
+   <b>additive</b> one re-runs nothing. Round 2 with nothing resolved escalates to a
+   human.</p></div>`;
+  wireProposal();
 }
 
 /* One delegated handler for every id link on the page: an identifier
@@ -859,7 +1064,7 @@ function drawStrip(){
 }
 
 function redraw(){
-  drawStrip(); drawLegend(); drawSpine(); drawWaves(); drawQueues();
+  drawStrip(); drawPending(); drawLegend(); drawSpine(); drawWaves(); drawQueues();
   clearAll();
 }
 
