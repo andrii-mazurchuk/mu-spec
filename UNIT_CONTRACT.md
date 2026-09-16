@@ -35,14 +35,14 @@ with same-layer dependency edges between them. Almost nothing else in this
 unit does.
 
 **That decision is made and does not need remaking.** What it obliges a
-future session here is narrower, and easier to lose: the standard's seven
+future session here is narrower, and easier to lose: the standard's
 page-tier requirements apply to **every change to `dashboard.html`**, not
 just to the first one.
 
-Below is not that list — the canonical seven live in the gateway's
+Below is not that list — the canonical requirements live in the gateway's
 `UNIT_STANDARDS.md` and restating them here would be a second copy that
-drifts. This is what is easiest to lose in *this* page, which is a mix of
-those requirements and two traps that are not in them at all.
+drifts. This is what is easiest to lose in *this* page: mostly those
+requirements, plus one trap that is not one of them.
 
 - Zero absolute fetches. Every path relative, none starting with `/` — an
   absolute one reaches the *node*, which answers with plausible JSON of the
@@ -54,9 +54,12 @@ those requirements and two traps that are not in them at all.
   never written at construction. Written once at build time, the control
   describes the mount-time selection permanently and a screen reader
   announces the wrong thing with nothing to contradict it.
-- Stored text escaped or set through `textContent`, never interpolated as
-  markup. Entry bodies and issue claims were written by whoever could reach
-  this unit.
+- Stored text never becomes markup — requirement 8, and read it there
+  rather than here. The short version is that a framed page runs on the
+  node's origin, which also serves an unauthenticated `POST /route`, so
+  interpolating a stored string completes a path from *get a string into
+  this unit* to *drive the node*. Entry bodies arrive through `/inbox`, a
+  door open by design.
 - The page proven readable **as installed**, through `importlib.resources`
   and never a checkout path — a checkout-relative check passes exactly when
   the real failure happens.
@@ -67,9 +70,15 @@ those requirements and two traps that are not in them at all.
   switcher belong to the node and never unmount; the rail here is in-page
   scope, not navigation.
 
-The two that are not in the standard's seven — `aria-pressed` and escaping —
-are here because they are the two this page got right that a rewrite would
-most plausibly get wrong. pu shipped the `aria-pressed` bug.
+The one that is **not** a standard requirement is `aria-pressed` derived
+from current state. It stays local and stays labelled a trap rather than an
+obligation: a standard that collects every past bug stops being read, and
+an unread standard fails at the requirements that matter rather than the
+ones that do not. It is here because it is what a rewrite of this page
+would most plausibly get wrong — pu shipped exactly this bug.
+
+Escaping used to sit beside it. It is upstream now, as requirement 8, and
+this file points rather than restates.
 
 `tests/test_dashboard.py` asserts these, one test per item.
 
