@@ -519,6 +519,60 @@ def _skills() -> dict[str, Any]:
     }
 
 
+def _actions() -> list[dict[str, Any]]:
+    """The second manifest: what a PERSON may press and an agent is never
+    offered. Discovery never reads this -- nothing here becomes an MCP
+    tool, and that is the one property to protect if this is refactored.
+
+    Exactly two, and both are the same decision: a partition is not a
+    partition until a human rules on it. Ratifying is close to one-way,
+    because slices split and never merge.
+
+    Declared paths are templates, spelled exactly as the routing table
+    spells them -- the node matches `{name}` against one segment and never
+    across a slash.
+
+    This list is the whole surface a framed dashboard can write through,
+    and it is bounded by nothing except this list. Do not add a path here
+    to make something convenient. In particular `submit_amendment` is the
+    pipeline's own write path and belongs to an agent citing a request,
+    never to a button.
+
+    What this buys, exactly: it is as strong as leaving a capability out
+    of `/tools` already was -- not offered to the model -- and not one
+    step stronger. A caller with a shell reaches this unit on loopback
+    regardless. What it decides is which path is the supported one, and
+    the supported one is audited.
+    """
+    return [
+        {
+            "name": "ratify",
+            "description": (
+                "Ratify the pending slicing proposal, turning it into this "
+                "project's slices. Refused if no proposal is pending, or if "
+                "the cut would break the slice structure."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/slicing/proposal/ratify",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "reject",
+            "description": (
+                "Reject the pending slicing proposal. The note is kept and "
+                "shown to the next slicing session as `last_rejection`, so "
+                "it does not propose the same cut again."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/slicing/proposal/reject",
+            "input_schema": {
+                "type": "object",
+                "properties": {"note": {"type": "string"}},
+            },
+        },
+    ]
+
+
 def read_prompt(prompts_dir: Path, tier: str) -> str | None:
     """A missing prompt file is a normal outcome, not an error. The tier is
     checked against a closed set *before* a path is built, so an arbitrary
@@ -535,6 +589,9 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/health$"), "health"),
     ("GET", re.compile(r"^/stats$"), "stats"),
     ("GET", re.compile(r"^/tools$"), "tools"),
+    # The second manifest: what a person may press. Never discovered,
+    # never an MCP tool -- see _actions().
+    ("GET", re.compile(r"^/actions$"), "actions"),
     # What a caller should already have. A declaration, not a
     # delivery mechanism -- this system has no standard for sharing
     # skills yet, and inventing one here would prejudge it.
@@ -679,6 +736,9 @@ def handle(
 
         if name == "tools":
             return 200, JSON, json.dumps({"unit": UNIT_NAME, "tools": _tools()})
+
+        if name == "actions":
+            return 200, JSON, json.dumps({"unit": UNIT_NAME, "actions": _actions()})
 
         if name == "prompts":
             text = read_prompt(prompts_dir, params["tier"])

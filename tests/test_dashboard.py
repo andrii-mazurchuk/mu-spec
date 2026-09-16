@@ -191,32 +191,40 @@ def test_page_carries_the_ratification_decision():
         assert marker in text, f"the decision surface lost {marker!r}"
 
 
-def test_the_deciding_controls_are_disabled_not_merely_explained():
-    """The write path does not exist: the node's dashboard proxy forwards
-    GET only, and the audited alternative dispatches tools by name -- and
-    ratify is deliberately not a tool.
+def test_the_deciding_controls_write_through_declared_actions():
+    """The one write this page makes, and it is an ordinary relative POST.
 
-    An enabled button that explains itself after being pressed is a drawing
-    the reader discovers in retrospect, once they have formed an intention
-    and spent it. On a gate whose whole purpose is a deliberate human
-    decision, a moment of believing you ratified something is the thing
-    that cannot be afforded. So the controls carry `disabled` in the markup
-    and have no handler at all, and the reason leads the panel.
+    Served at /dashboard it reaches this unit directly; framed under the
+    node it lands inside the proxied prefix, where the proxy forwards it
+    because the path is one of the two declared at /actions. No
+    postMessage, no node internals, still works standalone.
     """
     text = page()
-    for control in ("do-ratify", "do-reject"):
-        m = re.search(r'id="' + control + r'"[^>]*', text)
-        assert m, f"{control} is gone"
-        assert "disabled" in m.group(0), f"{control} is drawn as if it worked"
-        assert f'"{control}").onclick' not in text, f"{control} has a handler"
-    # The explanation is in the panel, above the controls, not behind them.
-    assert 'class="inert"' in text
-    assert text.index('class="inert"') < text.index('id="do-ratify"')
-    # Preview is the one control that works, because it only reads.
-    assert '"do-preview").onclick' in text
-    # Still no absolute path, and still nothing but GET on the wire.
+    assert 'method:"POST"' in text.replace(" ", ""), "the page makes no write at all"
+    # Relative, like every read. An absolute path would reach the NODE.
     assert not re.search(r"fetch\(\s*[\"'`]\s*/", text)
-    assert 'method:"POST"' not in text.replace(" ", "")
+    assert '"projects/"+enc(STATE.project)+"/slicing/proposal/"' in text.replace(" ", "")
+    for control in ("do-ratify", "do-reject-confirm"):
+        assert f'"{control}").onclick' in text, f"{control} does nothing"
+
+
+def test_a_rejection_cannot_be_submitted_without_a_reason():
+    """The note is not decoration: it is kept as `last_rejection` and shown
+    to the next slicing session. Without it that session proposes the same
+    cut again and the round is wasted."""
+    text = page()
+    assert 'id="do-reject-confirm" disabled' in text, "confirm starts enabled"
+    assert '"reject-note").oninput' in text, "nothing ever enables it"
+
+
+def test_the_notice_does_not_claim_the_write_is_enforced():
+    """Absent from /tools means *not offered to the model*, and not one
+    step more. A caller with a shell reaches this unit directly whatever
+    the dashboard does. Saying otherwise on the page would be the page
+    claiming a guarantee the system does not make."""
+    text = page()
+    assert "not one step more" in text or "not one step further" in text
+    assert "do not read this as enforced" in text.lower()
 
 
 def test_preview_does_not_overwrite_real_slice_membership():

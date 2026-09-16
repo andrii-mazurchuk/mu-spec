@@ -211,13 +211,33 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 .btn.no{border-color:var(--down);color:var(--down)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .acts .spacer{margin-left:auto;color:var(--dim);font-size:12px}
-/* Leads the panel. A reader must know the controls are inert before
-   forming the intention to press one, not after. */
-.inert{background:var(--warn-bg);color:var(--warn);border-radius:var(--radius);
+/* What pressing actually means. Stated before the controls, not after --
+   a reader must know what a button is worth before forming the intention
+   to press it. */
+.inert{background:var(--panel-alt);color:var(--ink-soft);border-radius:var(--radius);
   padding:10px 12px;font-size:12.5px;margin:0 0 14px;max-width:80ch}
-.inert b{display:block;margin-bottom:4px}
-.inert code{display:block;background:var(--panel);color:var(--ink);border-radius:5px;
-  padding:4px 8px;margin-top:6px;font-size:11.5px;user-select:all}
+.inert b{display:block;margin-bottom:4px;color:var(--ink)}
+/* Outlives the reload a decision triggers. Held in STATE, not in the DOM:
+   ratifying rebuilds this whole pane, so a confirmation written into the
+   old markup is destroyed by the very success it is reporting. */
+.flash{border-radius:var(--radius);padding:10px 12px;font-size:12.5px;margin-bottom:22px;
+  display:flex;gap:12px;align-items:baseline}
+.flash.ok{background:var(--ok-bg);color:var(--ok)}
+.flash.bad{background:var(--down-bg);color:var(--down)}
+.flash button{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer;
+  font:inherit;opacity:.7}
+#rejectbox{margin-top:12px}
+#rejectbox[hidden]{display:none}
+#rejectbox textarea{width:100%;min-height:76px;background:var(--panel-alt);color:var(--ink);
+  border:1px solid var(--rule);border-radius:var(--radius);padding:8px 10px;font:inherit;
+  font-size:12.5px;resize:vertical}
+#rejectbox p{color:var(--dim);font-size:11.5px;margin:6px 0 10px}
+#outcome{margin-top:12px;padding:10px 12px;border-radius:var(--radius);font-size:12.5px;
+  white-space:pre-wrap}
+#outcome[hidden]{display:none}
+#outcome.ok{background:var(--ok-bg);color:var(--ok)}
+#outcome.bad{background:var(--down-bg);color:var(--down)}
+#outcome.busy{background:var(--panel-alt);color:var(--ink-soft)}
 </style>
 
 <div class="bar">
@@ -330,6 +350,7 @@ const STATE = {
   waves:[], gates:null, issues:[], requests:[], modules:[],
   locality:null, bodies:{}, live:false,
   proposal:null,        // the pending slicing decision, if any
+  flash:null,           // the outcome of the last decision, see decide()
   preview:false         // spine recoloured by the proposal rather than the manifest
 };
 
@@ -1121,16 +1142,16 @@ function proposalHTML(){
   return `<div class="qsec"><div class="decide">
     <h3>Awaiting your ratification</h3>
     <div class="inert">
-      <b>These two controls do not work yet, and are disabled rather than drawn.</b>
-      A dashboard page cannot write: the node forwards GET only, and the audited
-      alternative dispatches tools by name &mdash; and ratify is deliberately not a
-      tool, because a slicing session able to ratify its own proposal would be the one
-      thing its contract forbids. The missing piece is authentication in front of this
-      page, without which nothing can tell a human's decision from a session's.
-      Until then, rule on it by calling this unit directly:
-      <code>POST projects/${esc(STATE.project)}/slicing/proposal/ratify</code>
-      <code>POST projects/${esc(STATE.project)}/slicing/proposal/reject
-        &nbsp;{"note": "why this cut is wrong"}</code>
+      <b>These two buttons write. Pressing one is the decision.</b>
+      They reach this unit through the two paths it declares at <code>/actions</code>
+      &mdash; a manifest no agent is ever offered, which is why ratifying is reachable
+      by a person here and by no tool anywhere. Every press is audited.
+      <br><br>
+      Being absent from <code>/tools</code> means <b>not offered to the model</b>, and
+      not one step more. A caller with a shell reaches this unit directly whatever the
+      dashboard does; what this decides is which path is the supported one. Telling a
+      person's decision from a session's needs units to authenticate their callers,
+      which does not exist yet &mdash; so do not read this as enforced.
     </div>
     <p class="lede">A slicing session proposed this partition. It is recorded and nothing
       exists yet &mdash; slices are created only when you ratify, and <b>slices split,
@@ -1149,26 +1170,90 @@ function proposalHTML(){
       without it means deciding on the slice names alone</span></div>`}
     ${p.note?`<div class="note">${esc(p.note)}</div>`:""}
     <div class="acts">
-      <button class="btn go" id="do-ratify" disabled
-        title="No write path from this page yet">Ratify &mdash; create these slices</button>
-      <button class="btn no" id="do-reject" disabled
-        title="No write path from this page yet">Reject&hellip;</button>
+      <button class="btn go" id="do-ratify">Ratify &mdash; create these slices</button>
+      <button class="btn no" id="do-reject">Reject&hellip;</button>
       <button class="btn" id="do-preview">${
         STATE.preview?"Stop previewing":"Preview in the spine"}</button>
-      <span class="spacer">Preview works &mdash; it only reads.</span>
+      <span class="spacer">Slices split and never merge &mdash; this is close to one-way.</span>
     </div>
+    <div id="rejectbox" hidden>
+      <textarea id="reject-note" placeholder="Why is this cut wrong?"></textarea>
+      <p>Required. It is kept and shown to the next slicing session as
+         <code>last_rejection</code>, so it does not propose the same cut again.</p>
+      <button class="btn no" id="do-reject-confirm" disabled>Confirm rejection</button>
+      <button class="btn" id="do-reject-cancel">Cancel</button>
+    </div>
+    <div id="outcome" hidden></div>
   </div></div>`;
 }
 
-/* Only the preview is wired, because only the preview reads. The two
-   deciding controls are disabled in the markup and there is deliberately
-   no handler for them -- an explanation reachable by pressing is one the
-   reader gets after forming an intention and spending it, which on a gate
-   whose whole point is a deliberate decision is exactly the wrong order.
-   The reason leads the panel instead. */
 function wireProposal(){
   if(!STATE.proposal) return;
-  document.getElementById("do-preview").onclick=togglePreview;
+  const g=id=>document.getElementById(id);
+  g("do-preview").onclick=togglePreview;
+  g("do-reject").onclick=()=>{ g("rejectbox").hidden=false; g("reject-note").focus(); };
+  g("do-reject-cancel").onclick=()=>{ g("rejectbox").hidden=true; };
+  // A rejection without a reason is one the next slicing session cannot use,
+  // so it proposes the same cut again and the round is wasted.
+  g("reject-note").oninput=e=>{ g("do-reject-confirm").disabled=!e.target.value.trim(); };
+  g("do-ratify").onclick=()=>decide("ratify");
+  g("do-reject-confirm").onclick=()=>decide("reject",{note:g("reject-note").value.trim()});
+}
+
+/* The only write this page makes.
+
+   An ordinary relative POST, exactly like the reads: served at /dashboard
+   it reaches this unit directly, and framed under the node it lands inside
+   the proxied prefix, where the proxy forwards it because the path is one
+   of the two declared at /actions. No postMessage, no node internals, and
+   it still works opened standalone during development.
+
+   Both controls are disabled for the whole round trip. Ratifying twice is
+   harmless -- the second call finds no pending proposal and is refused --
+   but a button that stays pressable while its own request is in flight
+   invites a reader to conclude the first press did nothing. */
+async function decide(what, body){
+  const out=$("outcome"), ratify=$("do-ratify"), reject=$("do-reject");
+  const confirm=$("do-reject-confirm");
+  for(const b of [ratify,reject,confirm]) if(b) b.disabled=true;
+  out.hidden=false; out.className="busy";
+  out.textContent = what==="ratify" ? "Ratifying…" : "Rejecting…";
+  try{
+    const r=await fetch("projects/"+enc(STATE.project)+"/slicing/proposal/"+what,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(body||{})
+    });
+    const text=await r.text();
+    let payload=null;
+    try{ payload=JSON.parse(text); }catch(_){}
+    if(!r.ok){
+      out.className="bad";
+      out.textContent=(payload&&payload.error)||("Refused — "+r.status+"\n\n"+text.slice(0,400));
+      for(const b of [ratify,reject]) if(b) b.disabled=false;
+      if(confirm) confirm.disabled=false;
+      return;
+    }
+    // Recorded in STATE, not written into the DOM: the reload below rebuilds
+    // this pane, so a confirmation living in the old markup would be
+    // destroyed by the very success it is reporting.
+    const flash = what==="ratify"
+      ? "Ratified. "+Object.keys((payload&&payload.slices)||{}).length+
+        " slices now exist. The spine, waves and legend below have been reloaded."
+      : "Rejected. The reason is recorded, and the next slicing session sees it as "+
+        "last_rejection so it does not propose the same cut again.";
+    // Reload rather than patch: ratifying changes slice membership, which
+    // changes waves, lanes, colours and the legend. Re-reading is cheaper
+    // than keeping a second copy of the truth in sync.
+    await selectProject(STATE.project);
+    STATE.flash={kind:"ok",text:flash};
+    drawQueues(); show("queues");
+  }catch(err){
+    out.className="bad";
+    out.textContent="Could not reach this unit: "+err.message+
+      "\n\nNothing was decided. The proposal is still pending.";
+    for(const b of [ratify,reject]) if(b) b.disabled=false;
+  }
 }
 
 function togglePreview(){
@@ -1200,7 +1285,10 @@ function drawQueues(){
   const reqs=STATE.requests, iss=STATE.issues;
   const open=reqs.filter(r=>r.status==="pending").length;
   const live=iss.filter(i=>i.status!=="resolved").length;
-  $("queues").innerHTML= proposalHTML()+
+  const f=STATE.flash;
+  $("queues").innerHTML= (f?`<div class="flash ${f.kind}">${esc(f.text)}`+
+      `<button id="flash-x" title="dismiss">&times;</button></div>`:"")+
+    proposalHTML()+
   `<div class="qsec"><h3>Requests <span class="n">${open} pending</span>
      <span class="muted" style="font-weight:400">the single external door</span></h3>`+
   (reqs.length?`<table><tr><th>id</th><th>type</th><th>title</th><th>status</th><th>at</th></tr>`+
@@ -1226,6 +1314,7 @@ function drawQueues(){
    consumed the old meaning — that set is the re-run scope, computed at entry level. An
    <b>additive</b> one re-runs nothing. Round 2 with nothing resolved escalates to a
    human.</p></div>`;
+  const x=$("flash-x"); if(x) x.onclick=()=>{ STATE.flash=null; drawQueues(); };
   wireProposal();
 }
 

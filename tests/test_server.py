@@ -1791,6 +1791,58 @@ def test_ratifying_is_still_not_reachable_as_a_tool(store, prompts):
     assert not any(p.endswith("/ratify") or p.endswith("/reject") for p in paths)
 
 
+def test_actions_declares_exactly_the_two_human_decisions(store, prompts):
+    """This list is the whole surface a framed dashboard can write through,
+    and nothing else bounds it. Growing it is a decision, so it is pinned."""
+    status, payload = call(store, prompts, "GET", "/actions")
+    assert (status, payload["unit"]) == (200, UNIT_NAME)
+    assert {a["name"] for a in payload["actions"]} == {"ratify", "reject"}
+    assert all(a["method"] == "POST" for a in payload["actions"])
+
+
+def test_no_action_is_also_a_tool(store, prompts):
+    """`/actions` exists for capabilities that must NOT be agent-callable.
+    A path in both manifests would be offered to a model and presented to a
+    person as something no model can reach -- the two statements disagreeing
+    about the same capability.
+
+    This is mu-spec's own invariant, not a rule the standard imposes:
+    ratifying is the one caller a slicing session's contract forbids, so for
+    this unit specifically the overlap must never happen.
+    """
+    _, actions = call(store, prompts, "GET", "/actions")
+    _, tools = call(store, prompts, "GET", "/tools")
+    tool_paths = {t["path"].lstrip("/") for t in tools["tools"]}
+    for action in actions["actions"]:
+        assert action["path"].lstrip("/") not in tool_paths, (
+            f"{action['name']} is reachable as a tool"
+        )
+
+
+def test_every_declared_action_path_actually_routes(store, prompts):
+    """The node matches a declared template against a real request. A path
+    here that no route serves is a button that 405s on the first press,
+    with a message pointing at the node rather than at this typo.
+    """
+    import re as _re
+
+    from mu_spec.server import _ROUTES, _actions
+
+    for action in _actions():
+        concrete = "/" + _re.sub(r"\{[a-z_]+\}", "sample", action["path"].lstrip("/"))
+        assert any(
+            method == action["method"] and pattern.match(concrete)
+            for method, pattern, _ in _ROUTES
+        ), f"{action['name']} declares {action['path']}, which nothing serves"
+
+
+def test_actions_is_not_reachable_as_a_tool_itself(store, prompts):
+    """Discovery never reads this manifest. That is the whole point, and
+    the one property to protect if any of this is refactored."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    assert not any(t["path"].rstrip("/").endswith("/actions") for t in payload["tools"])
+
+
 def test_every_declared_tool_path_actually_routes(store, prompts):
     """The manifest is hand-written, so it can drift from the routing table.
     A tool declaring a path nothing serves is a 404 that a model walks into
@@ -1866,7 +1918,7 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # dashboard is the same exemption for the other audience: it
         # serves a page to a human in a browser, and a model offered it
         # would fetch HTML in place of the data behind it.
-        if name in ("health", "tools", "prompts", "skills", "dashboard"):
+        if name in ("health", "tools", "prompts", "skills", "dashboard", "actions"):
             continue
         assert name in exposed, f"route {name!r} is exposed by no tool"
         if exposed[name]:
