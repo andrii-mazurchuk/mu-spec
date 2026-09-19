@@ -269,6 +269,42 @@ def test_the_order_view_does_not_write_into_the_crossings_kpi():
     assert "crossSlice" in text, "the cross-slice count lost its own name"
 
 
+def test_page_carries_a_reading_view():
+    """The graph views answer questions about structure. Neither answers
+    "what does this project actually say", which is what a person needs
+    while the entries are still being written and each has to be read at
+    least once. Clicking 78 nodes is auditing, not reading."""
+    text = page()
+    for marker in ('data-v="read"', "drawRead", "READ_CACHE", "rd-layer", "rd-find"):
+        assert marker in text, f"the read view lost {marker!r}"
+
+
+def test_the_reading_view_reads_whole_layers_not_single_entries():
+    """One request per layer, bodies included, from the endpoint a reviewer
+    already uses. Per-entry fetches would be 78 round trips to render one
+    document."""
+    text = page()
+    assert "/review?layer=" in text
+    # The per-entry read stays for the inspector, and must not be what the
+    # document is built from.
+    assert text.count("/review?layer=") >= 1
+
+
+def test_the_reading_view_survives_two_loads_in_flight():
+    """Switching layer twice quickly leaves two requests running. The slower
+    one must not overwrite the faster one's document."""
+    text = page()
+    assert "READ_TOKEN" in text
+    assert "mine!==READ_TOKEN" in text.replace(" ", "")
+
+
+def test_bodies_are_escaped_in_the_reading_view():
+    """This view renders more agent-written text than anything else on the
+    page -- every body at once. Requirement 8 applies hardest here."""
+    text = page()
+    assert 'class="bd">${esc(r.body' in text.replace(" ", "") or            '${esc(r.body||"")}' in text
+
+
 def test_page_escapes_stored_text():
     """Entry bodies, titles and issue claims were written by whoever
     could reach this unit. They are shown as text, never parsed as

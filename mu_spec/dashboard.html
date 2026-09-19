@@ -142,6 +142,55 @@ aside h3:first-child{margin-top:0}
 .muted{color:var(--dim);font-size:12px}
 .warnish{color:var(--warn)}
 
+/* ── the read view ──────────────────────────────────────────────── */
+#read{position:absolute;inset:0;overflow:auto;background:var(--ground);scroll-behavior:smooth}
+#read .doc{max-width:88ch;margin:0 auto;padding:64px 34px 60vh}
+#read h1{font:600 12px var(--sans);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--dim);margin:0 0 4px;padding-top:26px}
+#read .layerhead{border-top:1px solid var(--rule);margin-top:34px;padding-top:0}
+#read .layerhead:first-child{border-top:0;margin-top:0}
+#read h1 b{display:block;font:600 21px var(--sans);letter-spacing:0;text-transform:none;
+  color:var(--ink);margin-top:6px}
+#read h2{font:600 13px var(--sans);color:var(--sl);margin:26px 0 2px;
+  display:flex;align-items:baseline;gap:8px}
+#read h2 .tag{font:500 10px var(--mono);color:var(--dim);letter-spacing:.06em;
+  text-transform:uppercase}
+#read .sliceline{height:2px;background:var(--sl);opacity:.35;margin:0 0 14px;border-radius:2px}
+#read article{border-left:2px solid var(--sl);padding:2px 0 2px 14px;margin:0 0 22px}
+#read article.hit{background:var(--brand-soft);border-radius:0 6px 6px 0}
+#read .eh{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+#read .eh code{font:600 12.5px var(--mono);color:var(--ink)}
+#read .eh .ttl{font:600 14.5px var(--sans);color:var(--ink)}
+#read .meta{color:var(--dim);font-size:11.5px;margin:3px 0 7px;
+  display:flex;gap:14px;flex-wrap:wrap}
+#read .meta b{color:var(--ink-soft);font-weight:500;font-family:var(--mono);font-size:11px}
+#read .bd{white-space:pre-wrap;font:13px/1.62 var(--sans);color:var(--ink-soft);
+  margin:0 0 6px}
+#read .cmt{border-left:2px solid var(--warn);background:var(--warn-bg);border-radius:0 5px 5px 0;
+  padding:6px 9px;margin:8px 0 0;font-size:12px;color:var(--ink-soft)}
+#read .cmt b{color:var(--warn);display:block;font-size:10.5px;letter-spacing:.05em;
+  text-transform:uppercase;margin-bottom:2px}
+#read .none{color:var(--dim);font-size:12.5px;font-style:italic;margin:0 0 20px}
+
+/* the outline replaces the inspector while reading */
+#toc{font-size:12.5px}
+#toc .lay{font:600 10px var(--sans);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--dim);margin:16px 0 5px}
+#toc .lay:first-child{margin-top:0}
+#toc .sl{display:flex;align-items:center;gap:6px;color:var(--ink-soft);font-weight:600;
+  margin:8px 0 3px;cursor:pointer;font-size:12px}
+#toc .sl i{width:8px;height:8px;border-radius:2px;background:var(--sl);flex:none}
+#toc .sl:hover{color:var(--brand)}
+#toc a{display:block;color:var(--ink-soft);text-decoration:none;padding:1.5px 0 1.5px 15px;
+  border-left:1px solid var(--rule-soft);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+#toc a:hover{color:var(--brand);border-left-color:var(--brand)}
+#toc a.here{color:var(--brand);border-left-color:var(--brand);font-weight:600}
+#toc a code{font-family:var(--mono);font-size:11px;opacity:.75;margin-right:5px}
+#readbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#readbar input[type=search]{background:var(--panel-alt);color:var(--ink);
+  border:1px solid var(--rule);border-radius:6px;padding:3px 8px;font:inherit;width:190px}
+
 /* ── slice grouping + the order view ────────────────────────────── */
 .sliceband{fill:var(--sl);opacity:.055}
 .sliceband.alt{opacity:.1}
@@ -262,6 +311,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   <nav>
     <button class="view" data-v="spine" aria-current="true">Spine</button>
     <button class="view" data-v="order">Order</button>
+    <button class="view" data-v="read">Read</button>
     <button class="view" data-v="waves">Waves</button>
     <button class="view" data-v="queues">Queues<span class="dot" id="qdot" hidden></span></button>
     <h2>Slices</h2>
@@ -272,6 +322,22 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   </nav>
 
   <section class="stage">
+    <div class="viewbar" id="viewbar">
+      <span id="vb-spine">
+        <label><input type="checkbox" id="t-group"> group columns by slice</label>
+      </span>
+      <span id="vb-order" hidden>
+        <label>layer <select id="ord-layer"></select></label>
+      </span>
+      <span id="vb-read" hidden>
+        <span id="readbar">
+          <label>layer <select id="rd-layer"></select></label>
+          <input type="search" id="rd-find" placeholder="filter by word…">
+        </span>
+      </span>
+      <span class="sep"></span>
+      <span class="muted" id="vb-note"></span>
+    </div>
     <div class="canvas" id="canvas">
       <svg id="svg">
         <defs>
@@ -289,19 +355,10 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
         <button id="zin" title="zoom in">+</button>
         <button id="zfit" title="fit">⤢</button>
       </div>
-      <div class="viewbar" id="viewbar">
-        <span id="vb-spine">
-          <label><input type="checkbox" id="t-group"> group columns by slice</label>
-        </span>
-        <span id="vb-order" hidden>
-          <label>layer <select id="ord-layer"></select></label>
-        </span>
-        <span class="sep"></span>
-        <span class="muted" id="vb-note"></span>
-      </div>
       <div class="hint" id="hint"></div>
       <div class="empty hide" id="empty"></div>
     </div>
+    <div id="read" class="hide"></div>
     <div class="pane hide" id="waves"></div>
     <div class="pane hide" id="queues"></div>
   </section>
@@ -692,6 +749,7 @@ const short=p=>{const b=String(p).split(/[\\/]/).pop();return b||String(p)};
 let SCENE=null, sel=null, focusSlice=null;
 let view={x:40,y:30,k:1};
 let MODE="spine", ORDER_LAYER=1;    // Behaviour: the first layer that has depends_on
+let RD_LAYER="*", RD_FIND="";       // the read view: all layers, no filter
 
 function drawSpine(){
   SCENE=buildScene();
@@ -934,6 +992,175 @@ function drawOrder(){
 }
 
 function drawScene(){ MODE==="order" ? drawOrder() : drawSpine(); }
+
+
+/* =============================================================
+   READ VIEW
+
+   The graph views answer questions about structure. Neither answers
+   "what does this project actually say", which is what a person needs
+   when the entries are still being written and every one of them has to
+   be read at least once.
+
+   Doing that by clicking 78 nodes is not reading, it is auditing. So
+   this is the whole corpus as one continuous document, grouped by layer
+   and then by slice, in the order the pipeline produced it.
+
+   The data comes from `review?layer=X` -- one request per layer, bodies
+   included, plus each entry's parents-with-titles, what it serves, and
+   the comments attached to it. Four requests, not 78, and no endpoint
+   had to be invented: this is the endpoint a reviewer already reads.
+   ============================================================= */
+const READ_CACHE = {};
+
+async function loadLayer(letter){
+  if(READ_CACHE[letter]) return READ_CACHE[letter];
+  const d = await soft("projects/"+enc(STATE.project)+"/review?layer="+enc(letter),
+                       {entries:[]});
+  return (READ_CACHE[letter] = d.entries || []);
+}
+
+/* Layer order is the pipeline's order, not the file's: intent first,
+   because a reader starting in the middle is reading conclusions before
+   the premises that justify them. */
+function readOrder(){
+  return LAYERS.map(L=>L[0]).filter(l=>STATE.entries.some(e=>e.id[0]===l));
+}
+
+/* Within a layer, slices in the order the waves put them -- so a slice
+   that waits on another is read after it, for the same reason. Unsliced
+   last: it is what has not been placed yet, not a subject of its own. */
+function readSlices(rows){
+  const rank=sliceRank();
+  const seen=[...new Set(rows.map(r=>r.slice||"unsliced"))];
+  return seen.sort((a,b)=>(rank[a]??98)-(rank[b]??98));
+}
+
+const anchor = id => "rd-"+id.replace(/[^A-Za-z0-9]/g,"_");
+
+function entryHTML(r){
+  const parents=(r.derives_from_titles||[]);
+  const meta=[];
+  if(parents.length) meta.push("<span>serves "+parents.map(p=>
+      `<b>${esc(p.id)}</b> ${esc(clip(p.title,54))}`).join("; ")+"</span>");
+  if((r.depends_on||[]).length)
+    meta.push("<span>waits on "+r.depends_on.map(d=>`<b>${esc(d)}</b>`).join(" ")+"</span>");
+  if((r.emits_into||[]).length)
+    meta.push("<span>emits into "+r.emits_into.map(d=>`<b>${esc(d)}</b>`).join(" ")+"</span>");
+  if((r.served_by||[]).length)
+    meta.push("<span>served by "+r.served_by.length+"</span>");
+  else if(r.layer!=="spec")
+    meta.push('<span class="warnish">nothing serves this yet</span>');
+
+  const comments=(r.comments||[]).map(c=>
+    `<div class="cmt"><b>comment · ${esc(c.status||"")}</b>${esc(c.title||"")}${
+      c.body?"\n"+esc(c.body):""}</div>`).join("");
+
+  return `<article id="${anchor(r.id)}" data-id="${esc(r.id)}"
+      data-slice="${esc(r.slice||"unsliced")}" style="--sl:${hueOf(r.slice||"unsliced")}">
+    <div class="eh"><code>${esc(r.id)}</code>
+      <span class="ttl">${esc(r.title||"")}</span></div>
+    ${meta.length?`<div class="meta">${meta.join("")}</div>`:""}
+    <div class="bd">${esc(r.body||"")}</div>
+    ${comments}
+  </article>`;
+}
+
+let READ_TOKEN = 0;
+
+async function drawRead(){
+  const mine = ++READ_TOKEN;                 // a later call wins, see below
+  const el=$("read"), toc=$("detail");
+  el.innerHTML='<div class="doc"><p class="none">Reading…</p></div>';
+  if(!STATE.project){
+    el.innerHTML='<div class="doc"><p class="none">No project yet. '+
+      'The document appears once a project holds entries.</p></div>';
+    // Blank is worse than empty: a column with nothing in it reads as
+    // something that failed to load rather than something with nothing to say.
+    toc.innerHTML='<h3>Contents</h3><p class="muted">Nothing to read yet.</p>';
+    $("vb-note").textContent="";
+    return; }
+
+  const letters = RD_LAYER==="*" ? readOrder() : [RD_LAYER];
+  const loaded = await Promise.all(letters.map(loadLayer));
+  // Switching layer twice quickly leaves two loads in flight; the slower
+  // one must not overwrite the faster one's document.
+  if(mine!==READ_TOKEN) return;
+
+  const find=(RD_FIND||"").trim().toLowerCase();
+  let doc="", nav="", shown=0, total=0;
+
+  letters.forEach((letter,i)=>{
+    let rows=loaded[i]||[];
+    total+=rows.length;
+    if(focusSlice) rows=rows.filter(r=>(r.slice||"unsliced")===focusSlice);
+    if(find) rows=rows.filter(r=>
+      ((r.title||"")+" "+(r.body||"")+" "+r.id).toLowerCase().includes(find));
+    if(!rows.length) return;
+    shown+=rows.length;
+
+    const name=LAYERS[LIX[letter]][1];
+    doc+=`<h1 class="layerhead" id="rd-layer-${letter}">${esc(name)}<b>${
+      rows.length} ${rows.length===1?"entry":"entries"}</b></h1>`;
+    nav+=`<div class="lay">${esc(name)}</div>`;
+
+    for(const slice of readSlices(rows)){
+      const mineRows=rows.filter(r=>(r.slice||"unsliced")===slice);
+      if(!mineRows.length) continue;
+      const info=STATE.slices[slice]||{};
+      doc+=`<h2 style="--sl:${hueOf(slice)}">${esc(slice)}
+        <span class="tag">${info.wave==null?"":"wave "+info.wave+" · "}${
+          mineRows.length}${isXC(slice)?" · cross-cutting":""}</span></h2>
+        <div class="sliceline" style="--sl:${hueOf(slice)}"></div>`;
+      nav+=`<div class="sl" style="--sl:${hueOf(slice)}" data-jump="rd-layer-${letter}">
+        <i></i>${esc(slice)}</div>`;
+      for(const r of mineRows){
+        doc+=entryHTML(r);
+        nav+=`<a href="#${anchor(r.id)}" data-a="${anchor(r.id)}"><code>${
+          esc(r.id)}</code>${esc(clip(r.title||"",40))}</a>`;
+      }
+    }
+  });
+
+  if(!doc) doc=`<p class="none">Nothing matches${find?" “"+esc(find)+"”":""}${
+    focusSlice?" in "+esc(focusSlice):""}.</p>`;
+  el.innerHTML='<div class="doc">'+doc+'</div>';
+  toc.innerHTML='<h3>Contents</h3><div id="toc">'+(nav||'<p class="muted">Nothing to show.</p>')+'</div>';
+
+  $("vb-note").textContent = find||focusSlice
+    ? shown+" of "+total+" entries shown"
+    : total+" entries · "+letters.length+(letters.length===1?" layer":" layers");
+
+  for(const a of toc.querySelectorAll("#toc a")) a.onclick=ev=>{
+    ev.preventDefault();
+    const t=document.getElementById(a.dataset.a);
+    if(t){ t.scrollIntoView({block:"start"}); flashEntry(t); }
+  };
+  for(const s of toc.querySelectorAll("#toc .sl")) s.onclick=()=>{
+    const t=document.getElementById(s.dataset.jump);
+    if(t) t.scrollIntoView({block:"start"});
+  };
+  markRead();
+}
+
+function flashEntry(node){
+  for(const a of $("read").querySelectorAll("article.hit")) a.classList.remove("hit");
+  node.classList.add("hit");
+}
+
+/* Which entry the reader is actually on, so the outline tracks the
+   document rather than only driving it. Cheap scan over article tops --
+   at these sizes it is instant, and it avoids an observer whose
+   thresholds would need tuning per viewport. */
+function markRead(){
+  const el=$("read"), arts=[...el.querySelectorAll("article")];
+  if(!arts.length) return;
+  const top=el.scrollTop+90;
+  let cur=arts[0];
+  for(const a of arts){ if(a.offsetTop<=top) cur=a; else break; }
+  for(const a of $("detail").querySelectorAll("#toc a"))
+    a.classList.toggle("here", a.dataset.a===anchor(cur.dataset.id));
+}
 
 function applyView(){
   $("scene").setAttribute("transform",`translate(${view.x} ${view.y}) scale(${view.k})`);
@@ -1348,7 +1575,9 @@ function drawLegend(){
   for(const b of $("legend").querySelectorAll(".leg")) b.onclick=()=>{
     focusSlice = focusSlice===b.dataset.s ? null : b.dataset.s;
     sel=null; resetInspector();          // the other mode releases
-    syncLegend(); repaint();
+    syncLegend();
+    if(MODE==="read"){ drawRead(); return; }
+    repaint();
     if(focusSlice){
       const ids=STATE.entries.filter(e=>e.slice===focusSlice).map(e=>e.id)
         .filter(i=>SCENE&&SCENE.pos.has(i));
@@ -1365,18 +1594,23 @@ function show(v){
   for(const b of document.querySelectorAll("nav .view"))
     b.setAttribute("aria-current",b.dataset.v===v);
   const onCanvas = v==="spine" || v==="order";
+  const reading = v==="read";
   $("canvas").classList.toggle("hide",!onCanvas);
+  $("read").classList.toggle("hide",!reading);
   $("waves").classList.toggle("hide",v!=="waves");
   $("queues").classList.toggle("hide",v!=="queues");
-  $("viewbar").hidden=!onCanvas;
-  if(onCanvas){
-    $("vb-spine").hidden = v!=="spine";
-    $("vb-order").hidden = v!=="order";
-    if(v!==MODE){
-      MODE=v; sel=null; focusSlice=null;
-      syncLegend(); drawScene(); resetInspector();
-    }
+  $("viewbar").hidden = !(onCanvas||reading);
+  $("vb-spine").hidden = v!=="spine";
+  $("vb-order").hidden = v!=="order";
+  $("vb-read").hidden  = !reading;
+  if(onCanvas && v!==MODE){
+    MODE=v; sel=null; focusSlice=null;
+    syncLegend(); drawScene(); resetInspector();
   }
+  // The inspector becomes the outline while reading, and has to be given
+  // back when leaving -- it is the same column serving two jobs.
+  if(reading){ MODE="read"; sel=null; drawRead(); }
+  else if(MODE==="read" && !onCanvas){ MODE="spine"; resetInspector(); }
 }
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
@@ -1385,6 +1619,12 @@ $("t-group").onchange=()=>{ GROUPED=$("t-group").checked; sel=null; focusSlice=n
   syncLegend(); drawScene(); resetInspector(); };
 $("ord-layer").onchange=()=>{ ORDER_LAYER=+$("ord-layer").value; sel=null;
   syncLegend(); drawOrder(); resetInspector(); };
+$("rd-layer").onchange=()=>{ RD_LAYER=$("rd-layer").value; drawRead(); };
+// Debounced: every keystroke re-renders the whole document otherwise.
+let rdTimer=null;
+$("rd-find").oninput=e=>{ RD_FIND=e.target.value;
+  clearTimeout(rdTimer); rdTimer=setTimeout(drawRead,160); };
+$("read").addEventListener("scroll",()=>{ if(MODE==="read") markRead(); });
 addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
 
 (()=>{
@@ -1451,13 +1691,26 @@ function drawLayerPicker(){
   if(opts.length) sel.value=String(ORDER_LAYER);
 }
 
+function drawReadPicker(){
+  const sel=$("rd-layer");
+  const opts=readOrder().map(l=>({l,name:LAYERS[LIX[l]][1],
+    n:STATE.entries.filter(e=>e.id[0]===l).length}));
+  sel.innerHTML=`<option value="*">everything · ${
+    opts.reduce((a,o)=>a+o.n,0)} entries</option>`+
+    opts.map(o=>`<option value="${o.l}">${esc(o.name)} · ${o.n}</option>`).join("");
+  sel.value=RD_LAYER;
+}
+
 function redraw(){
-  drawStrip(); drawPending(); drawLegend(); drawLayerPicker();
+  drawStrip(); drawPending(); drawLegend(); drawLayerPicker(); drawReadPicker();
   drawScene(); drawWaves(); drawQueues();
   clearAll();
 }
 
 async function selectProject(p){
+  // A different project means different bodies; keeping the old ones would
+  // render one project's document under another project's name.
+  for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
   try{
     await loadProject(p);
   }catch(err){
