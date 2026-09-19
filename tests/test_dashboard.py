@@ -213,8 +213,11 @@ def test_a_rejection_cannot_be_submitted_without_a_reason():
     to the next slicing session. Without it that session proposes the same
     cut again and the round is wasted."""
     text = page()
-    assert 'id="do-reject-confirm" disabled' in text, "confirm starts enabled"
-    assert '"reject-note").oninput' in text, "nothing ever enables it"
+    assert '"do-reject-confirm"${' in text.replace(" ", ""), (
+        "confirm is no longer driven by whether a reason exists"
+    )
+    assert "rejectDraft.note.trim()?" in text.replace(" ", "")
+    assert '"reject-note").oninput' in text, "nothing ever records the reason"
 
 
 def test_the_notice_does_not_claim_the_write_is_enforced():
@@ -345,13 +348,46 @@ def test_a_structural_redraw_puts_the_selection_back():
     assert "repaint();" in text[i:i + 500], "a structural redraw drops the selection"
 
 
-def test_polling_stops_while_the_reader_is_working():
-    """Rule 4. A row that moves out from under a click is worse than a
-    stale row, and a cleared rejection note is worse than both."""
+def test_only_transient_interaction_pauses_the_refresh():
+    """Rule 4's first half. A drag, an open menu and a click in flight each
+    resolve in seconds on their own, so pausing for them is safe."""
     text = page()
     assert "function readerIsBusy" in text
-    for guard in ("TEXTAREA", "reject-note", "dragging", "RD_FIND"):
+    for guard in ("POINTER_DOWN", "dragging", "SELECT"):
         assert guard in text, f"readerIsBusy ignores {guard}"
+
+
+def test_uncommitted_input_is_protected_without_freezing_the_page():
+    """Rule 4's second half, and the trap it names. Pausing on a half-written
+    note looks like the same rule: a reader who types one character and
+    wanders off would stop the page updating indefinitely, with nothing on
+    screen to explain it.
+
+    Protection means *this field is not yours to overwrite* -- so the draft
+    lives in STATE and the textarea is rendered from it. Reconciliation
+    cannot clobber what it does not author.
+    """
+    text = page()
+    assert "rejectDraft" in text, "the draft is not held anywhere durable"
+    # The note must NOT be a reason to stop polling.
+    start = text.index("function readerIsBusy")
+    body = text[start:start + 700]
+    assert "reject-note" not in body, "a half-written note still freezes the page"
+    assert "RD_FIND" not in body, "a typed filter still freezes the page"
+    # Ends on submit or cancel, never on blur.
+    assert text.count('rejectDraft={open:false,note:""}') >= 2, (
+        "the draft is not cleared on both submit and cancel"
+    )
+    assert "onblur" not in text.lower()
+
+
+def test_the_caret_survives_a_refresh_too():
+    """Rendering from STATE preserves the text but not where the caret was,
+    and a refresh that drops it mid-sentence is the same theft in a smaller
+    form."""
+    text = page()
+    assert "captureDraftFocus" in text and "restoreDraftFocus" in text
+    assert "setSelectionRange" in text
 
 
 def test_a_hidden_tab_does_not_poll():

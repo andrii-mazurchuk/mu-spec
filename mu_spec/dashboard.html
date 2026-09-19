@@ -425,6 +425,12 @@ const STATE = {
   locality:null, bodies:{}, live:false,
   proposal:null,        // the pending slicing decision, if any
   flash:null,           // the outcome of the last decision, see decide()
+  /* Uncommitted input. Rule 4: a refresh may not overwrite what the reader
+     is part-way through writing, and may not stop the world to avoid it --
+     so the draft lives here and the textarea is rendered from it. Cleared
+     only when submitted or explicitly cancelled, never on blur: clicking
+     away to re-read the proposal is not abandoning the note. */
+  rejectDraft:{open:false, note:""},
   preview:false         // spine recoloured by the proposal rather than the manifest
 };
 
@@ -1447,11 +1453,13 @@ function proposalHTML(){
         STATE.preview?"Stop previewing":"Preview in the spine"}</button>
       <span class="spacer">Slices split and never merge &mdash; this is close to one-way.</span>
     </div>
-    <div id="rejectbox" hidden>
-      <textarea id="reject-note" placeholder="Why is this cut wrong?"></textarea>
+    <div id="rejectbox"${STATE.rejectDraft.open?"":" hidden"}>
+      <textarea id="reject-note" placeholder="Why is this cut wrong?">${
+        esc(STATE.rejectDraft.note)}</textarea>
       <p>Required. It is kept and shown to the next slicing session as
          <code>last_rejection</code>, so it does not propose the same cut again.</p>
-      <button class="btn no" id="do-reject-confirm" disabled>Confirm rejection</button>
+      <button class="btn no" id="do-reject-confirm"${
+        STATE.rejectDraft.note.trim()?"":" disabled"}>Confirm rejection</button>
       <button class="btn" id="do-reject-cancel">Cancel</button>
     </div>
     <div id="outcome" hidden></div>
@@ -1462,11 +1470,17 @@ function wireProposal(){
   if(!STATE.proposal) return;
   const g=id=>document.getElementById(id);
   g("do-preview").onclick=togglePreview;
-  g("do-reject").onclick=()=>{ g("rejectbox").hidden=false; g("reject-note").focus(); };
-  g("do-reject-cancel").onclick=()=>{ g("rejectbox").hidden=true; };
+  g("do-reject").onclick=()=>{
+    STATE.rejectDraft.open=true; g("rejectbox").hidden=false; g("reject-note").focus(); };
+  g("do-reject-cancel").onclick=()=>{
+    // Cancel is one of the two ways a draft ends. The other is submitting.
+    STATE.rejectDraft={open:false,note:""}; g("rejectbox").hidden=true;
+    g("reject-note").value=""; g("do-reject-confirm").disabled=true; };
   // A rejection without a reason is one the next slicing session cannot use,
   // so it proposes the same cut again and the round is wasted.
-  g("reject-note").oninput=e=>{ g("do-reject-confirm").disabled=!e.target.value.trim(); };
+  g("reject-note").oninput=e=>{
+    STATE.rejectDraft.note=e.target.value;
+    g("do-reject-confirm").disabled=!e.target.value.trim(); };
   g("do-ratify").onclick=()=>decide("ratify");
   g("do-reject-confirm").onclick=()=>decide("reject",{note:g("reject-note").value.trim()});
 }
@@ -1517,6 +1531,8 @@ async function decide(what, body){
     // changes waves, lanes, colours and the legend. Re-reading is cheaper
     // than keeping a second copy of the truth in sync.
     await selectProject(STATE.project);   // also refreshes LAST_SIG
+    // Submitted: the draft is spent.
+    STATE.rejectDraft={open:false,note:""};
     STATE.flash={kind:"ok",text:flash};
     drawQueues(); show("queues");
   }catch(err){
@@ -1587,6 +1603,24 @@ function drawQueues(){
    human.</p></div>`;
   const x=$("flash-x"); if(x) x.onclick=()=>{ STATE.flash=null; drawQueues(); };
   wireProposal();
+  restoreDraftFocus();
+}
+
+/* Rendering from STATE preserves the text; it does not preserve where the
+   caret was or that the field had focus. Both are the reader's, and a
+   refresh that drops them mid-sentence is the same theft in a smaller
+   form. */
+let DRAFT_CARET = null;
+function captureDraftFocus(){
+  const n=$("reject-note");
+  DRAFT_CARET = (n && document.activeElement===n)
+    ? {start:n.selectionStart, end:n.selectionEnd} : null;
+}
+function restoreDraftFocus(){
+  if(!DRAFT_CARET) return;
+  const n=$("reject-note");
+  if(n){ n.focus(); try{ n.setSelectionRange(DRAFT_CARET.start, DRAFT_CARET.end); }catch(_){} }
+  DRAFT_CARET=null;
 }
 
 /* One delegated handler for every id link on the page: an identifier
@@ -1716,18 +1750,28 @@ let KEEP_VIEW = false;          // suppresses fit() during a poll redraw
 let POLL_TIMER = null, POLL_WAIT = POLL_MS, LAST_OK = 0, POLL_FAIL = 0;
 let FRESH_TICK = null;
 
-/* Rule 4. A refresh that moves a row out from under a click, or clears a
-   half-written rejection note, has taken something from the reader to
-   show them something they did not ask for. */
+/* Rule 4, and only its first half. TRANSIENT interaction pauses the
+   refresh: a drag, an open menu, a click already in flight. Each resolves
+   in seconds on its own.
+
+   Uncommitted input does NOT pause, and the first version of this got that
+   wrong: it also held the poll while a rejection note had any content,
+   which meant one character and a wandering reader froze the page
+   indefinitely with nothing on screen to explain it. That input is
+   protected by being rendered from STATE instead -- reconciliation cannot
+   overwrite what it does not author -- and the same is true of the read
+   filter, which lives in RD_FIND and is reapplied on every draw. */
 function readerIsBusy(){
-  const a = document.activeElement;
-  if(a && (a.tagName==="TEXTAREA" || a.tagName==="INPUT" || a.tagName==="SELECT")) return true;
-  const note = $("reject-note");
-  if(note && note.value.trim()) return true;          // typed, even if unfocused
+  if(POINTER_DOWN) return true;                       // a click in flight
   if($("canvas").classList.contains("dragging")) return true;
-  if(RD_FIND && RD_FIND.trim()) return true;          // a filtered document is a reading position
+  const a = document.activeElement;
+  if(a && a.tagName === "SELECT") return true;        // an open menu
   return false;
 }
+let POINTER_DOWN = false;
+addEventListener("pointerdown", ()=>{ POINTER_DOWN=true; }, true);
+addEventListener("pointerup",   ()=>{ POINTER_DOWN=false; }, true);
+addEventListener("pointercancel", ()=>{ POINTER_DOWN=false; }, true);
 
 function markFresh(){ LAST_OK = Date.now(); POLL_FAIL = 0; POLL_WAIT = POLL_MS; drawFresh(); }
 
@@ -1743,7 +1787,7 @@ function drawFresh(){
     t.textContent = "unreachable · " + (age < 90 ? age + "s" : Math.round(age/60) + "m") + " old";
   }else if(readerIsBusy()){
     el.className = "paused";
-    t.textContent = "paused while you work";
+    t.textContent = "paused";
   }else{
     el.className = "";
     t.textContent = age < 12 ? "live" : "updated " + (age < 90 ? age + "s" : Math.round(age/60) + "m") + " ago";
@@ -1782,7 +1826,7 @@ function reconcile(d){
     if(structural && MODE === "read"){ for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
                                        drawReadKeepingPlace(); }
     if(changed("waves") || changed("slices")) drawWaves();
-    if(changed("queues") || changed("proposal")) drawQueues();
+    if(changed("queues") || changed("proposal")){ captureDraftFocus(); drawQueues(); }
   } finally { KEEP_VIEW = false; }
 
   if(fresh.size) markNew(fresh);
