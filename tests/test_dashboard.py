@@ -305,6 +305,81 @@ def test_bodies_are_escaped_in_the_reading_view():
     assert 'class="bd">${esc(r.body' in text.replace(" ", "") or            '${esc(r.body||"")}' in text
 
 
+# -- staying current ----------------------------------------------------
+
+
+def test_the_page_refreshes_itself():
+    """The node cannot do this for a page-tier unit: its only lever is
+    reloading the frame, which discards pan, zoom, selection, the outline's
+    position and any half-typed text."""
+    text = page()
+    for marker in ("POLL_MS", "function tick", "schedulePoll", "startPolling"):
+        assert marker in text, f"the poller lost {marker!r}"
+    assert "10000" in text, "the interval no longer matches the node's chrome"
+
+
+def test_an_unchanged_poll_touches_nothing():
+    """Rule 1, and the one that does the most work. Most polls find no
+    change, so the common case must cost a string comparison and no DOM."""
+    text = page()
+    assert "LAST_SIG" in text and "function signatures" in text
+    assert "every(k => now[k] === was[k])" in text, "nothing short-circuits"
+
+
+def test_a_poll_never_steals_the_view():
+    """Rule 2. A redraw driven by a poll must not re-fit the graph: pan and
+    zoom are state the reader created."""
+    text = page()
+    assert "KEEP_VIEW" in text
+    assert text.count("if(!KEEP_VIEW) requestAnimationFrame(fit)") >= 2, (
+        "a view redraw path re-fits during a poll"
+    )
+
+
+def test_a_structural_redraw_puts_the_selection_back():
+    """drawScene rebuilds every node, discarding the classes that carry the
+    selection and the slice focus. Without a repaint the graph silently
+    un-dims itself on the tick that adds an entry."""
+    text = page()
+    i = text.index("if(structural && MODE !== \"read\")")
+    assert "repaint();" in text[i:i + 500], "a structural redraw drops the selection"
+
+
+def test_polling_stops_while_the_reader_is_working():
+    """Rule 4. A row that moves out from under a click is worse than a
+    stale row, and a cleared rejection note is worse than both."""
+    text = page()
+    assert "function readerIsBusy" in text
+    for guard in ("TEXTAREA", "reject-note", "dragging", "RD_FIND"):
+        assert guard in text, f"readerIsBusy ignores {guard}"
+
+
+def test_a_hidden_tab_does_not_poll():
+    """Rule 5. A frame inherits the parent page's visibility, so this needs
+    nothing from the node."""
+    assert "visibilityState" in page()
+
+
+def test_failure_backs_off_and_is_visible():
+    """Rule 6. A dashboard that silently keeps showing its last good data
+    while the unit is unreachable is lying."""
+    text = page()
+    assert "BACKOFF_MAX" in text
+    assert "unreachable" in text
+
+
+def test_the_reading_position_is_restored_instantly():
+    """Restoring a position the reader never left must not animate, or the
+    document slides under their eyes on every tick. Smooth scrolling is
+    opted into per gesture instead of set on the container."""
+    text = page()
+    assert "scroll-behavior:smooth}" not in text.replace(" ", ""), (
+        "a container-level smooth scroll makes restores non-deterministic"
+    )
+    assert "drawReadKeepingPlace" in text
+    assert 'behavior:"smooth"' in text.replace(" ", ""), "no gesture opts in"
+
+
 def test_page_escapes_stored_text():
     """Entry bodies, titles and issue claims were written by whoever
     could reach this unit. They are shown as text, never parsed as

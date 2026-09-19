@@ -142,8 +142,24 @@ aside h3:first-child{margin-top:0}
 .muted{color:var(--dim);font-size:12px}
 .warnish{color:var(--warn)}
 
+/* ── freshness ──────────────────────────────────────────────────── */
+#fresh{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11px;
+  margin-left:auto;white-space:nowrap}
+#fresh .pip{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+#fresh.stale{color:var(--warn)}
+#fresh.stale .pip{background:var(--warn)}
+#fresh.paused .pip{background:var(--dim)}
+/* Rule 7: a silent swap is indistinguishable from nothing happening. */
+@keyframes newly{from{background:var(--brand-soft)}to{background:transparent}}
+.node.new rect{stroke:var(--brand);stroke-width:2}
+#read article.new,#queues tr.new,.flash.new{animation:newly 2.4s ease-out}
+
 /* ── the read view ──────────────────────────────────────────────── */
-#read{position:absolute;inset:0;overflow:auto;background:var(--ground);scroll-behavior:smooth}
+/* No scroll-behavior here on purpose: a container that animates every
+   scrollTop assignment makes restoring a reading position after a
+   reflow non-deterministic. Smooth is opted into per gesture below,
+   where it is wanted. */
+#read{position:absolute;inset:0;overflow:auto;background:var(--ground)}
 #read .doc{max-width:88ch;margin:0 auto;padding:64px 34px 60vh}
 #read h1{font:600 12px var(--sans);letter-spacing:.14em;text-transform:uppercase;
   color:var(--dim);margin:0 0 4px;padding-top:26px}
@@ -300,6 +316,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   <div class="kpi"><b id="k-issues">–</b><span>open issues</span></div>
   <div class="kpi"><b id="k-loc">–</b><span>change locality</span></div>
   <span id="previewflag" hidden>previewing proposal</span>
+  <span id="fresh" title="this page refreshes itself"><i class="pip"></i><span id="fresh-t"></span></span>
 </div>
 <div id="offline" hidden></div>
 <div id="pending" hidden>
@@ -416,7 +433,10 @@ async function loadProjects(){
   return Array.isArray(d.projects) ? d.projects : [];
 }
 
-async function loadProject(project){
+/* Returns a plain object and writes nothing. Rule 1 needs to compare the
+   new payload with the last one, which is impossible if fetching has
+   already overwritten it. */
+async function fetchProject(project){
   const base = "projects/" + enc(project);
   const [spine, gates, waves, insights, issues, inbox, modules, proposal] =
     await Promise.all([
@@ -469,17 +489,36 @@ async function loadProject(project){
     };
   });
 
-  Object.assign(STATE, {
+  return {
     project, entries, byId: Object.fromEntries(entries.map(e=>[e.id,e])),
     slices, waves: waves.waves || [], gates,
     issues: issues.issues || [],
     requests: (inbox.messages || []).slice().sort((a,b)=>(b.at||0)-(a.at||0)),
     modules: modules.modules || [],
     locality: (insights.change_locality || {}).mean,
-    bodies: {},
-    proposal: proposal && proposal.status === "pending" ? proposal : null,
-    preview: false
-  });
+    proposal: proposal && proposal.status === "pending" ? proposal : null
+  };
+}
+
+/* What a poll compares. Deliberately NOT the whole payload: `hue` is
+   assigned by position in the sorted slice list, so it is derived here
+   rather than received, and comparing it would be comparing this page's
+   own output with itself. Everything in here is something the unit said. */
+function signatures(d){
+  const J = x => JSON.stringify(x);
+  return {
+    graph: J(d.entries.map(e=>[e.id,e.title,e.slice,e.derives,e.deps,e.emits])),
+    slices: J(Object.entries(d.slices).map(([n,s])=>[n,s.type,s.wave,s.deps,s.size,s.cohesion])),
+    waves: J(d.waves),
+    gates: J(d.gates),
+    strip: J([d.locality, (d.gates||{}).sound, (d.gates||{}).complete]),
+    proposal: J(d.proposal),
+    queues: J([d.issues, d.requests])
+  };
+}
+
+function applyProject(d){
+  Object.assign(STATE, d, {bodies: STATE.bodies || {}, preview: false});
   /* Which slice each entry WOULD belong to if the proposal were ratified.
      Held beside the real membership rather than replacing it -- previewing a
      decision must never look like having taken it. */
@@ -487,7 +526,7 @@ async function loadProject(project){
     const map = {};
     for(const [name, ids] of Object.entries(STATE.proposal.proposal || {}))
       for(const id of ids) map[id] = name;
-    for(const e of entries){ e.trueSlice = e.slice; e.propSlice = map[e.id] || "unsliced"; }
+    for(const e of STATE.entries){ e.trueSlice = e.slice; e.propSlice = map[e.id] || "unsliced"; }
   }
 }
 
@@ -821,7 +860,9 @@ function drawSpine(){
   $("n-e").textContent=SCENE.hEdges.filter(e=>e.kind==="e").length;
   $("hint").textContent="drag to pan · wheel to zoom · click an entry for its chain · "+
     "click a slice in the rail to isolate it";
-  applyView(); requestAnimationFrame(fit);
+  applyView();
+  // Rule 2: a poll must never take the reader's pan and zoom away.
+  if(!KEEP_VIEW) requestAnimationFrame(fit);
 }
 
 
@@ -988,7 +1029,8 @@ function drawOrder(){
       S.edges.filter(e=>e.kind==="h").length+" dependencies cross a slice";
   $("hint").textContent="left to right is dependency order · a lane above another is a "+
     "slice it waits on · click an entry for its chain";
-  applyView(); requestAnimationFrame(fit);
+  applyView();
+  if(!KEEP_VIEW) requestAnimationFrame(fit);
 }
 
 function drawScene(){ MODE==="order" ? drawOrder() : drawSpine(); }
@@ -1134,11 +1176,13 @@ async function drawRead(){
   for(const a of toc.querySelectorAll("#toc a")) a.onclick=ev=>{
     ev.preventDefault();
     const t=document.getElementById(a.dataset.a);
-    if(t){ t.scrollIntoView({block:"start"}); flashEntry(t); }
+    // Smooth here: the reader asked to go somewhere, and the motion says
+    // where they went.
+    if(t){ t.scrollIntoView({block:"start",behavior:"smooth"}); flashEntry(t); }
   };
   for(const s of toc.querySelectorAll("#toc .sl")) s.onclick=()=>{
     const t=document.getElementById(s.dataset.jump);
-    if(t) t.scrollIntoView({block:"start"});
+    if(t) t.scrollIntoView({block:"start",behavior:"smooth"});
   };
   markRead();
 }
@@ -1472,7 +1516,7 @@ async function decide(what, body){
     // Reload rather than patch: ratifying changes slice membership, which
     // changes waves, lanes, colours and the legend. Re-reading is cheaper
     // than keeping a second copy of the truth in sync.
-    await selectProject(STATE.project);
+    await selectProject(STATE.project);   // also refreshes LAST_SIG
     STATE.flash={kind:"ok",text:flash};
     drawQueues(); show("queues");
   }catch(err){
@@ -1651,6 +1695,180 @@ addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
   $("zfit").onclick=()=>{fit()};
 })();
 
+
+/* =============================================================
+   STAYING CURRENT
+
+   UNIT_STANDARDS.md, "Staying current: a dashboard refreshes itself,
+   and it does so quietly". The node cannot do this for a page-tier
+   unit -- its only lever is reloading the frame, which would throw away
+   pan, zoom, selection, the outline's position and any half-typed text.
+
+   The rule carrying the weight is the cheapest one: keep the last
+   payload and, if the new one is identical, touch nothing. Most polls
+   find no change, so the common case costs one string comparison and
+   cannot flicker.
+   ============================================================= */
+const POLL_MS = 10000;          // rule 8: matches the node's own chrome
+const BACKOFF_MAX = 60000;
+let LAST_SIG = null;            // what the unit last said
+let KEEP_VIEW = false;          // suppresses fit() during a poll redraw
+let POLL_TIMER = null, POLL_WAIT = POLL_MS, LAST_OK = 0, POLL_FAIL = 0;
+let FRESH_TICK = null;
+
+/* Rule 4. A refresh that moves a row out from under a click, or clears a
+   half-written rejection note, has taken something from the reader to
+   show them something they did not ask for. */
+function readerIsBusy(){
+  const a = document.activeElement;
+  if(a && (a.tagName==="TEXTAREA" || a.tagName==="INPUT" || a.tagName==="SELECT")) return true;
+  const note = $("reject-note");
+  if(note && note.value.trim()) return true;          // typed, even if unfocused
+  if($("canvas").classList.contains("dragging")) return true;
+  if(RD_FIND && RD_FIND.trim()) return true;          // a filtered document is a reading position
+  return false;
+}
+
+function markFresh(){ LAST_OK = Date.now(); POLL_FAIL = 0; POLL_WAIT = POLL_MS; drawFresh(); }
+
+function drawFresh(){
+  const el = $("fresh"), t = $("fresh-t");
+  if(!el) return;
+  if(!LAST_OK){ t.textContent = "connecting…"; el.className = "paused"; return; }
+  const age = Math.round((Date.now() - LAST_OK) / 1000);
+  // Rule 6: a dashboard that keeps showing its last good data while the
+  // unit is unreachable is lying. Say how old it is.
+  if(POLL_FAIL){
+    el.className = "stale";
+    t.textContent = "unreachable · " + (age < 90 ? age + "s" : Math.round(age/60) + "m") + " old";
+  }else if(readerIsBusy()){
+    el.className = "paused";
+    t.textContent = "paused while you work";
+  }else{
+    el.className = "";
+    t.textContent = age < 12 ? "live" : "updated " + (age < 90 ? age + "s" : Math.round(age/60) + "m") + " ago";
+  }
+}
+
+/* Rule 3 at the only granularity this page has: seven independent
+   regions, each redrawn only when the thing it draws actually moved. A
+   changed issue must not reflow the graph. */
+function reconcile(d){
+  const was = LAST_SIG, now = signatures(d);
+  if(was && Object.keys(now).every(k => now[k] === was[k])) return false;  // rule 1
+
+  const fresh = was
+    ? new Set(d.entries.filter(e => !STATE.byId[e.id]).map(e => e.id))
+    : new Set();
+
+  const changed = k => !was || was[k] !== now[k];
+  const structural = changed("graph") || changed("slices") || changed("proposal");
+
+  applyProject(d);
+  LAST_SIG = now;
+
+  KEEP_VIEW = true;                       // rule 2, for the whole redraw
+  try{
+    if(changed("strip") || changed("gates")) drawStrip();
+    if(changed("proposal")) drawPending();
+    if(structural){ drawLegend(); drawLayerPicker(); drawReadPicker(); }
+    if(structural && MODE !== "read"){
+      drawScene();
+      // drawScene rebuilds every node, discarding the classes that carry
+      // the reader's selection and slice focus. Without this the graph
+      // silently un-dims itself on the tick that adds an entry.
+      repaint();
+    }
+    if(structural && MODE === "read"){ for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
+                                       drawReadKeepingPlace(); }
+    if(changed("waves") || changed("slices")) drawWaves();
+    if(changed("queues") || changed("proposal")) drawQueues();
+  } finally { KEEP_VIEW = false; }
+
+  if(fresh.size) markNew(fresh);
+  return true;
+}
+
+/* Rule 7's second half: mark what is new, briefly. Without it a swap is
+   indistinguishable from nothing having happened, and the reader keeps
+   reloading by hand -- the exact problem this exists to solve. */
+function markNew(ids){
+  for(const n of $("scene").querySelectorAll(".node"))
+    if(ids.has(n.dataset.id)) n.classList.add("new");
+  for(const a of $("read").querySelectorAll("article"))
+    if(ids.has(a.dataset.id)) a.classList.add("new");
+  setTimeout(()=>{
+    for(const n of document.querySelectorAll(".node.new,.new")) n.classList.remove("new");
+  }, 2600);
+}
+
+/* The Read view is the awkward one. Its document is long, and a reflow
+   while someone is reading moves the text under their eyes -- an entry
+   above the viewport gaining a comment shifts everything below it.
+
+   So the anchor is the ENTRY at the top of the viewport, not a scroll
+   offset: find it, redraw, then put that same entry back where it was.
+   An offset survives nothing; an identifier survives insertions above
+   it, which is the case that actually happens. */
+async function drawReadKeepingPlace(){
+  const el = $("read");
+  const arts = [...el.querySelectorAll("article")];
+  const top = el.scrollTop;
+  let anchorId = null, delta = 0;
+  for(const a of arts){
+    if(a.offsetTop + a.offsetHeight > top){ anchorId = a.dataset.id; delta = a.offsetTop - top; break; }
+  }
+  await drawRead();
+  if(!anchorId) return;
+  const again = el.querySelector('article[data-id="' + CSS.escape(anchorId) + '"]');
+  // Instant, never smooth. The pane animates scrolling because an outline
+  // click should glide; restoring a position the reader never left must
+  // not, or the document slides under their eyes on every tick.
+  // Two frames: the first lets the rebuilt document lay out, the second
+  // re-asserts the position after any late reflow. One frame was enough in
+  // a test and not in use, which is the failure this whole section warns
+  // about.
+  if(!again) return;
+  const put = () => { el.scrollTop = again.offsetTop - delta; };
+  put();
+  requestAnimationFrame(()=>{ put(); requestAnimationFrame(put); });
+}
+
+async function tick(){
+  // Rule 5: a forgotten tab polling every unit forever is a cost nobody
+  // ever sees. A frame inherits the parent's visibility, so this is free.
+  if(document.visibilityState === "hidden") return schedulePoll();
+  if(readerIsBusy()){ drawFresh(); return schedulePoll(); }
+  if(!STATE.project || !STATE.live) return schedulePoll();
+  try{
+    const d = await fetchProject(STATE.project);
+    reconcile(d);
+    markFresh();
+  }catch(err){
+    // Rule 6: widen rather than hammer a unit that is already down.
+    POLL_FAIL++;
+    POLL_WAIT = Math.min(BACKOFF_MAX, POLL_MS * Math.pow(2, Math.min(POLL_FAIL, 3)));
+    drawFresh();
+  }
+  schedulePoll();
+}
+
+function schedulePoll(){
+  clearTimeout(POLL_TIMER);
+  POLL_TIMER = setTimeout(tick, POLL_WAIT);
+}
+
+function startPolling(){
+  schedulePoll();
+  clearInterval(FRESH_TICK);
+  FRESH_TICK = setInterval(drawFresh, 1000);   // the label ages; the data does not
+  document.addEventListener("visibilitychange", ()=>{
+    // Refresh once on return rather than waiting out the interval.
+    if(document.visibilityState === "visible"){ POLL_WAIT = POLL_MS; clearTimeout(POLL_TIMER);
+                                                POLL_TIMER = setTimeout(tick, 250); }
+  });
+}
+
 /* =============================================================
    STRIP + BOOT
    ============================================================= */
@@ -1711,8 +1929,12 @@ async function selectProject(p){
   // A different project means different bodies; keeping the old ones would
   // render one project's document under another project's name.
   for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
+  STATE.bodies = {};
   try{
-    await loadProject(p);
+    const d = await fetchProject(p);
+    applyProject(d);
+    LAST_SIG = signatures(d);
+    markFresh();
   }catch(err){
     $("offline").hidden=false;
     $("offline").textContent="Could not load "+p+": "+err.message;
@@ -1743,6 +1965,8 @@ async function selectProject(p){
   sel.onchange=()=>selectProject(sel.value);
   if(projects.length) await selectProject(projects[0]);
   else redraw();
+  if(STATE.live) startPolling();
+  drawFresh();
 })();
 
 addEventListener("resize",()=>{ if(!focusSlice) fit(); });
