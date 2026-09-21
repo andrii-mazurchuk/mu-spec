@@ -147,7 +147,14 @@ def _tools() -> list[dict[str, Any]]:
             "slice cycle, or an outbound edge from a cross-cutting slice is "
             "refused whole, and the first entry created for a request must "
             "sit within that request type's permitted origination depth. "
-            "Entries left unserved are reported, not refused.",
+            "Entries left unserved are reported, not refused. To depend on "
+            "an entry this same amendment is creating, cite it by position "
+            "as '#0', '#1' -- a zero-based index into 'entries'. Identifiers "
+            "are allocated on commit, so guessing one is how a horizontal "
+            "edge ends up pointing at a real entry that is the wrong entry, "
+            "which every gate passes. Placeholders work in 'depends_on' and "
+            "'emits_into' only; 'derives_from' points one layer up and an "
+            "amendment writes one layer, so a sibling is never a parent.",
             "POST",
             "/projects/{project}/amendments",
             {

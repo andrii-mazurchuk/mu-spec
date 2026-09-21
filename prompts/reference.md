@@ -68,6 +68,18 @@ JSON
 few kilobytes gets truncated by the shell, and a truncated amendment is a
 malformed one.
 
+**To depend on an entry in the same amendment, cite it by position.**
+`"depends_on": ["#0"]` means the first entry in this batch. Identifiers are
+allocated on commit, so before this you had two options and both were wrong:
+guess a number, or leave the edge out and put the ordering in prose. A guess
+naming something that does not exist is caught -- but a guess that lands on a
+real identifier belonging to a *different* entry is a well-formed edge saying
+something false, and there is no gate that can see it.
+
+Placeholders work in `depends_on` and `emits_into`. Not in `derives_from`:
+that points one layer up, and an amendment writes one layer, so an entry in
+this batch is never a legal parent.
+
 ---
 
 ## What will be refused, and why

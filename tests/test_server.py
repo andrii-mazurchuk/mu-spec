@@ -2081,3 +2081,103 @@ def test_every_declared_prompt_tier_ships_a_file():
     prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
     missing = [t for t in PROMPT_TIERS if not (prompts_dir / f"{t}.md").is_file()]
     assert not missing, f"declared but not shipped: {missing}"
+
+
+# -- intra-amendment references ---------------------------------------------
+#
+# Identifiers are allocated at commit time, so a session writing a block of
+# entries cannot name the ones it is creating. Before placeholders it had two
+# options and both were wrong: guess (a guess landing on a real but different
+# identifier is structurally sound and semantically false, and no gate can
+# tell), or omit the horizontal edges and put the ordering in prose.
+
+
+def test_a_staged_entry_can_be_referenced_by_position(store, prompts):
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "A seller lists an item",
+                 "derives_from": ["I·01"]},
+                {"layer": "B", "title": "A listing can be withdrawn",
+                 "derives_from": ["I·01"], "depends_on": ["#0"]},
+            ],
+        },
+    )
+    assert status == 200, payload
+    created = payload["created"]
+    assert len(created) == 2
+    _, entry = call(store, prompts, "GET", f"/projects/m/entries/{created[1]}")
+    assert entry["depends_on"] == [created[0]]
+
+
+def test_a_placeholder_past_the_end_of_the_batch_is_refused(store, prompts):
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "A seller lists an item",
+                 "derives_from": ["I·01"], "depends_on": ["#7"]},
+            ],
+        },
+    )
+    assert status == 400
+    assert "#7" in payload["error"]
+
+
+def test_a_placeholder_may_not_be_used_for_a_vertical_edge(store, prompts):
+    """derives_from points exactly one layer up, and every entry in one
+    amendment sits at the same layer -- so a sibling is never a legal
+    parent. Refused by name rather than left to the orphan gate, because the
+    gate's message would describe a broken edge instead of the mistake."""
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "A seller lists an item",
+                 "derives_from": ["I·01"]},
+                {"layer": "B", "title": "A listing can be withdrawn",
+                 "derives_from": ["#0"]},
+            ],
+        },
+    )
+    assert status == 400
+    assert "derives_from" in payload["error"]
+
+
+def test_a_placeholder_may_not_point_at_itself(store, prompts):
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "A seller lists an item",
+                 "derives_from": ["I·01"], "depends_on": ["#0"]},
+            ],
+        },
+    )
+    assert status == 400
+    assert "itself" in payload["error"]

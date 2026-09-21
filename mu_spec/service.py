@@ -233,6 +233,64 @@ def _require_message(inbox: Inbox, body: dict, expected_types=None):
 # -- the propagation write path ---------------------------------------------
 
 
+PLACEHOLDER = "#"
+
+
+def _substitute(
+    values: object, field: str, position: int, allocated: list[Identifier]
+) -> list[str]:
+    """Resolve `#N` references to entries being created in this same batch.
+
+    Identifiers are allocated at commit time, so before this a session
+    writing a block of entries could not name the ones it was creating. It
+    had two options and both were wrong. Guessing looks like it works and
+    occasionally does: a guess naming an identifier that does not exist is
+    caught as a broken edge, but a guess landing on a real identifier
+    belonging to a *different* entry is structurally perfect and false, and
+    no gate can tell the difference. Omitting the edges instead pushes the
+    ordering into prose, which is the "two statements, one unenforced"
+    pattern refused everywhere else in this design.
+
+    So the batch gets to refer to itself by position, and guessing is never
+    necessary. Only the horizontal edges may use it -- `derives_from` points
+    one layer up and an amendment writes one layer, so a sibling is never a
+    legal parent there.
+    """
+    out: list[str] = []
+    for value in values or []:
+        text = str(value)
+        if not text.startswith(PLACEHOLDER):
+            out.append(text)
+            continue
+        if field == "derives_from":
+            raise ServiceError(
+                f"{text} in 'derives_from': a vertical edge points exactly "
+                "one layer up, and every entry in one amendment sits at the "
+                "same layer, so an entry in this batch is never a legal "
+                "parent. Cite an identifier that already exists"
+            )
+        try:
+            index = int(text[1:])
+        except ValueError:
+            raise ServiceError(
+                f"{text!r} is not a position in this amendment -- a "
+                "placeholder is '#' followed by a zero-based index into "
+                "'entries'"
+            ) from None
+        if not 0 <= index < len(allocated):
+            raise ServiceError(
+                f"{text} names position {index}, but this amendment has "
+                f"{len(allocated)} entries (0..{len(allocated) - 1})"
+            )
+        if index == position:
+            raise ServiceError(
+                f"{text} makes an entry depend on itself, which is a cycle "
+                "of one"
+            )
+        out.append(str(allocated[index]))
+    return out
+
+
 def submit_amendment(
     store: ProjectStore,
     inbox: Inbox,
@@ -282,7 +340,11 @@ def submit_amendment(
     # Allocate against a copy of the high-water marks first, so a rejected
     # amendment does not burn identifiers.
     marks = dict(manifest.allocation)
-    staged: list[Entry] = []
+    # Allocated in a first pass so the second can resolve `#N` references
+    # between entries of this same batch. Order is the order they arrived in,
+    # and the counter only ever moves up, so a position maps to exactly one
+    # identifier and it is the one the entry will be committed under.
+    allocated: list[Identifier] = []
     for item in items:
         layer = item.get("layer")
         if layer not in LAYERS:
@@ -290,12 +352,31 @@ def submit_amendment(
         if not item.get("title"):
             raise ServiceError("each entry needs a 'title'")
         marks[layer] = marks.get(layer, 0) + 1
+        allocated.append(Identifier(layer=layer, number=marks[layer]))
+
+    staged: list[Entry] = []
+    for position, item in enumerate(items):
         staged.append(
             Entry(
-                id=Identifier(layer=layer, number=marks[layer]),
-                derives_from=_parse_ids(item.get("derives_from"), "derives_from"),
-                depends_on=_parse_ids(item.get("depends_on"), "depends_on"),
-                emits_into=_parse_ids(item.get("emits_into"), "emits_into"),
+                id=allocated[position],
+                derives_from=_parse_ids(
+                    _substitute(
+                        item.get("derives_from"), "derives_from", position, allocated
+                    ),
+                    "derives_from",
+                ),
+                depends_on=_parse_ids(
+                    _substitute(
+                        item.get("depends_on"), "depends_on", position, allocated
+                    ),
+                    "depends_on",
+                ),
+                emits_into=_parse_ids(
+                    _substitute(
+                        item.get("emits_into"), "emits_into", position, allocated
+                    ),
+                    "emits_into",
+                ),
                 title=item["title"],
                 body=item.get("body", ""),
                 supersedes=(
