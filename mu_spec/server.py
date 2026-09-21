@@ -154,7 +154,11 @@ def _tools() -> list[dict[str, Any]]:
             "edge ends up pointing at a real entry that is the wrong entry, "
             "which every gate passes. Placeholders work in 'depends_on' and "
             "'emits_into' only; 'derives_from' points one layer up and an "
-            "amendment writes one layer, so a sibling is never a parent.",
+            "amendment writes one layer, so a sibling is never a parent. "
+            "'slice' must name a slice that already exists -- one comes from "
+            "ratifying a slicing or from splitting an existing slice, never "
+            "from being named here, because slices split and never merge and "
+            "one created by a typo cannot be undone.",
             "POST",
             "/projects/{project}/amendments",
             {

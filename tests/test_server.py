@@ -7,7 +7,21 @@ from pathlib import Path
 import pytest
 
 from mu_spec.server import UNIT_NAME, handle, read_prompt
-from mu_spec.storage import ProjectStore
+from mu_spec.storage import ProjectStore, Slice
+
+
+def register_slice(store, name, project="m"):
+    """Put a slice on the manifest directly, as test setup.
+
+    An amendment no longer creates a slice by naming one -- a slice comes
+    from ratifying a slicing or from splitting an existing slice. Tests that
+    are about something else should not have to drive a ratification to get
+    a slice to write into, and doing so would leave them exercising the
+    proposal flow they are not testing.
+    """
+    manifest = store.load_manifest(project)
+    manifest.slices.setdefault(name, Slice(name=name))
+    store.save_manifest(project, manifest)
 
 
 @pytest.fixture()
@@ -45,7 +59,15 @@ def post(store, prompts, kind, title, project="m", **kw):
 def seed(store, prompts):
     """A project with one intent entry, one behaviour serving it, one
     architecture, and one spec -- a complete vertical column, built the way
-    the pipeline actually builds it: a request, then amendments citing it."""
+    the pipeline actually builds it: a request, then amendments citing it.
+
+    An amendment can no longer bring a slice into existence by naming one,
+    so the fixture registers `listings` first. It does that straight on the
+    manifest rather than through proposal-and-ratify: this is setup, and
+    driving the ratification flow here would make every test that exercises
+    that flow start from a project that had already been through it.
+    A test needing another slice calls `register_slice`.
+    """
     _, msg = post(store, prompts, "initiate", "a marketplace", project="m")
     mid = msg["message_id"]
     call(store, prompts, "POST", "/projects", {"project": "m", "in_response_to": mid})
@@ -59,6 +81,7 @@ def seed(store, prompts):
             "entries": [{"layer": "I", "title": "Buyers can find sellers"}],
         },
     )
+    register_slice(store, "listings")
     for layer, title, parent in (
         ("B", "A buyer can search listings", "I·01"),
         ("A", "Search runs through an index", "B·01"),
@@ -584,6 +607,7 @@ def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompt
         "/projects/m/amendments",
         {"in_response_to": mid, "entries": [{"layer": "I", "title": "find sellers"}]},
     )
+    register_slice(store, "listings")
     status, payload = call(
         store,
         prompts,
@@ -778,6 +802,7 @@ def test_get_entry_for_a_missing_identifier_is_refused(store, prompts):
 def _second_slice(store, prompts, mid, depends_on=None):
     """A second vertical column, whose spec optionally needs something from
     the first slice's spec."""
+    register_slice(store, "payouts")
     for layer, title, parent in (
         ("B", "A seller is paid out", "I·01"),
         ("A", "Payouts run nightly", "B·02"),
@@ -831,6 +856,7 @@ def test_an_amendment_depending_across_layers_is_refused(store, prompts):
     """depends_on is horizontal. A cross-layer edge is a derivation wearing
     the wrong label, and the orphan gate would never see it."""
     mid = seed(store, prompts)
+    register_slice(store, "payouts")
     status, payload = call(
         store,
         prompts,
@@ -856,6 +882,7 @@ def test_an_amendment_depending_across_layers_is_refused(store, prompts):
 
 def test_an_amendment_depending_on_nothing_that_exists_is_refused(store, prompts):
     mid = seed(store, prompts)
+    register_slice(store, "payouts")
     _, payload = call(
         store,
         prompts,
@@ -916,6 +943,7 @@ def test_cross_cutting_entries_arrive_undeclared(store, prompts):
     anyway -- that is the entire operational difference between a
     cross-cutting slice and an ordinary one."""
     mid = seed(store, prompts)
+    register_slice(store, "audit")
     for layer, title, parent in (
         ("B", "Every state change is recorded", "I·01"),
         ("A", "An append-only event log", "B·02"),
@@ -948,6 +976,7 @@ def test_cross_cutting_entries_arrive_undeclared(store, prompts):
 
 def test_a_cross_cutting_slice_does_not_read_itself(store, prompts):
     mid = seed(store, prompts)
+    register_slice(store, "audit")
     call(
         store,
         prompts,
@@ -974,6 +1003,8 @@ def test_several_slices_can_be_cross_cutting_at_once(store, prompts):
     """A type, not a reserved name -- so audit and telemetry are two separate
     columns, both ambient."""
     mid = seed(store, prompts)
+    register_slice(store, "audit")
+    register_slice(store, "telemetry")
     for name in ("audit", "telemetry"):
         call(
             store,
@@ -1025,6 +1056,7 @@ def _spec_in(store, prompts, mid, slice_name, title, parent, depends_on=None):
 def _two_columns(store, prompts):
     """listings (S·01) and payouts (S·02), no dependency between them yet."""
     mid = seed(store, prompts)
+    register_slice(store, "payouts")
     for layer, title, parent in (
         ("B", "A seller is paid out", "I·01"),
         ("A", "Payouts run nightly", "B·02"),
@@ -1075,6 +1107,7 @@ def test_a_one_way_dependency_between_slices_is_admitted(store, prompts):
 
 def test_a_cross_cutting_slice_reaching_into_a_feature_slice_is_refused(store, prompts):
     mid = seed(store, prompts)
+    register_slice(store, "audit")
     for layer, title, parent in (
         ("B", "Every state change is recorded", "I·01"),
         ("A", "An append-only event log", "B·02"),
@@ -1141,6 +1174,7 @@ def test_no_work_package_is_issued_while_slices_cycle(store, prompts):
 
 def _audit_column(store, prompts, mid):
     """A cross-cutting slice with a full column, classified as one."""
+    register_slice(store, "audit")
     for layer, title, parent in (
         ("B", "Every state change is recorded", "I·01"),
         ("A", "An append-only event log", "B·02"),
@@ -2181,3 +2215,30 @@ def test_a_placeholder_may_not_point_at_itself(store, prompts):
     )
     assert status == 400
     assert "itself" in payload["error"]
+
+
+# -- a slice is ratified into existence, never mentioned into it ------------
+
+
+def test_an_amendment_naming_an_unratified_slice_is_refused(store, prompts):
+    """A slice is expensive to get wrong -- slices split and never merge --
+    so it comes from ratification or from a split, never from a session
+    typing a name. Before this, a typo created an eighth slice and the first
+    sign of it was the wave order."""
+    mid = seed(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listingz",
+            "in_response_to": mid,
+            "entries": [
+                {"layer": "B", "title": "A seller lists an item",
+                 "derives_from": ["I·01"]},
+            ],
+        },
+    )
+    assert status == 400
+    assert "listingz" in payload["error"]

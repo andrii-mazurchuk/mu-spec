@@ -80,6 +80,10 @@ Placeholders work in `depends_on` and `emits_into`. Not in `derives_from`:
 that points one layer up, and an amendment writes one layer, so an entry in
 this batch is never a legal parent.
 
+**`slice` must already exist.** A slice comes from ratifying a slicing
+proposal, or from splitting one. Naming a new one here is refused. Slices
+split and never merge, so one created by a typo is permanent.
+
 ---
 
 ## What will be refused, and why

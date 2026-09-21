@@ -331,6 +331,22 @@ def submit_amendment(
 
     existing = store.load_all(project)
     manifest = store.load_manifest(project)
+
+    # A slice is expensive to get wrong and impossible to undo -- slices
+    # split and never merge -- so it comes into existence exactly two ways: a
+    # human ratifies a slicing proposal, or an existing slice is split. Not
+    # by a session naming one. This used to be a `setdefault`, which meant a
+    # typo created a slice and the first sign of it was the wave order, and
+    # meant a session could re-cut the project on its own judgement with
+    # nothing in the way.
+    if slice_name and slice_name not in manifest.slices:
+        known = sorted(manifest.slices)
+        raise ServiceError(
+            f"unknown slice {slice_name!r}. A slice comes from ratifying a "
+            "slicing proposal or from splitting an existing slice, never "
+            "from an amendment naming one. Known slices: "
+            + (", ".join(known) if known else "none -- slicing is not ratified yet")
+        )
     report_before = _gate_report(Graph(existing), manifest)
     before = {(f["kind"], f["id"]) for f in report_before["findings"]}
     before_slices = {
@@ -433,10 +449,9 @@ def submit_amendment(
     # caught breaking the structure one write *after* it broke it.
     prospective_manifest = Manifest.from_json(manifest.to_json())
     if slice_name:
-        target = prospective_manifest.slices.setdefault(
-            slice_name, Slice(name=slice_name)
+        prospective_manifest.slices[slice_name].members.update(
+            e.id for e in staged
         )
-        target.members.update(e.id for e in staged)
 
     new_orphans = [
         f

@@ -196,6 +196,11 @@ emission and it has no outbound edges left, so the cycle cannot exist.
 Slices can be **split** later. They can **never be merged** — merging destroys
 identifier locality.
 
+Splitting and ratification are the **only** two ways a slice comes into
+existence. An amendment naming an unknown slice is refused — a slice is
+expensive to get wrong and impossible to undo, so it is never created as a
+side effect of writing an entry.
+
 ---
 
 ## 5. Storage and retrieval
