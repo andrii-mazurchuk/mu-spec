@@ -196,10 +196,17 @@ emission and it has no outbound edges left, so the cycle cannot exist.
 Slices can be **split** later. They can **never be merged** — merging destroys
 identifier locality.
 
+A split moves membership and nothing else: no identifier changes, so every
+historical reference still resolves. It is gated before it is written, because
+two halves that referred to each other inside one slice become two slices
+referring to each other, and that can be a cycle that did not exist a moment
+earlier. Discovering it afterwards would leave the manifest broken with only a
+merge to fix it.
+
 Splitting and ratification are the **only** two ways a slice comes into
 existence. An amendment naming an unknown slice is refused — a slice is
-expensive to get wrong and impossible to undo, so it is never created as a
-side effect of writing an entry.
+expensive to get wrong and impossible to undo, so it is never created as a side
+effect of writing an entry.
 
 ---
 

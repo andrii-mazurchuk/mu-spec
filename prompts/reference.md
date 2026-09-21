@@ -72,7 +72,7 @@ malformed one.
 `"depends_on": ["#0"]` means the first entry in this batch. Identifiers are
 allocated on commit, so before this you had two options and both were wrong:
 guess a number, or leave the edge out and put the ordering in prose. A guess
-naming something that does not exist is caught -- but a guess that lands on a
+naming something that does not exist is caught — but a guess that lands on a
 real identifier belonging to a *different* entry is a well-formed edge saying
 something false, and there is no gate that can see it.
 
@@ -81,7 +81,7 @@ that points one layer up, and an amendment writes one layer, so an entry in
 this batch is never a legal parent.
 
 **`slice` must already exist.** A slice comes from ratifying a slicing
-proposal, or from splitting one. Naming a new one here is refused. Slices
+proposal, or from `split_slice`. Naming a new one here is refused. Slices
 split and never merge, so one created by a typo is permanent.
 
 ---

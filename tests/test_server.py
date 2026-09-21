@@ -1939,6 +1939,7 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "get_doc": "get_doc",
         "propose": "submit_proposal",
         "get_proposal": "get_proposal",
+        "split_slice": "split_slice",
         # Ratifying and rejecting are the human's decision. Deliberately not
         # offered as tools: a slicing session that could ratify its own
         # proposal would be the one thing its contract forbids.
@@ -2242,3 +2243,152 @@ def test_an_amendment_naming_an_unratified_slice_is_refused(store, prompts):
     )
     assert status == 400
     assert "listingz" in payload["error"]
+
+
+# -- splitting a slice ------------------------------------------------------
+
+
+def column(store, prompts, mid, slice_name="listings"):
+    """One more complete vertical column inside an existing slice, so there
+    is something a split can take out."""
+    out = []
+    parent = "I·01"
+    for layer, title in (
+        ("B", "A seller lists an item"),
+        ("A", "Listings are written through one writer"),
+        ("S", "Use the stdlib json module"),
+    ):
+        _, payload = call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {
+                "slice": slice_name,
+                "in_response_to": mid,
+                "entries": [
+                    {"layer": layer, "title": title, "derives_from": [parent]}
+                ],
+            },
+        )
+        parent = payload["created"][0]
+        out.append(parent)
+    return out
+
+
+def test_a_slice_splits_into_a_new_one_without_renumbering(store, prompts):
+    mid = seed(store, prompts)
+    moved = column(store, prompts, mid)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/listings/split",
+        {"into": "discovery", "members": moved},
+    )
+    assert status == 200, payload
+    assert payload["source"] == "listings"
+    assert payload["into"] == "discovery"
+    assert payload["moved"] == sorted(moved)
+
+    _, spine = call(store, prompts, "GET", "/projects/m/spine")
+    owner = {r["id"]: r["slice"] for r in spine["spine"]}
+    for identifier in moved:
+        assert owner[identifier] == "discovery"
+    assert owner["B·01"] == "listings"
+
+
+def test_a_slice_may_not_be_split_into_an_existing_one(store, prompts):
+    """That is a merge, and merging destroys identifier locality. There is
+    deliberately no API for it, in either direction."""
+    mid = seed(store, prompts)
+    moved = column(store, prompts, mid)
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/listings/split",
+        {"into": "discovery", "members": moved},
+    )
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/listings/split",
+        {"into": "discovery", "members": ["B·01"]},
+    )
+    assert status == 400
+    assert "merge" in payload["error"]
+
+
+def test_splitting_an_unknown_slice_is_refused(store, prompts):
+    seed(store, prompts)
+    status, _ = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/nope/split",
+        {"into": "discovery", "members": ["B·01"]},
+    )
+    assert status == 400
+
+
+def test_splitting_something_the_slice_does_not_own_is_refused(store, prompts):
+    mid = seed(store, prompts)
+    column(store, prompts, mid)
+    status, _ = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/listings/split",
+        {"into": "discovery", "members": ["I·01"]},
+    )
+    assert status == 400
+
+
+def test_split_slice_is_declared_as_a_tool(store, prompts):
+    _, payload = call(store, prompts, "GET", "/tools")
+    names = {t["name"] for t in payload["tools"]}
+    assert "split_slice" in names
+
+
+def test_a_split_that_would_create_a_cycle_is_refused(store, prompts):
+    """Two halves that referred to each other inside one slice become two
+    slices referring to each other. The manifest is written only after the
+    projected graph is checked, because the repair for a cycle introduced
+    here would be a merge -- the one operation that does not exist."""
+    mid = seed(store, prompts)
+
+    def amend(entry):
+        _, payload = call(
+            store,
+            prompts,
+            "POST",
+            "/projects/m/amendments",
+            {"slice": "listings", "in_response_to": mid, "entries": [entry]},
+        )
+        return payload["created"][0]
+
+    b2 = amend({"layer": "B", "title": "A seller is paid", "derives_from": ["I·01"]})
+    # A·01 (staying) needs A·02 (leaving) -- listings will depend on discovery.
+    a2 = amend({"layer": "A", "title": "Payouts run nightly", "derives_from": [b2]})
+    amend({"layer": "A", "title": "Search reads the ledger",
+           "derives_from": ["B·01"], "depends_on": [a2], "supersedes": "A·01"})
+    # S·02 (leaving) needs S·01 (staying) -- discovery will depend on listings.
+    s2 = amend({"layer": "S", "title": "ledger.py", "derives_from": [a2],
+                "depends_on": ["S·01"]})
+
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/slices/listings/split",
+        {"into": "discovery", "members": [a2, s2]},
+    )
+    assert status == 409, payload
+    assert payload["split"] is False
+    assert payload["slice_findings"]
+
+    # And nothing moved: the manifest is untouched by a refused split.
+    _, spine = call(store, prompts, "GET", "/projects/m/spine")
+    assert {r["slice"] for r in spine["spine"] if r["slice"]} == {"listings"}

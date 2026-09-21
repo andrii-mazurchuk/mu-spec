@@ -971,6 +971,114 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
 # -- spec to code -----------------------------------------------------------
 
 
+def split_slice(
+    store: ProjectStore,
+    project: str,
+    source: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+) -> dict:
+    """Move part of a slice out into a NEW slice.
+
+    The only correction available to a cut that turned out too coarse, and
+    the reason it is the only one is that merging destroys identifier
+    locality -- so a target that already exists is refused, and there is
+    deliberately no API in the other direction.
+
+    Nothing is renumbered. Identifiers encode layer and creation order and
+    never slice, which is exactly what makes this cheap: membership moves,
+    every identifier stays, and every historical reference still resolves.
+
+    Gated before it is written rather than after. A split changes the
+    projected slice-dependency graph -- two halves that referred to each
+    other inside one slice become two slices referring to each other -- so
+    it can produce a cycle that did not exist a moment earlier. Discovering
+    that afterwards would mean the manifest is already broken and the repair
+    is a merge, which is the one thing that cannot be done.
+    """
+    into = body.get("into")
+    if not isinstance(into, str) or not into.strip():
+        raise ServiceError(
+            "'into' is required -- the name of the new slice to split into"
+        )
+    into = into.strip()
+    raw = body.get("members")
+    if not isinstance(raw, list) or not raw:
+        raise ServiceError(
+            "'members' must be a non-empty list of identifiers to move out"
+        )
+    moving = set(_parse_ids(raw, "members"))
+
+    manifest = store.load_manifest(project)
+    if source not in manifest.slices:
+        raise ServiceError(
+            f"unknown slice {source!r}. Known: "
+            + (", ".join(sorted(manifest.slices)) or "none")
+        )
+    if into in manifest.slices:
+        raise ServiceError(
+            f"slice {into!r} already exists -- slices split, never merge. "
+            "Merging destroys identifier locality, so the operation does not "
+            "exist in either direction"
+        )
+    held = manifest.slices[source].members
+    stray = moving - held
+    if stray:
+        raise ServiceError(
+            f"{', '.join(sorted(str(i) for i in stray))} "
+            f"{'is' if len(stray) == 1 else 'are'} not in slice {source!r} -- "
+            "a split takes entries out of one slice, and an entry belongs to "
+            "exactly one"
+        )
+
+    graph = store.load_graph(project)
+    before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
+    prospective = Manifest.from_json(manifest.to_json())
+    prospective.slices[source].members -= moving
+    prospective.slices[into] = Slice(name=into, members=set(moving))
+    conflicts = [
+        f for f in slice_gates(prospective, graph) if (f.kind, f.slice) not in before
+    ]
+    if conflicts:
+        return {
+            "project": project,
+            "source": source,
+            "into": into,
+            "split": False,
+            "reason": "the split would break the slice structure",
+            "slice_findings": [
+                {"kind": f.kind, "slice": f.slice, "detail": f.detail}
+                for f in conflicts
+            ],
+        }
+
+    try:
+        store.split_slice(project, source, into, moving)
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+
+    after = store.load_manifest(project)
+    if events is not None:
+        events.record(
+            lc.SLICING,
+            project,
+            now_fn,
+            refs=sorted(str(i) for i in moving),
+            source=source,
+            into=into,
+            note=body.get("note", ""),
+        )
+    return {
+        "project": project,
+        "source": source,
+        "into": into,
+        "split": True,
+        "moved": sorted(str(i) for i in moving),
+        "remaining": sorted(str(i) for i in after.slices[source].members),
+    }
+
+
 def declare_module(store: ProjectStore, project: str, body: dict) -> dict:
     """Record which spec entries a module implements.
 

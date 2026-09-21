@@ -156,9 +156,9 @@ def _tools() -> list[dict[str, Any]]:
             "'emits_into' only; 'derives_from' points one layer up and an "
             "amendment writes one layer, so a sibling is never a parent. "
             "'slice' must name a slice that already exists -- one comes from "
-            "ratifying a slicing or from splitting an existing slice, never "
-            "from being named here, because slices split and never merge and "
-            "one created by a typo cannot be undone.",
+            "ratifying a slicing or from split_slice, never from being "
+            "named here, because slices split and never merge and one "
+            "created by a typo cannot be undone.",
             "POST",
             "/projects/{project}/amendments",
             {
@@ -184,6 +184,31 @@ def _tools() -> list[dict[str, Any]]:
             "/projects/{project}/slices/{slice}/type",
             {"project": s, "slice": s, "type": s},
             ("project", "slice", "type"),
+        ),
+        tool(
+            "split_slice",
+            "Move part of a slice out into a NEW slice, named by 'into', "
+            "carrying the identifiers listed in 'members'. The only "
+            "correction available to a cut that turned out too coarse: "
+            "slices split and never merge, because merging destroys "
+            "identifier locality, so a target that already exists is refused "
+            "and there is deliberately no operation in the other direction. "
+            "Nothing is renumbered -- identifiers encode layer and creation "
+            "order, never slice, so membership moves and every historical "
+            "reference still resolves. Refused if the split would break the "
+            "slice structure, which it can: two halves that referred to each "
+            "other inside one slice become two slices referring to each "
+            "other, and that may be a cycle.",
+            "POST",
+            "/projects/{project}/slices/{slice}/split",
+            {
+                "project": s,
+                "slice": s,
+                "into": s,
+                "members": {"type": "array", "items": {"type": "string"}},
+                "note": s,
+            },
+            ("project", "slice", "into", "members"),
         ),
         tool(
             "raise_issue",
@@ -628,6 +653,11 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
         re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/type$"),
         "classify_slice",
     ),
+    (
+        "POST",
+        re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/split$"),
+        "split_slice",
+    ),
     # Reads.
     ("GET", re.compile(r"^/projects$"), "list_projects"),
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
@@ -893,6 +923,12 @@ def handle(
                 store, project, params["slice"], body or {}, events, now_fn
             )
             return (200 if result["recorded"] else 409), JSON, json.dumps(result)
+
+        if name == "split_slice":
+            result = service.split_slice(
+                store, project, params["slice"], body or {}, events, now_fn
+            )
+            return (200 if result["split"] else 409), JSON, json.dumps(result)
 
         if name == "declare_module":
             return (
