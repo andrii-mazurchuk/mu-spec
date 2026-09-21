@@ -21,3 +21,8 @@ demo/
 
 # not a uv project -- pip + pyproject only
 uv.lock
+
+# session continuity: what one session tells the next. Local working notes
+# about who did what and what to do next, not project state -- they age out
+# within days and say nothing about how this unit behaves.
+.claude/handoff/
