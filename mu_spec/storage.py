@@ -435,6 +435,51 @@ class ProjectStore:
             sl.members.update(e.id for e in entries)
             self.save_manifest(project, manifest)
 
+    def settle_holding(self, project: str) -> list[Identifier]:
+        """Move behaviour out of the holding file into the slice that now owns it.
+
+        Behaviour is written before slicing exists, so it lands in
+        `_unassigned.jsonl`. Ratification gives those entries an owner, and
+        until this ran it gave them nothing else: the entry stayed in the
+        holding file while the manifest said it belonged to a slice, so the
+        tree and the manifest disagreed about where it lived.
+
+        That was survivable only for as long as nothing rewrote a slice's
+        files from membership. `split_slice` does exactly that, and wrote a
+        second copy into the slice file while the first sat in the holding
+        file -- at which point `load_all` returns the identifier twice and the
+        graph refuses to load at all. Not a bad slice and not a bad split: the
+        project simply stops opening.
+
+        Idempotent, and safe to call when there is nothing to move.
+        """
+        path = self._project_dir(project) / LAYER_DIRS[BEHAVIOUR_LAYER] / HOLDING_FILE
+        held = self._read_file(path)
+        if not held:
+            return []
+        manifest = self.load_manifest(project)
+        staying: list[Entry] = []
+        moving: dict[str, list[Entry]] = {}
+        for entry in held:
+            owner = manifest.slice_of(entry.id)
+            if owner is None:
+                staying.append(entry)
+            else:
+                moving.setdefault(owner, []).append(entry)
+        if not moving:
+            return []
+        for name, entries in moving.items():
+            target = self._file_for(project, BEHAVIOUR_LAYER, name)
+            existing = self._read_file(target)
+            have = {e.id for e in existing}
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                render_entries(existing + [e for e in entries if e.id not in have]),
+                encoding="utf-8",
+            )
+        path.write_text(render_entries(staying), encoding="utf-8")
+        return [e.id for group in moving.values() for e in group]
+
     def load_all(self, project: str) -> list[Entry]:
         path = self._project_dir(project)
         entries = self._read_file(path / INTENT_FILE)

@@ -2392,3 +2392,70 @@ def test_a_split_that_would_create_a_cycle_is_refused(store, prompts):
     # And nothing moved: the manifest is untouched by a refused split.
     _, spine = call(store, prompts, "GET", "/projects/m/spine")
     assert {r["slice"] for r in spine["spine"] if r["slice"]} == {"listings"}
+
+
+def test_ratifying_files_behaviour_under_the_slice_it_was_given(store, prompts):
+    """Behaviour is written before slicing exists, so it lands in a holding
+    file. Ratification gives it an owner -- and must move it, or the file it
+    sits in disagrees with the manifest that owns it. Latent until something
+    rewrites a slice's file from membership, at which point the entry is in
+    two files and the graph refuses to load at all."""
+    _, msg = post(store, prompts, "initiate", "a marketplace", project="m")
+    mid = msg["message_id"]
+    call(store, prompts, "POST", "/projects", {"project": "m", "in_response_to": mid})
+    call(store, prompts, "POST", "/projects/m/amendments",
+         {"in_response_to": mid,
+          "entries": [{"layer": "I", "title": "Buyers can find sellers"}]})
+    call(store, prompts, "POST", "/projects/m/amendments",
+         {"in_response_to": mid,
+          "entries": [
+              {"layer": "B", "title": "search", "derives_from": ["I·01"]},
+              {"layer": "B", "title": "filter", "derives_from": ["I·01"]},
+          ]})
+
+    held = store.root() / "m" / "behaviour" / "_unassigned.jsonl"
+    assert held.exists() and "B·01" in held.read_text(encoding="utf-8")
+
+    call(store, prompts, "POST", "/projects/m/slicing/proposal",
+         {"proposal": {"listings": ["B·01"], "filters": ["B·02"]}})
+    assert call(store, prompts, "POST", "/projects/m/slicing/proposal/ratify", {})[0] == 200
+
+    # The holding file no longer claims what now has an owner.
+    assert "B·01" not in held.read_text(encoding="utf-8")
+    assert "B·01" in (store.root() / "m" / "behaviour" / "listings.jsonl").read_text(encoding="utf-8")
+
+    # And the graph still loads, with each entry exactly once.
+    status, spine = call(store, prompts, "GET", "/projects/m/spine")
+    assert status == 200, spine
+    ids = [r["id"] for r in spine["spine"]]
+    assert sorted(ids) == ["B·01", "B·02", "I·01"]
+
+
+def test_a_split_after_ratification_does_not_duplicate_held_behaviour(store, prompts):
+    """The path that made the bug above visible: split_slice rewrites a
+    slice's files from membership, so an entry still sitting in the holding
+    file ends up in both."""
+    _, msg = post(store, prompts, "initiate", "a marketplace", project="m")
+    mid = msg["message_id"]
+    call(store, prompts, "POST", "/projects", {"project": "m", "in_response_to": mid})
+    call(store, prompts, "POST", "/projects/m/amendments",
+         {"in_response_to": mid,
+          "entries": [{"layer": "I", "title": "Buyers can find sellers"}]})
+    call(store, prompts, "POST", "/projects/m/amendments",
+         {"in_response_to": mid,
+          "entries": [
+              {"layer": "B", "title": "search", "derives_from": ["I·01"]},
+              {"layer": "B", "title": "filter", "derives_from": ["I·01"]},
+          ]})
+    call(store, prompts, "POST", "/projects/m/slicing/proposal",
+         {"proposal": {"listings": ["B·01", "B·02"]}})
+    call(store, prompts, "POST", "/projects/m/slicing/proposal/ratify", {})
+
+    status, payload = call(store, prompts, "POST",
+        "/projects/m/slices/listings/split", {"into": "filters", "members": ["B·02"]})
+    assert status == 200, payload
+
+    status, spine = call(store, prompts, "GET", "/projects/m/spine")
+    assert status == 200, spine
+    ids = [r["id"] for r in spine["spine"]]
+    assert len(ids) == len(set(ids)), f"duplicated: {ids}"

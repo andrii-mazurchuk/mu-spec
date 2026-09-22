@@ -221,7 +221,6 @@ def main(argv=None) -> int:
                 "derives_from": ["I·01"],
             },
         ],
-        slice_name="discovery",
     )
     amend(
         P,
@@ -235,12 +234,32 @@ def main(argv=None) -> int:
                 "derives_from": ["I·02"],
             }
         ],
-        slice_name="payouts",
     )
     spine(P, "after behaviour")
     gates(P)
     print("\n  Intent is now served. Behaviour is not -- knowledge has moved down")
     print("  one layer, and the gate says exactly how far it has got.")
+
+    # ---------------------------------------------------------------- 2a
+    step("2a.", "SLICE — cut once, after behaviour, ratified by a human")
+    status, _ = call(
+        "POST",
+        f"/projects/{P}/slicing/proposal",
+        {
+            "proposal": {"discovery": ["B·01", "B·02"], "payouts": ["B·03"]},
+            "note": "grouped by the domain object each behaviour reads and writes",
+        },
+    )
+    print(f"  submit_proposal -> {status} (now pending a human)")
+    status, ratified = call("POST", f"/projects/{P}/slicing/proposal/ratify", {})
+    print(f"  ratify          -> {status}")
+    show("slices", sorted(ratified["slices"]))
+    print("\n  Behaviour above was written with NO slice and went to a holding")
+    print("  place -- slices are cut after behaviour is complete, so there was")
+    print("  nothing to file it under yet. Ratification is what gives those")
+    print("  entries an owner, and it is the only thing that can: an amendment")
+    print("  naming a slice that does not exist is refused, because slices split")
+    print("  and never merge and one created by a typo is permanent.")
 
     # ---------------------------------------------------------------- 3
     step("3.", "THE GATE REFUSES AN UNSOUND AMENDMENT")
@@ -399,6 +418,11 @@ def main(argv=None) -> int:
         ],
     )
     intent_id = call("GET", f"/projects/{P}/spine?layer=I")[1]["spine"][-1]["id"]
+    # `audit` does not exist yet, and naming it on an amendment will not bring
+    # it into being. Ratify it first, empty, so the entries below have an owner
+    # to go to -- ratification and splitting are the only two doors.
+    call("POST", f"/projects/{P}/slicing/proposal", {"proposal": {"audit": []}})
+    call("POST", f"/projects/{P}/slicing/proposal/ratify", {})
     parent = intent_id
     for layer, title, body in (
         ("B", "Every state change is recorded with actor, action and time",

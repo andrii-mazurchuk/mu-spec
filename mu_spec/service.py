@@ -1561,10 +1561,15 @@ def ratify(store: ProjectStore, project: str, body: dict) -> dict:
         )
 
     store.save_manifest(project, manifest)
+    # Membership is only half of it. The entries were written before any slice
+    # existed and are sitting in the holding file; leaving them there makes the
+    # tree disagree with the manifest that now owns them.
+    filed = store.settle_holding(project)
     _write_proposal(store, project, {"status": "none", "ratified": state["proposal"]})
     return {
         "project": project,
         "ratified": True,
+        "filed": sorted(str(i) for i in filed),
         "slices": {n: sorted(str(i) for i in ids) for n, ids in members.items()},
     }
 
