@@ -119,6 +119,41 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .slice em{font-style:normal;color:var(--dim);font-size:11px;display:block;margin-top:2px}
 .slice code{font-size:10.5px;color:var(--dim)}
 
+/* ── modules ────────────────────────────────────────────────────── */
+/* The gate reads first, because that is the question: a spec entry no
+   module claims is work nobody can be given, so the ticket step cannot
+   start. Everything below it is the detail behind that one verdict. */
+.gate{display:flex;align-items:center;gap:14px;padding:13px 16px;border-radius:var(--radius);
+  margin-bottom:20px;border:1px solid var(--rule)}
+.gate b{font-size:15px;display:block}
+.gate em{font-style:normal;font-size:12.5px;color:var(--ink-soft);display:block;margin-top:2px}
+.gate.blocked{background:var(--warn-bg);border-color:var(--warn)}
+.gate.blocked b{color:var(--warn)}
+.gate.open{background:var(--ok-bg);border-color:var(--ok)}
+.gate.open b{color:var(--ok)}
+.gate .big{font:600 27px/1 var(--sans);font-variant-numeric:tabular-nums;flex:none;
+  min-width:74px;text-align:center}
+
+.modslice{margin-bottom:22px;border:1px solid var(--rule);border-left:3px solid var(--sl);
+  border-radius:var(--radius);background:var(--panel);overflow:hidden}
+.modslice > h4{margin:0;padding:8px 13px;background:var(--panel-alt);font:600 12.5px var(--sans);
+  color:var(--ink);display:flex;align-items:center;gap:9px}
+.modslice > h4 em{font-style:normal;color:var(--dim);font-size:11px;font-weight:500;
+  margin-left:auto;font-variant-numeric:tabular-nums}
+.specrow{display:flex;gap:12px;align-items:flex-start;padding:7px 13px;
+  border-top:1px solid var(--rule-soft)}
+.specrow code{font:600 11.5px var(--mono);color:var(--ink);flex:none;padding-top:1px;width:46px}
+.specrow .ttl{flex:1;min-width:0;font-size:12.5px;color:var(--ink-soft)}
+.specrow .files{flex:none;max-width:47%;text-align:right}
+.specrow.gap{background:var(--warn-bg)}
+.specrow.gap .ttl{color:var(--ink)}
+.nofile{font:500 11.5px var(--mono);color:var(--warn)}
+.file{display:inline-block;background:var(--panel-alt);border:1px solid var(--rule);
+  border-radius:5px;padding:1px 6px;margin:1px 0 1px 4px;font-family:var(--mono);
+  font-size:11.5px;color:var(--ink);cursor:pointer}
+.file:hover{border-color:var(--brand);color:var(--brand)}
+.file.shared{border-color:var(--warn);color:var(--warn)}
+
 table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:24px}
 th{text-align:left;color:var(--dim);font-weight:600;font-size:10px;letter-spacing:.06em;
   text-transform:uppercase;padding:5px 7px;border-bottom:1px solid var(--rule)}
@@ -330,6 +365,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     <button class="view" data-v="order">Order</button>
     <button class="view" data-v="read">Read</button>
     <button class="view" data-v="waves">Waves</button>
+    <button class="view" data-v="modules">Modules<span class="dot" id="mdot" hidden></span></button>
     <button class="view" data-v="queues">Queues<span class="dot" id="qdot" hidden></span></button>
     <h2>Slices</h2>
     <div id="legend"></div>
@@ -377,6 +413,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     </div>
     <div id="read" class="hide"></div>
     <div class="pane hide" id="waves"></div>
+    <div class="pane hide" id="modules"></div>
     <div class="pane hide" id="queues"></div>
   </section>
 
@@ -519,6 +556,7 @@ function signatures(d){
     gates: J(d.gates),
     strip: J([d.locality, (d.gates||{}).sound, (d.gates||{}).complete]),
     proposal: J(d.proposal),
+    modules: J(d.modules),
     queues: J([d.issues, d.requests])
   };
 }
@@ -1383,6 +1421,139 @@ function drawWaves(){
 }
 
 /* =============================================================
+   MODULES
+
+   A module is a file path with a list of spec identifiers attached, and
+   it is the bottom of the chain: code is never an entry, so this backlink
+   is the only thing tying a file to the reasoning that produced it.
+
+   Drawn as coverage rather than as a graph. The relation is many-to-many
+   in both directions -- one file implements eight entries, one entry is
+   implemented by four files -- so a column in the layered spine reports a
+   single owner for something that has several, and a bipartite diagram
+   spends its space on the links rather than on the answer. The question a
+   reader actually has is "is every entry claimed, and by what", which is a
+   list.
+
+   The gate leads, because an entry no module claims is work nobody can be
+   handed: the ticket step cannot start while one exists.
+   ============================================================= */
+function moduleIndex(){
+  const by = {};                      // spec id -> paths implementing it
+  const slicesOf = {};                // path -> set of slices it reaches
+  for(const m of STATE.modules){
+    for(const id of (m.implements || [])){
+      (by[id] = by[id] || []).push(m.path);
+      const sl = (STATE.byId[id] || {}).slice;
+      if(sl) (slicesOf[m.path] = slicesOf[m.path] || new Set()).add(sl);
+    }
+  }
+  const spec = STATE.entries.filter(e => e.layer === LIX.S && !e.module);
+  const gaps = spec.filter(e => !(by[e.id] || []).length);
+  const shared = Object.entries(slicesOf)
+    .filter(([, s]) => s.size > 1)
+    .map(([path, s]) => ({path, slices: [...s].sort()}));
+  return {by, spec, gaps, shared, slicesOf};
+}
+
+function drawModules(){
+  const el = $("modules"), ix = moduleIndex();
+  $("mdot").hidden = !ix.gaps.length;
+
+  if(!ix.spec.length){
+    el.innerHTML = `<h3>Modules</h3><p class="muted">No spec entries yet. A module
+      declares which of them a file implements, so there is nothing to declare
+      against until the spec layer exists.</p>`;
+    return;
+  }
+
+  const covered = ix.spec.length - ix.gaps.length;
+  const gate = ix.gaps.length
+    ? `<div class="gate blocked"><span class="big">${ix.gaps.length}</span><span>
+         <b>Not ready to become tickets</b>
+         <em>${ix.gaps.length} spec ${ix.gaps.length===1?"entry has":"entries have"} no module.
+         A ticket is a file and its reasons, so an entry nothing implements is work
+         nobody can be handed — and the write set it would appear in comes back empty.</em>
+       </span></div>`
+    : `<div class="gate open"><span class="big">${covered}</span><span>
+         <b>Every spec entry has a module</b>
+         <em>Each one names the file that will carry it, so every entry can be turned
+         into a unit of work with a path attached.</em>
+       </span></div>`;
+
+  const shared = ix.shared.length
+    ? `<div class="gate blocked" style="margin-top:-8px">
+         <span class="big">${ix.shared.length}</span><span>
+         <b>${ix.shared.length===1?"One file serves":"Files serve"} more than one slice</b>
+         <em>${ix.shared.map(s=>`<code>${esc(s.path)}</code> — ${esc(s.slices.join(" + "))}`).join("<br>")}
+         <br>Each is editable whenever either slice changes, so the write ownership that
+         holds strictly for entries does not hold for the file.</em></span></div>`
+    : "";
+
+  const names = Object.keys(STATE.slices).sort();
+  const sections = names.map(name => {
+    const rows = ix.spec.filter(e => e.slice === name);
+    if(!rows.length) return "";
+    const missing = rows.filter(e => !(ix.by[e.id] || []).length).length;
+    return `<div class="modslice" style="--sl:${hueOf(name)}">
+      <h4>${esc(name)}${isXC(name)?" ✳":""}
+        <em>${rows.length - missing}/${rows.length} covered</em></h4>
+      ${rows.map(e => {
+        const files = ix.by[e.id] || [];
+        return `<div class="specrow${files.length?"":" gap"}">
+          <code>${esc(e.id)}</code>
+          <span class="ttl">${esc(e.title)}</span>
+          <span class="files">${
+            files.length
+              ? files.map(p=>`<button class="file${
+                  (ix.slicesOf[p]||new Set()).size>1?" shared":""
+                }" data-path="${esc(p)}" title="${esc(p)}">${esc(shortPath(p))}</button>`).join("")
+              : `<span class="nofile">no module</span>`}</span>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+
+  el.innerHTML = `<h3>Modules — spec to code</h3>${gate}${shared}${sections}
+    <p class="muted" style="max-width:66ch">Code is not an entry in this graph and never is.
+    A module is the backlink: a file path and the spec identifiers it implements, declared
+    through <code>declare_module</code>. It is not a layer and not a grouping under slices —
+    a slice is a partition, where every entry below intent belongs to exactly one, while a
+    module is a many-to-many pointer in both directions.</p>`;
+
+  for(const b of el.querySelectorAll(".file"))
+    b.onclick = () => showModule(b.dataset.path);
+}
+
+const shortPath = p => {
+  const s = String(p), parts = s.split(/[\\/]/);
+  return parts.length > 1 ? parts.slice(-2).join("/") : s;
+};
+
+/* The inspector is the same column the spine uses, so a module opened from
+   here reads like an entry opened from there. */
+function showModule(path){
+  const m = STATE.modules.find(x => x.path === path);
+  if(!m) return;
+  const ix = moduleIndex();
+  const slices = [...(ix.slicesOf[path] || new Set())].sort();
+  const impl = (m.implements || []);
+  $("detail").innerHTML =
+    `<h3>Module</h3><p><code>${esc(path)}</code></p>
+     <div class="body">Code is not an entry in this graph. This is the backlink: the file
+declares which spec entries it implements, and nothing else about it is stored here.</div>
+     ${slices.length > 1 ? `<p class="warnish">Serves ${slices.length} slices —
+       ${esc(slices.join(" + "))}. It is in the write set of either one's change.</p>` : ""}
+     <div class="edgelist"><span>implements — ${impl.length} spec
+       ${impl.length===1?"entry":"entries"}</span>
+       ${impl.map(i=>`<button class="pill" data-go="${esc(i)}">${esc(i)}</button>`).join("")}</div>
+     <div class="edgelist"><span>slice${slices.length===1?"":"s"} reached</span>
+       ${slices.map(s=>`<span class="pill">${esc(s)}</span>`).join("") || `<span class="muted">none</span>`}</div>`;
+  for(const b of $("detail").querySelectorAll("[data-go]"))
+    b.onclick = () => { sel = b.dataset.go; show("spine"); repaint(); inspect(); };
+}
+
+/* =============================================================
    QUEUES
    ============================================================= */
 const when=t=>{ if(!t) return ""; const d=new Date(t*1000);
@@ -1676,6 +1847,7 @@ function show(v){
   $("canvas").classList.toggle("hide",!onCanvas);
   $("read").classList.toggle("hide",!reading);
   $("waves").classList.toggle("hide",v!=="waves");
+  $("modules").classList.toggle("hide",v!=="modules");
   $("queues").classList.toggle("hide",v!=="queues");
   $("viewbar").hidden = !(onCanvas||reading);
   $("vb-spine").hidden = v!=="spine";
@@ -1826,6 +1998,9 @@ function reconcile(d){
     if(structural && MODE === "read"){ for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
                                        drawReadKeepingPlace(); }
     if(changed("waves") || changed("slices")) drawWaves();
+    // Coverage moves when a module is declared, and also when the spec layer
+    // grows underneath an unchanged module map -- so it watches the graph too.
+    if(changed("modules") || structural) drawModules();
     if(changed("queues") || changed("proposal")){ captureDraftFocus(); drawQueues(); }
   } finally { KEEP_VIEW = false; }
 
@@ -1965,7 +2140,7 @@ function drawReadPicker(){
 
 function redraw(){
   drawStrip(); drawPending(); drawLegend(); drawLayerPicker(); drawReadPicker();
-  drawScene(); drawWaves(); drawQueues();
+  drawScene(); drawWaves(); drawModules(); drawQueues();
   clearAll();
 }
 
