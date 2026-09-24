@@ -367,11 +367,11 @@ def main(argv=None) -> int:
         targets=["A·01"],
         origin="andrey",
     )
-    status, wp = call("GET", f"/projects/{P}/work-package?slice=discovery")
+    status, wp = call("GET", f"/projects/{P}/slice-context?slice=discovery")
     show("status", status)
     show("issued", wp["issued"])
     print("\n  WRITE SET (full bodies -- the only thing the executor may edit)")
-    for e in wp["write_set"]:
+    for e in wp["entries"]:
         print(f"    {e['id']}  {e['title']}")
         print(f"           {e['body'].strip().splitlines()[0]}")
     print("\n  JUSTIFICATION (why each exists; parent in full, above it spine only)")
@@ -390,11 +390,12 @@ def main(argv=None) -> int:
     print("    Nothing in the manifest says this. S·03 depends on S·01, so")
     print("    payouts depends on discovery -- and the manifest has no field")
     print("    to disagree with the entries in.")
-    print("\n  AUDIT RULE")
-    show("editable_ids", wp["audit"]["editable_ids"])
-    print(f"    {wp['audit']['rule']}")
-    print("\n  Note what is NOT here: the payouts slice. The executor cannot see")
-    print("  it, so it cannot accidentally couple to it.")
+    print("\n  Note what is NOT here: the payouts slice. A reader of this")
+    print("  column cannot see it, so cannot accidentally couple to it.")
+    print("\n  This context grants no edit permission, and used to imply it did.")
+    print("  A slice is not a safe branch scope: its files are not disjoint")
+    print("  from another slice's, which is exactly what a straddling module")
+    print("  is. What may be written is a work unit -- step 9.")
 
     # --------------------------------------------------------------- 5b
     step("5b.", "A CROSS-CUTTING SLICE — a concern nobody declares")
@@ -488,7 +489,7 @@ def main(argv=None) -> int:
         slice_name="discovery",
     )
 
-    _, wp_cc = call("GET", f"/projects/{P}/work-package?slice=payouts")
+    _, wp_cc = call("GET", f"/projects/{P}/slice-context?slice=payouts")
     print("\n  payouts never mentioned audit. Its work package carries it anyway:")
     show("cross_cutting", [e["id"] + " " + e["slice"] for e in wp_cc["cross_cutting"]])
 
@@ -678,14 +679,14 @@ def main(argv=None) -> int:
     print("\n  A·01 now points at a retired entry, so the graph is UNSOUND.")
     print("  The stale reference is visible instead of silently rotting.")
 
-    status, wp2 = call("GET", f"/projects/{P}/work-package?slice=discovery")
-    print(f"\n  work_package(discovery) -> {status} issued={wp2['issued']}")
+    status, wp2 = call("GET", f"/projects/{P}/slice-context?slice=discovery")
+    print(f"\n  slice_context(discovery) -> {status} issued={wp2['issued']}")
     print(f"    reason: {wp2.get('reason')}")
     print("\n  No code can be produced from a broken chain. This is the whole")
     print("  claim of the system, enforced mechanically rather than remembered.")
 
-    status, wp3 = call("GET", f"/projects/{P}/work-package?slice=payouts")
-    print(f"\n  work_package(payouts)   -> {status} issued={wp3['issued']}")
+    status, wp3 = call("GET", f"/projects/{P}/slice-context?slice=payouts")
+    print(f"\n  slice_context(payouts)   -> {status} issued={wp3['issued']}")
     print("    payouts is untouched by the correction, but soundness is a")
     print("    property of the whole graph, so it is held back too. Open"
           " question.")

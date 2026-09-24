@@ -100,16 +100,21 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — thirty-one of them,
+Everything beyond the four is declared in `/tools` — thirty-four of them,
 covering the inbox, amendments, slice classification and splitting, waves,
-the issue queue
-and its reconciliation, module backlinks, planning, the audit, the work
-package, the slicing proposal awaiting ratification, and the measurement
-surface. Ratifying and rejecting a proposal are routes but deliberately not
-tools: a slicing session able to ratify its own proposal would be doing the
-one thing its contract forbids. Tool names are action-style rather than
-path echoes, so one route served under two methods is declared twice under
-two names.
+the issue queue and its reconciliation, module backlinks, work units and
+their cuts, planning, the audit, the slice context, the slicing proposal
+awaiting ratification, and the measurement surface.
+
+Three things are routes but deliberately **not** tools: ratifying a slicing
+proposal, rejecting one, and cutting the project into work units. Each is a
+decision only a person may take — a session that ratified its own proposal
+would be cutting the system up on its own authority, and one that cut work
+units would be deciding the author had finished revising. They are declared
+in `/actions` instead, which discovery never reads.
+
+Tool names are action-style rather than path echoes, so one route served
+under two methods is declared twice under two names.
 
 **Logs.** Lifecycle events are pushed to whichever unit holds the `logs`
 role, resolved from `delivery_policy.json` at call time and never named in

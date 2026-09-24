@@ -164,7 +164,7 @@ def test_tools_manifest_declares_the_operations(store, prompts):
         "list_modules",
         "get_plan",
         "audit_diff",
-        "get_work_package",
+        "get_slice_context",
         "review_layer",
     } <= names
     # No tool writes an entry directly, and none names a layer.
@@ -629,37 +629,42 @@ def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompt
 # -- 5. retrieve the final layer --------------------------------------------
 
 
-def test_work_package_carries_the_write_set_with_full_bodies(store, prompts):
+def test_slice_context_carries_the_write_set_with_full_bodies(store, prompts):
     seed(store, prompts)
     status, payload = call(
-        store, prompts, "GET", "/projects/m/work-package?slice=listings"
+        store, prompts, "GET", "/projects/m/slice-context?slice=listings"
     )
     assert status == 200
     assert payload["issued"] is True
-    assert [e["id"] for e in payload["write_set"]] == ["S·01"]
-    assert payload["write_set"][0]["body"]
+    assert [e["id"] for e in payload["entries"]] == ["S·01"]
+    assert payload["entries"][0]["body"]
 
 
-def test_work_package_justification_is_full_for_the_parent_and_spine_above(
+def test_slice_context_justification_is_full_for_the_parent_and_spine_above(
     store, prompts
 ):
     """The executor needs the architectural decision in full, and merely needs
     to know the behaviour and intent above it exist."""
     seed(store, prompts)
-    _, payload = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    _, payload = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     chain = {e["id"]: e for e in payload["justification"]["S·01"]}
     assert "body" in chain["A·01"]
     assert "body" not in chain["B·01"]
     assert "body" not in chain["I·01"]
 
 
-def test_work_package_declares_what_may_be_edited(store, prompts):
+def test_slice_context_grants_no_edit_permission(store, prompts):
+    """It used to hand back `audit.editable_ids`, which claimed this was an
+    executor's scope. It is not: a slice's files are not disjoint from other
+    slices' files, so a slice is not a safe branch scope. Reading a column is
+    what this is for; a work unit is what may be written."""
     seed(store, prompts)
-    _, payload = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
-    assert payload["audit"]["editable_ids"] == ["S·01"]
+    _, payload = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
+    assert "audit" not in payload
+    assert [e["id"] for e in payload["entries"]] == ["S·01"]
 
 
-def test_work_package_is_refused_when_the_graph_is_unsound(store, prompts):
+def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
     """The realistic path to unsound: a correction retires B·01, and A·01
     is left pointing at a retired entry. The architecture is now a stale
     reference, so no code may be produced from the spec beneath it until it
@@ -685,7 +690,7 @@ def test_work_package_is_refused_when_the_graph_is_unsound(store, prompts):
         },
     )
     status, payload = call(
-        store, prompts, "GET", "/projects/m/work-package?slice=listings"
+        store, prompts, "GET", "/projects/m/slice-context?slice=listings"
     )
     assert status == 409
     assert payload["issued"] is False
@@ -695,7 +700,7 @@ def test_work_package_is_refused_when_the_graph_is_unsound(store, prompts):
     ]
 
 
-def test_work_package_is_still_issued_while_another_branch_is_incomplete(
+def test_slice_context_is_still_issued_while_another_branch_is_incomplete(
     store, prompts
 ):
     """Incompleteness elsewhere says nothing about whether this slice is
@@ -714,20 +719,20 @@ def test_work_package_is_still_issued_while_another_branch_is_incomplete(
         },
     )
     status, payload = call(
-        store, prompts, "GET", "/projects/m/work-package?slice=listings"
+        store, prompts, "GET", "/projects/m/slice-context?slice=listings"
     )
     assert status == 200
     assert payload["issued"] is True
 
 
-def test_work_package_needs_a_slice(store, prompts):
+def test_slice_context_needs_a_slice(store, prompts):
     seed(store, prompts)
-    assert call(store, prompts, "GET", "/projects/m/work-package")[0] == 400
+    assert call(store, prompts, "GET", "/projects/m/slice-context")[0] == 400
 
 
-def test_work_package_for_an_unknown_slice_is_refused(store, prompts):
+def test_slice_context_for_an_unknown_slice_is_refused(store, prompts):
     seed(store, prompts)
-    assert call(store, prompts, "GET", "/projects/m/work-package?slice=nope")[0] == 400
+    assert call(store, prompts, "GET", "/projects/m/slice-context?slice=nope")[0] == 400
 
 
 # -- 6. review --------------------------------------------------------------
@@ -839,7 +844,7 @@ def test_the_read_set_follows_a_dependency_nobody_declared(store, prompts):
     lands in discovery's read set purely because an entry said so."""
     mid = seed(store, prompts)
     _second_slice(store, prompts, mid, depends_on=["S·01"])
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=payouts")
     assert wp["issued"] is True
     assert [(e["id"], e["slice"]) for e in wp["read_set"]] == [("S·01", "listings")]
     assert "body" not in wp["read_set"][0]
@@ -848,7 +853,7 @@ def test_the_read_set_follows_a_dependency_nobody_declared(store, prompts):
 def test_a_slice_with_no_dependencies_gets_an_empty_read_set(store, prompts):
     mid = seed(store, prompts)
     _second_slice(store, prompts, mid)
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=payouts")
     assert wp["read_set"] == []
 
 
@@ -905,7 +910,7 @@ def test_an_amendment_depending_on_nothing_that_exists_is_refused(store, prompts
     assert payload["findings"][0]["kind"] == "bad_dependency"
 
 
-def test_no_work_package_is_issued_while_a_dependency_is_stale(store, prompts):
+def test_no_slice_context_is_issued_while_a_dependency_is_stale(store, prompts):
     """Superseding S·01 leaves payouts holding the old meaning. The graph is
     unsound until payouts re-derives, and no executor is handed a package
     built on it."""
@@ -929,7 +934,7 @@ def test_no_work_package_is_issued_while_a_dependency_is_stale(store, prompts):
             ],
         },
     )
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=payouts")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=payouts")
     assert wp["issued"] is False
     kinds = {f["kind"] for f in wp["gates"]["findings"]}
     assert "bad_dependency" in kinds
@@ -968,7 +973,7 @@ def test_cross_cutting_entries_arrive_undeclared(store, prompts):
     )
     assert (status, ruling["cross_cutting"]) == (200, ["audit"])
 
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert wp["read_set"] == []
     assert [(e["id"], e["slice"]) for e in wp["cross_cutting"]] == [("S·02", "audit")]
     assert "body" not in wp["cross_cutting"][0]
@@ -995,7 +1000,7 @@ def test_a_cross_cutting_slice_does_not_read_itself(store, prompts):
         store, prompts, "POST", "/projects/m/slices/audit/type",
         {"type": "cross_cutting"},
     )
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=audit")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=audit")
     assert wp["cross_cutting"] == []
 
 
@@ -1150,7 +1155,7 @@ def test_classifying_a_slice_that_already_reaches_out_is_refused(store, prompts)
     assert store.load_manifest("m").cross_cutting() == ()
 
 
-def test_no_work_package_is_issued_while_slices_cycle(store, prompts):
+def test_no_slice_context_is_issued_while_slices_cycle(store, prompts):
     mid = _two_columns(store, prompts)
     _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
              depends_on=["S·01"])
@@ -1164,7 +1169,7 @@ def test_no_work_package_is_issued_while_slices_cycle(store, prompts):
                depends_on=(pid("S·02"),))],
         slice_name="listings",
     )
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert wp["issued"] is False
     assert wp["gates"]["slice_findings"][0]["kind"] == "dependency_cycle"
 
@@ -1250,7 +1255,7 @@ def test_an_emission_imposes_no_order_on_the_concern(store, prompts):
     )
     manifest = store.load_manifest("m")
     assert manifest.dependency_graph(store.load_graph("m"))["listings"] == ()
-    _, wp = call(store, prompts, "GET", "/projects/m/work-package?slice=listings")
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert wp["read_set"] == []
     assert [e["id"] for e in wp["cross_cutting"]] == ["S·02"]
 
@@ -1830,7 +1835,11 @@ def test_actions_declares_exactly_the_two_human_decisions(store, prompts):
     and nothing else bounds it. Growing it is a decision, so it is pinned."""
     status, payload = call(store, prompts, "GET", "/actions")
     assert (status, payload["unit"]) == (200, UNIT_NAME)
-    assert {a["name"] for a in payload["actions"]} == {"ratify", "reject"}
+    assert {a["name"] for a in payload["actions"]} == {
+        "ratify",
+        "reject",
+        "cut_units",
+    }
     assert all(a["method"] == "POST" for a in payload["actions"])
 
 
@@ -1889,7 +1898,9 @@ def test_every_declared_tool_path_actually_routes(store, prompts):
     for tool in _tools():
         # Substitute each {placeholder} with something the route patterns
         # accept, then check some route of that method matches.
-        concrete = _re.sub(r"\{id\}", "S·01", tool["path"])
+        # `id` and `entry` both name an identifier, and the route
+        # patterns for those match [A-Z]·[0-9]+ rather than any word.
+        concrete = _re.sub(r"\{(id|entry)\}", "S·01", tool["path"])
         concrete = _re.sub(r"\{[a-z_]+\}", "sample", concrete)
         if not any(
             method == tool["method"] and pattern.match(concrete)
@@ -1929,7 +1940,7 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "list_modules": "list_modules",
         "plan": "get_plan",
         "audit": "audit_diff",
-        "work_package": "get_work_package",
+        "slice_context": "get_slice_context",
         "review": "review_layer",
         "spine": "get_spine",
         "entry": "get_entry",
@@ -1939,6 +1950,13 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "get_doc": "get_doc",
         "propose": "submit_proposal",
         "get_proposal": "get_proposal",
+        "get_units": "get_units",
+        "list_cuts": "list_cuts",
+        "work_unit": "get_work_unit",
+        # Cutting is a person's decision, like ratifying. Deliberately not a
+        # tool: a session that could cut the project into work units on its
+        # own authority would be deciding the author had finished.
+        "cut_units": None,
         "split_slice": "split_slice",
         # Ratifying and rejecting are the human's decision. Deliberately not
         # offered as tools: a slicing session that could ratify its own
@@ -2007,12 +2025,20 @@ def test_the_documented_tool_count_matches_the_manifest(store, prompts):
     from mu_spec.server import _tools
 
     text = Path("UNIT_CONTRACT.md").read_text(encoding="utf-8")
+    # Generated rather than listed. The hand-written map ran out twice, and
+    # a test that fails because its own vocabulary is short teaches nothing
+    # about the thing it guards.
+    tens = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty"}
+    ones = ["", "-one", "-two", "-three", "-four", "-five",
+            "-six", "-seven", "-eight", "-nine"]
     words = {
-        "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
-        "twenty-nine": 29, "thirty": 30, "thirty-one": 31, "thirty-two": 32,
+        tens[t] + ones[o]: t + o for t in tens for o in range(10)
     }
-    stated = next(n for w, n in words.items() if f"— {w} of them" in text)
-    assert stated == len(_tools())
+    match = _re.search(r"— ([a-z]+(?:-[a-z]+)?) of them", text)
+    assert match, "UNIT_CONTRACT.md no longer states a tool count"
+    assert words.get(match.group(1)) == len(_tools()), (
+        f"UNIT_CONTRACT.md says {match.group(1)}, manifest has {len(_tools())}"
+    )
 
 
 def test_an_amendment_may_only_write_one_layer(store, prompts):

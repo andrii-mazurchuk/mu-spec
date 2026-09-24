@@ -38,6 +38,7 @@ from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.slicing import candidates, score
+from mu_spec import units
 from mu_spec.storage import SLICE, SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
 
@@ -867,14 +868,24 @@ def check_gates(store: ProjectStore, project: str) -> dict:
 # -- 5. retrieve the final layer, for producing code ------------------------
 
 
-def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict:
-    """The bounded, declared context a coding agent is given -- and the whole
-    reason the graph exists.
+def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dict:
+    """One slice, assembled for reading: its spec entries and why they exist.
+
+    This is the *reviewing and authoring* context, and it used to claim to be
+    the executor's. It cannot be. A slice's files are not disjoint from other
+    slices' files -- that is exactly what a straddling module is -- so a slice
+    is not a safe branch scope, and an agent handed this would believe its
+    scope was the slice. Execution scope is a work unit; see `units.py`.
+
+    What it is good for is unchanged and still worth having: reading a whole
+    column at once, with each decision next to what it claims to serve.
 
     Four parts, each with a different permission and a different cost:
 
-    - **write set** -- the spec entries of this slice, with full bodies. The
-      only thing the executor may change.
+    - **entries** -- the spec entries of this slice, with full bodies. Named
+      `entries` rather than `write_set` because `write_set` already means
+      *module paths* in `planning.py`, and one term meaning two things in one
+      codebase is how a reader ends up editing the wrong scope.
     - **justification** -- why each of those exists. The direct parent gets a
       full body; everything further up is spine only. An executor needs the
       architectural decision in full and merely needs to know the behaviour
@@ -883,17 +894,17 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
       spine only. Read-only context. Those dependencies are projected from
       the entries' own edges rather than declared beside them, so the read
       set is exactly what the work actually needs and cannot drift from it.
-      This is what turns "peeking at related features" from the executor
-      wandering the repo into a bounded, computed operation.
+      This is what turns "peeking at related features" from wandering the
+      repo into a bounded, computed operation.
     - **cross-cutting** -- every cross-cutting slice's spec entries, spine
       only, whether or not this slice depends on one. Their behaviour ranges
       over other slices rather than naming a subject of its own, so the
       dependency is real, universal, and never worth declaring n times.
 
     Refused when the graph is *unsound* -- when it contains an orphan.
-    Handing an executor a package built from a broken chain produces code
-    derived from a lie, and the failure surfaces much later and much more
-    expensively.
+    Reading a column assembled from a broken chain produces a reviewer who
+    believes something that is not true, and the failure surfaces much later
+    and much more expensively.
 
     Not refused merely for being *incomplete*. Another slice still being
     propagated says nothing about whether this one is ready, and blocking on
@@ -955,15 +966,231 @@ def get_work_package(store: ProjectStore, project: str, slice_name: str) -> dict
         "project": project,
         "slice": slice_name,
         "issued": True,
-        "write_set": [_entry_view(e, full=True) for e in write_set],
+        "entries": [_entry_view(e, full=True) for e in write_set],
         "justification": justification,
         "read_set": read_set,
         "cross_cutting": cross,
+    }
+
+
+# -- work units -------------------------------------------------------------
+
+
+def _projection(store: ProjectStore, project: str):
+    return units.project(store.load_manifest(project), store.load_graph(project))
+
+
+def cut_units(
+    store: ProjectStore,
+    project: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+) -> dict:
+    """Take a cut: record the current projection as the one work comes from.
+
+    A person's decision, not a schedule's. Every gate can be green while the
+    author is still revising, so nothing here happens on its own -- and a
+    projection that recomputed itself silently would move work units under
+    someone mid-sentence, or after work had already gone out from them.
+
+    Two hard refusals and no others. The graph must be sound, for the same
+    reason nothing else is issued from a broken chain. And there must be at
+    least one module: a cut with no write sets is not a cut, it is a list of
+    entries nobody can be handed.
+
+    Everything else reports. Entries without a module, modules claiming only
+    retired entries, units that span a slice, dependency targets in no unit
+    -- all loud, none blocking. Re-cutting is free and expected.
+    """
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    gates = _gate_report(graph, manifest)
+    if not gates["sound"]:
+        return {
+            "project": project,
+            "cut": False,
+            "reason": "graph is unsound -- it contains orphaned entries",
+            "gates": gates,
+        }
+    if not manifest.modules:
+        return {
+            "project": project,
+            "cut": False,
+            "reason": "no modules are declared, so there is nothing to cut. A "
+            "work unit is a set of files and the entries they implement; with "
+            "no module map every entry is unimplemented and no unit has "
+            "anything to write",
+            "unimplemented": [
+                str(e.id) for e in graph.entries() if e.id.layer == units.SPEC
+            ],
+        }
+
+    projection = units.project(manifest, graph)
+    path = store.units_path(project)
+    previous = units.current_cut(path)
+    record = units.append_cut(path, projection, now_fn, body.get("note", ""))
+
+    if events is not None:
+        events.record(
+            lc.WORK_UNITS,
+            project,
+            now_fn,
+            seq=record.seq,
+            units=len(record.units),
+            unimplemented=len(projection.unimplemented),
+            note=body.get("note", ""),
+        )
+    out = {"project": project, "cut": True, **record.to_json()}
+    # What this cut did to the one before it, so a caller re-cutting after an
+    # amendment can see what moved without having to diff two reads.
+    out["drift"] = units.drift(previous, projection) if previous else None
+    return out
+
+
+def get_units(store: ProjectStore, project: str) -> dict:
+    """The current cut, and how far the live graph has moved from it.
+
+    Drift is attached rather than left for a second call, following the same
+    reasoning as the slicing proposal's score: the only caller that needs
+    both is deciding whether to re-cut, and one of them is a person at a
+    dashboard who can issue a GET and nothing else.
+    """
+    path = store.units_path(project)
+    cut = units.current_cut(path)
+    live = _projection(store, project)
+    return {
+        "project": project,
+        "cut": cut.to_json() if cut else None,
+        "drift": units.drift(cut, live) if cut else None,
+        "live": live.to_json(),
+    }
+
+
+def list_cuts(store: ProjectStore, project: str) -> dict:
+    """Every cut taken, oldest first -- headers only.
+
+    Which cut a piece of work came from is answerable later only because
+    this exists; the graph cannot recover it.
+    """
+    return {
+        "project": project,
+        "cuts": [
+            {
+                "seq": c.seq,
+                "at": c.at,
+                "note": c.note,
+                "units": len(c.units),
+                "unimplemented": len(c.unimplemented),
+            }
+            for c in units.read_cuts(store.units_path(project))
+        ],
+    }
+
+
+def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
+    """One work unit and everything needed to build it, addressed by any
+    entry it contains.
+
+    A unit's identity is its entry set, which is not a thing that fits in a
+    URL, so you name any member and get the unit holding it. Nothing is
+    stored to make that work and nothing can drift -- the answer is
+    recomputed from the graph.
+
+    Four parts, and the first is the one that matters:
+
+    - **write set** -- the module PATHS this unit owns. Disjoint from every
+      other unit's by construction, which is what makes two branches in one
+      wave unable to conflict. Not a convention to be observed: no file is
+      in two units, so there is nothing to observe.
+    - **entries** with full bodies: what to implement.
+    - **justification** -- the direct architecture parent in full, spine
+      above that.
+    - **read set** -- spec entries this unit depends on that live in other
+      units, spine only, plus every cross-cutting entry.
+
+    Read from the live projection rather than the stored cut, because this
+    answers "what should I build" and the graph is the authority on that.
+    `get_units` is where the stored cut and its drift live.
+    """
+    graph = store.load_graph(project)
+    manifest = store.load_manifest(project)
+    gates = _gate_report(graph, manifest)
+    if not gates["sound"]:
+        return {
+            "project": project,
+            "issued": False,
+            "reason": "graph is unsound -- it contains orphaned entries",
+            "gates": gates,
+        }
+    try:
+        identifier = parse(entry)
+    except InvalidIdentifier as exc:
+        raise ServiceError(str(exc)) from exc
+
+    projection = units.project(manifest, graph)
+    key = projection.unit_of().get(identifier)
+    if key is None:
+        raise ServiceError(
+            f"{identifier} belongs to no work unit. Either it is not a spec "
+            "entry, or no module implements it -- an entry nothing implements "
+            "is in no unit and so is in no piece of work"
+        )
+    unit = projection.by_key()[key]
+
+    own = set(unit.entries)
+    justification: dict[str, list[dict]] = {}
+    for identifier_ in unit.entries:
+        direct = set(graph.get(identifier_).derives_from)
+        chain = []
+        for ancestor in graph.ancestors(identifier_):
+            found = graph.get(ancestor)
+            if found is not None:
+                chain.append(_entry_view(found, full=ancestor in direct))
+        justification[str(identifier_)] = chain
+
+    read_set = []
+    for identifier_ in unit.entries:
+        for target in graph.dependencies(identifier_):
+            if target in own:
+                continue
+            found = graph.get(target)
+            if found is None:
+                continue
+            view = _entry_view(found, full=False)
+            view["slice"] = manifest.slice_of(target)
+            view["unit"] = projection.unit_of().get(target)
+            read_set.append(view)
+
+    cross = []
+    for name in manifest.cross_cutting():
+        if name in unit.slices:
+            continue
+        for identifier_ in sorted(manifest.slices[name].members, key=sort_key):
+            found = graph.get(identifier_)
+            if found is None or identifier_.layer != units.SPEC:
+                continue
+            view = _entry_view(found, full=False)
+            view["slice"] = name
+            cross.append(view)
+
+    return {
+        "project": project,
+        "issued": True,
+        "unit": unit.to_json(),
+        "write_set": list(unit.modules),
+        "entries": [
+            _entry_view(graph.get(i), full=True) for i in unit.entries
+        ],
+        "justification": justification,
+        "read_set": sorted(read_set, key=lambda v: v["id"]),
+        "cross_cutting": cross,
+        "follows": list(projection.edges.get(key, ())),
         "audit": {
-            "editable_ids": [str(e.id) for e in write_set],
-            "rule": "any file touched that does not declare one of editable_ids "
-            "is a gate failure -- either the planner missed a dependency or "
-            "the executor freelanced",
+            "editable_paths": list(unit.modules),
+            "rule": "any file touched outside editable_paths breaks the one "
+            "guarantee work units provide -- that no two units share a file. "
+            "It is almost always a dependency nobody declared",
         },
     }
 

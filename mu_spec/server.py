@@ -32,9 +32,6 @@ from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
 PROMPT_TIERS = ("default", "reference", "wayfinding", "insights")
-# Where the session-type directories live. Each is a directory holding a
-# CLAUDE.md, discovered from the filesystem rather than a manifest.
-
 
 JSON = "application/json"
 TEXT = "text/plain; charset=utf-8"
@@ -349,17 +346,63 @@ def _tools() -> list[dict[str, Any]]:
             ("project",),
         ),
         tool(
-            "get_work_package",
-            "The bounded context for producing code for one slice: the spec "
-            "entries you may edit, the justification chain for each, "
-            "read-only context from the slices this one depends on "
-            "(projected from the entries' own edges, never declared beside "
-            "them), and cross-cutting entries. Refused if the graph is "
-            "unsound.",
+            "get_slice_context",
+            "One slice assembled for READING: its spec entries with full "
+            "bodies, the justification chain for each, read-only context "
+            "from the slices this one depends on (projected from the "
+            "entries' own edges, never declared beside them), and "
+            "cross-cutting entries. For reviewing or authoring a column, "
+            "not for building it -- a slice's files are not disjoint from "
+            "other slices' files, so a slice is not a safe branch scope. "
+            "Execution scope is a work unit: see get_work_unit. Refused if "
+            "the graph is unsound.",
             "GET",
-            "/projects/{project}/work-package",
+            "/projects/{project}/slice-context",
             {"project": s, "slice": s},
             ("project", "slice"),
+        ),
+        tool(
+            "get_work_unit",
+            "One work unit and everything needed to build it, addressed by "
+            "ANY spec entry it contains. A work unit is a maximal connected "
+            "group of entries and the files implementing them -- one unit is "
+            "one branch. Its `write_set` is module PATHS and is disjoint from "
+            "every other unit's by construction, so two units in the same "
+            "wave cannot touch the same file; that is a property of the "
+            "grouping, not a convention to observe. Also carries the entries "
+            "with full bodies, the justification chain, a spine-only read set "
+            "of what it depends on elsewhere, cross-cutting entries, and "
+            "`follows` -- the units this one waits on. Computed from the live "
+            "graph, so it answers what to build now; the stored cut is "
+            "get_units. Refused if the graph is unsound.",
+            "GET",
+            "/projects/{project}/units/{entry}",
+            {"project": s, "entry": s},
+            ("project", "entry"),
+        ),
+        tool(
+            "get_units",
+            "The current cut -- the work units a person last decided to cut "
+            "the project into -- plus `drift`, how far the live graph has "
+            "moved since, and the live projection itself. Drift is one shape "
+            "rather than a vocabulary: each group names what a set of units "
+            "`was` and what it is `now`, so a split reads as one was and two "
+            "now, a merge the reverse, and an empty `now` means gone. That is "
+            "what answers whether a piece of work is still the same piece.",
+            "GET",
+            "/projects/{project}/units",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
+            "list_cuts",
+            "Every cut taken, oldest first, headers only. Which cut a piece "
+            "of work came from is answerable only because this exists -- the "
+            "graph cannot recover it.",
+            "GET",
+            "/projects/{project}/units/cuts",
+            {"project": s},
+            ("project",),
         ),
         tool(
             "declare_module",
@@ -582,6 +625,25 @@ def _actions() -> list[dict[str, Any]]:
     """
     return [
         {
+            "name": "cut_units",
+            "description": (
+                "Cut the project into work units and record it as the cut "
+                "work comes from. A person's decision and never automatic: "
+                "every gate can be green while the author is still revising, "
+                "and a projection that recomputed itself would move units "
+                "under someone mid-sentence. Re-cutting is free. Refused "
+                "only if the graph is unsound, or if no modules are declared "
+                "-- a cut with no write sets is a list of entries nobody can "
+                "be handed."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/units/cut",
+            "input_schema": {
+                "type": "object",
+                "properties": {"note": {"type": "string"}},
+            },
+        },
+        {
             "name": "ratify",
             "description": (
                 "Ratify the pending slicing proposal, turning it into this "
@@ -684,7 +746,13 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(rf"^/projects/{_P}/insights$"), "insights"),
     ("GET", re.compile(rf"^/projects/{_P}/events$"), "events"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
-    ("GET", re.compile(rf"^/projects/{_P}/work-package$"), "work_package"),
+    ("GET", re.compile(rf"^/projects/{_P}/slice-context$"), "slice_context"),
+    # `cuts` is a literal and an entry identifier is [A-Z]·[0-9]+, so the two
+    # cannot collide -- but the literal is listed first regardless.
+    ("GET", re.compile(rf"^/projects/{_P}/units/cuts$"), "list_cuts"),
+    ("GET", re.compile(rf"^/projects/{_P}/units$"), "get_units"),
+    ("GET", re.compile(rf"^/projects/{_P}/units/(?P<entry>{_ID})$"), "work_unit"),
+    ("POST", re.compile(rf"^/projects/{_P}/units/cut$"), "cut_units"),
     # Spec to code.
     ("POST", re.compile(rf"^/projects/{_P}/modules$"), "declare_module"),
     ("GET", re.compile(rf"^/projects/{_P}/modules$"), "list_modules"),
@@ -951,10 +1019,24 @@ def handle(
                 json.dumps(service.audit_diff(store, project, body or {})),
             )
 
-        if name == "work_package":
+        if name == "list_cuts":
+            return 200, JSON, json.dumps(service.list_cuts(store, project))
+
+        if name == "get_units":
+            return 200, JSON, json.dumps(service.get_units(store, project))
+
+        if name == "work_unit":
+            result = service.get_work_unit(store, project, params["entry"])
+            return (200 if result["issued"] else 409), JSON, json.dumps(result)
+
+        if name == "cut_units":
+            result = service.cut_units(store, project, body or {}, events, now_fn)
+            return (200 if result["cut"] else 409), JSON, json.dumps(result)
+
+        if name == "slice_context":
             if not query.get("slice"):
                 return 400, JSON, json.dumps({"error": "'slice' is required"})
-            result = service.get_work_package(store, project, query["slice"])
+            result = service.get_slice_context(store, project, query["slice"])
             return (200 if result["issued"] else 409), JSON, json.dumps(result)
 
         if name == "review":
