@@ -45,6 +45,9 @@ ISSUE_RAISED = "issue_raised"
 ISSUE_CLOSED = "issue_closed"
 PLAN = "plan"
 AUDIT = "audit"
+# A person decided the corpus was finished and cut it into work units.
+# The graph cannot recover this: a cut leaves a file, not an edge.
+WORK_UNITS = "work_units"
 
 KINDS = (
     REQUEST,
@@ -57,6 +60,7 @@ KINDS = (
     ISSUE_CLOSED,
     PLAN,
     AUDIT,
+    WORK_UNITS,
 )
 
 

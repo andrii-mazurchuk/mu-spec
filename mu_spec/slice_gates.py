@@ -78,7 +78,7 @@ def _reaches(edges: dict[str, tuple[str, ...]], start: str) -> set[str]:
     return seen
 
 
-def _cycles(edges: dict[str, tuple[str, ...]]) -> list[list[str]]:
+def cycles(edges: dict[str, tuple[str, ...]]) -> list[list[str]]:
     """Every group of slices that mutually depend on each other.
 
     Two slices are in the same cycle when each reaches the other. Groups are
@@ -232,7 +232,7 @@ def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:
                 )
             )
 
-    for members in _cycles(edges):
+    for members in cycles(edges):
         findings.append(
             SliceFinding(
                 DEPENDENCY_CYCLE,

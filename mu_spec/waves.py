@@ -61,15 +61,28 @@ class Schedule:
 
 
 def schedule(manifest: Manifest, graph: Graph) -> Schedule:
-    """Assign every slice to a wave.
+    """Assign every slice to a wave, from the projected slice dependency."""
+    return schedule_edges(manifest.dependency_graph(graph))
 
-    Relaxation rather than a recursive walk: a slice becomes assignable once
-    every slice it depends on is assigned, and its wave is one past the
-    deepest of them. When a pass assigns nothing and slices remain, those
+
+def schedule_edges(edges: dict[str, tuple[str, ...]]) -> Schedule:
+    """Assign every node to a wave.
+
+    Relaxation rather than a recursive walk: a node becomes assignable once
+    every node it depends on is assigned, and its wave is one past the
+    deepest of them. When a pass assigns nothing and nodes remain, those
     remaining are exactly the ones in a cycle -- which is why this terminates
     on a broken graph instead of recursing forever.
+
+    Takes the edge map rather than the manifest because the same relaxation
+    answers the same question at two grains: which slices may be derived
+    next, and which work units may be built next. Nothing in the loop below
+    ever knew what a slice was.
+
+    Every node must be a key, not merely named as someone's dependency --
+    a node that appears only as a target is never assigned, and silently
+    strands everything that depends on it into `unschedulable`.
     """
-    edges = manifest.dependency_graph(graph)
     assigned: dict[str, int] = {}
     pending = set(edges)
 

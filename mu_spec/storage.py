@@ -50,6 +50,10 @@ HOLDING_FILE = "_unassigned.jsonl"
 # A slicing proposal waiting on a human. Kept out of the manifest because
 # it is not a partition yet -- ratification is what makes it one.
 PROPOSAL_FILE = "proposal.json"
+# Work-unit cuts, one line per cut. Append-only like the other logs, and for
+# the same reason: what the projection said when work was handed out is not
+# recoverable from what it says now.
+UNITS_FILE = "units.jsonl"
 BEHAVIOUR_LAYER = "B"
 MANIFEST_FILE = "manifest.json"
 
@@ -509,6 +513,15 @@ class ProjectStore:
 
     def proposal_path(self, project: str) -> Path:
         return self._project_dir(project) / PROPOSAL_FILE
+
+    def units_path(self, project: str) -> Path:
+        """The log of work-unit cuts. One line per cut, append-only.
+
+        A cut is computed, not authored -- but it is *materialised* when a
+        person decides the corpus is finished, which is not the same moment
+        as the gates going green. Storing it is what makes a later
+        projection comparable with the one work was handed out from."""
+        return self._project_dir(project) / UNITS_FILE
 
     def events_path(self) -> Path:
         """The lifecycle log. Alongside the other two and never loaded during
