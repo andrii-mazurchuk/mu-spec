@@ -119,6 +119,29 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .slice em{font-style:normal;color:var(--dim);font-size:11px;display:block;margin-top:2px}
 .slice code{font-size:10.5px;color:var(--dim)}
 
+/* ── work units in the waves view ───────────────────────────────── */
+.wave .unitbody{flex:1;display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start;
+  background:var(--panel-alt);border-radius:var(--radius);padding:7px;min-height:40px}
+.unitchip{background:var(--panel);border:1px solid var(--rule);border-left:3px solid var(--sl);
+  border-radius:6px;padding:3px 8px;box-shadow:var(--shadow);font-size:11.5px;
+  display:inline-flex;align-items:baseline;gap:6px;max-width:100%}
+.unitchip b{font:600 11.5px var(--mono);color:var(--ink);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:26ch}
+.unitchip em{font-style:normal;font-size:10.5px;color:var(--dim);flex:none}
+/* No single owning slice: colouring it by one of them would report an owner
+   it does not have. */
+.unitchip.multi{border-left-color:var(--warn)}
+.unitchip.multi em:last-child{color:var(--warn)}
+/* Files that depend on each other and so cannot be built separately. */
+.unitchip.cyc{border-style:dashed}
+.wwidth{align-self:center;background:var(--panel-3);border-radius:99px;padding:0 7px;
+  font-size:10.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
+.earlynote{border-left:3px solid var(--warn);background:var(--warn-bg);border-radius:0 6px 6px 0;
+  padding:9px 12px;margin:0 0 16px;font-size:12.5px;color:var(--ink-soft);max-width:74ch}
+.earlynote b{color:var(--warn);display:block;font-size:10.5px;letter-spacing:.06em;
+  text-transform:uppercase;margin-bottom:3px}
+h3.again{margin-top:34px}
+
 /* ── modules ────────────────────────────────────────────────────── */
 /* The gate reads first, because that is the question: a spec entry no
    module claims is work nobody can be given, so the ticket step cannot
@@ -459,6 +482,7 @@ const STATE = {
   project:null, projects:[], entries:[], byId:{},
   slices:{},          // name -> {type, hue, wave, deps, size, cohesion}
   waves:[], gates:null, issues:[], requests:[], modules:[],
+  units:null,        // the stored cut, its drift, and the live projection
   locality:null, bodies:{}, live:false,
   proposal:null,        // the pending slicing decision, if any
   flash:null,           // the outcome of the last decision, see decide()
@@ -481,7 +505,7 @@ async function loadProjects(){
    already overwritten it. */
 async function fetchProject(project){
   const base = "projects/" + enc(project);
-  const [spine, gates, waves, insights, issues, inbox, modules, proposal] =
+  const [spine, gates, waves, insights, issues, inbox, modules, proposal, units] =
     await Promise.all([
     get(base + "/spine"),                               // the only hard requirement
     soft(base + "/gates", null),
@@ -490,7 +514,8 @@ async function fetchProject(project){
     soft(base + "/issues", {issues:[]}),
     soft("inbox?project=" + enc(project), {messages:[]}),
     soft(base + "/modules", {modules:[]}),
-    soft(base + "/slicing/proposal", {status:"none"})
+    soft(base + "/slicing/proposal", {status:"none"}),
+    soft(base + "/units", {cut:null, drift:null, live:null})
   ]);
 
   const entries = (spine.spine || []).map(e => ({
@@ -539,7 +564,8 @@ async function fetchProject(project){
     requests: (inbox.messages || []).slice().sort((a,b)=>(b.at||0)-(a.at||0)),
     modules: modules.modules || [],
     locality: (insights.change_locality || {}).mean,
-    proposal: proposal && proposal.status === "pending" ? proposal : null
+    proposal: proposal && proposal.status === "pending" ? proposal : null,
+    units
   };
 }
 
@@ -557,6 +583,7 @@ function signatures(d){
     strip: J([d.locality, (d.gates||{}).sound, (d.gates||{}).complete]),
     proposal: J(d.proposal),
     modules: J(d.modules),
+    units: J(d.units),
     queues: J([d.issues, d.requests])
   };
 }
@@ -1409,15 +1436,84 @@ function drawWaves(){
           info.cohesion!=null?" · cohesion "+Number(info.cohesion).toFixed(2):""}</em>
         <em>${on.length?"after "+on.map(x=>`<code>${esc(x)}</code>`).join(", ")
                        :"depends on nothing"}</em></div>`;}).join("")+`</div>`).join("");
-  $("waves").innerHTML=`<h3>Execution order</h3>${rows}
+  $("waves").innerHTML=`<h3>Deriving — the order slices may be written in</h3>${rows}
     <p class="muted" style="max-width:64ch">A slice's wave is the <b>longest</b> path from it to a
     slice that depends on nothing — projected from entry <code>depends_on</code> edges that cross a
     slice boundary, never authored anywhere. Two slices in the same wave provably have no edge
     between them, so they can be worked in parallel with nothing to coordinate; every earlier wave
     is finished before the next starts, so a wave-N agent reads its dependencies as frozen.
     A cross-cutting slice lands in wave 0 by construction — the edge rules leave it no outbound
-    dependency to have.</p>`;
+    dependency to have.
+    <br><br>This is an <b>authoring</b> order. It says which slice may be derived next, not which
+    file may be built next — those are different questions with different answers.</p>
+    ${unitWaves()}`;
   $("k-waves").textContent=STATE.waves.length||1;
+}
+
+/* The second grain. Slice waves answer "what may be derived next"; work-unit
+   waves answer "what may be built next", and they disagree — a slice
+   scheduled late can hold files that depend on nothing at all. Showing only
+   the first reads as a bottleneck that is not there. */
+function unitWaves(){
+  const u = STATE.units;
+  const source = (u && u.cut) || (u && u.live) || null;
+  if(!source || !(source.units || []).length){
+    return `<h3 class="again">Building — the order work units may be built in</h3>
+      <p class="muted" style="max-width:64ch">No work units yet. A work unit is a set of files and
+      the spec entries they implement, grouped so that no two units share a file — which is what
+      lets two branches run at once without being able to collide. They appear once modules are
+      declared and a person cuts the project into them.</p>`;
+  }
+  const byKey = Object.fromEntries(source.units.map(x=>[x.key,x]));
+  const sliceWave = {};
+  for(const w of STATE.waves) for(const name of (w.slices||[])) sliceWave[name]=w.wave;
+
+  // A unit whose slices are all scheduled later than the unit itself. Slice
+  // order over-serialises the build, and this is the size of that.
+  const early = source.units.filter(x=>{
+    const w = (source.waves||[]).findIndex(v=>(v.units||[]).includes(x.key));
+    const latest = Math.max(-1, ...(x.slices||[]).map(s=>sliceWave[s] ?? -1));
+    return w >= 0 && latest > w;
+  });
+
+  const rows = (source.waves||[]).map(w=>
+    `<div class="wave"><div class="lbl">wave ${w.wave}</div><div class="unitbody">`+
+    (w.units||[]).map(k=>{
+      const x = byKey[k] || {};
+      const only = (x.slices||[]).length === 1 ? x.slices[0] : null;
+      return `<span class="unitchip${x.cycle?" cyc":""}${
+          (x.slices||[]).length>1?" multi":""}" style="--sl:${hueOf(only||"unsliced")}"
+          title="${esc((x.modules||[]).join("\n"))}">
+        <b>${esc((x.modules||[])[0]||k)}</b>${
+          (x.modules||[]).length>1?`<em>+${x.modules.length-1}</em>`:""}
+        <em>${(x.entries||[]).length}e</em>${x.cycle?`<em>cycle</em>`:""}${
+          (x.slices||[]).length>1?`<em>${x.slices.length} slices</em>`:""}</span>`;
+    }).join("")+
+    `<span class="wwidth">${(w.units||[]).length} wide</span></div></div>`).join("");
+
+  const note = early.length
+    ? `<div class="earlynote"><b>${early.length} work unit${early.length===1?"":"s"}
+       ${early.length===1?"is":"are"} buildable before ${early.length===1?"its":"their"} slice</b>
+       Slice order says these come later; nothing they depend on says so. Reading a slice wave as a
+       build order leaves work on the floor.</div>`
+    : "";
+
+  return `<h3 class="again">Building — the order work units may be built in</h3>
+    ${u.cut ? `<p class="muted">From cut ${u.cut.seq}${
+        u.cut.note ? " — " + esc(u.cut.note) : ""}${
+        u.drift && u.drift.changed && u.drift.changed.length
+          ? ` · <span class="warnish">${u.drift.changed.length} unit${
+              u.drift.changed.length===1?" has":"s have"} moved since</span>`
+          : " · matches the graph"}</p>`
+      : `<p class="muted warnish">No cut taken — showing the live projection. Cutting is a person's
+         decision, and nothing here has been handed out yet.</p>`}
+    ${note}${rows}
+    <p class="muted" style="max-width:64ch">A work unit is a maximal connected group of spec entries
+    and the files implementing them. Its files are disjoint from every other unit's <b>by
+    construction</b>, so two units in one wave cannot produce a merge conflict — that is a property
+    of the grouping, not a rule anyone has to follow. Order comes from the same
+    <code>depends_on</code> edges one layer down. <b>The edges are the contract; these waves are a
+    view.</b> A unit waits for what it actually depends on, not for a whole wave to finish.</p>`;
 }
 
 /* =============================================================
@@ -1997,7 +2093,7 @@ function reconcile(d){
     }
     if(structural && MODE === "read"){ for(const k of Object.keys(READ_CACHE)) delete READ_CACHE[k];
                                        drawReadKeepingPlace(); }
-    if(changed("waves") || changed("slices")) drawWaves();
+    if(changed("waves") || changed("slices") || changed("units")) drawWaves();
     // Coverage moves when a module is declared, and also when the spec layer
     // grows underneath an unchanged module map -- so it watches the graph too.
     if(changed("modules") || structural) drawModules();
