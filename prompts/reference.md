@@ -144,7 +144,7 @@ Identifiers contain `·` (U+00B7). Raw or percent-encoded both work.
 ## Two health questions, reported separately
 
 - **Sound** -- every edge lands where it should. Unsound **blocks**: writes
-  are refused and no work package is issued. Fix the graph; do not work
+  are refused and no work unit is issued. Fix the graph; do not work
   around it.
 - **Complete** -- knowledge has reached spec on every branch. Incomplete
   **never blocks**. It is the to-do list, and `unserved` findings are that

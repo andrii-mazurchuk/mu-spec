@@ -139,11 +139,21 @@ Slices split and never merge, so the coarse cut is the recoverable mistake.
 
 ## The end of the pipeline
 
-When spec is complete for a slice, `GET /projects/{project}/work-package`
-returns the bounded context an implementer needs: the write set with full
-bodies, the justification above it, and the read set of everything it
-depends on, spine only.
+When spec is complete for a slice, `GET /projects/{project}/slice-context`
+assembles that column for **reading**: its spec entries with full bodies, the
+justification above each, and read-only context from the slices it depends on.
+That is for reviewing or authoring a column, not for building one -- a slice's
+files are not disjoint from another slice's, so a slice is not a safe branch
+scope.
 
-That package is what becomes actual development work. This unit does not
-create it, run it, or track it -- it holds the specification the work is
-derived from, and nothing else.
+What becomes actual development work is a **work unit**: spec entries and the
+files implementing them, grouped so that no file belongs to two units. That is
+what makes one unit one branch, and two units in the same wave unable to
+collide. `POST /projects/{project}/units/cut` records the cut work is handed
+out from -- a person's decision, never automatic, because every gate can be
+green while the author is still revising. `GET /projects/{project}/units/{entry}`
+then returns one unit by any spec entry in it: its write set, its bodies, and
+the units it waits on.
+
+This unit does not create that work, run it, or track it -- it holds the
+specification the work is derived from, and nothing else.

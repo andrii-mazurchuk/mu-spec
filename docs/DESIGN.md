@@ -168,7 +168,7 @@ slice, not a cross-cutting one — `listings` is depended on by everything and i
 unambiguously a slice. Fundamentality is topological; cross-cutting is semantic.
 
 **What the type actually changes** is whose context the slice lands in. A cross-cutting
-slice's spec spine is included in *every* other slice's work package, whether or not
+slice's spec spine is included in *every* other slice's assembled context, whether or not
 anything depends on it. That is the whole operational difference: its behaviour ranges
 over the other slices rather than naming a subject of its own, so requiring n identical
 declarations would fill the dependency graph with edges that are always true and carry
@@ -191,6 +191,16 @@ two slices leaning on a concern while the concern reaches back at them. That is 
 new shape, it is a cycle. Flip the concern's outbound dependency into an inbound
 emission and it has no outbound edges left, so the cycle cannot exist.
 
+**Derivation order is not build order.** An emission imposes no ordering on
+*derivation* — which is what lets a cross-cutting slice be derived before everything
+that emits into it, and what makes a cycle involving one impossible to express. At
+*build* time the relation runs the other way: the emitter's code calls the concern's
+code, so that symbol has to exist. The two orders differ, and the difference is
+invisible only while every cross-cutting work unit sits at wave 0 — which is not
+guaranteed, because a cross-cutting slice may depend on another cross-cutting slice, and
+`depends_on` within one is unconstrained. Order is computed from `depends_on` alone; the
+emission case is checked and reported, never gated.
+
 ### 4.6 Splitting rule
 
 Slices can be **split** later. They can **never be merged** — merging destroys
@@ -207,6 +217,73 @@ Splitting and ratification are the **only** two ways a slice comes into
 existence. An amendment naming an unknown slice is refused — a slice is
 expensive to get wrong and impossible to undo, so it is never created as a side
 effect of writing an entry.
+
+---
+
+## 4a. Work units
+
+A slice is a column to read. A **work unit** is a piece of work to do: a maximal
+connected subgraph of the entry-to-module graph — spec entries and the files
+implementing them, joined transitively by implements-edges, with nothing outside
+connecting in. One unit is one branch.
+
+### The grain was settled by measurement
+
+Three other grains were available, and all three were eliminated by counting rather
+than by argument.
+
+- **An entry is too fine.** Two entries living in one file would both write it, and
+  `t-finance`'s `bot.py` implements eight.
+- **A module is too fine the other way.** An entry spans files: `dark`'s `S·73` spans
+  `.env`, `pyproject.toml`, a justfile, a compose file and a preconditions module, and
+  eleven of dark's sixty-eight entries span more than one.
+- **A slice is too coarse.** It over-serialises, and a module straddling two slices
+  belongs to neither exclusively.
+
+Maximal-connected is not a fourth preference. It is the *smallest* grouping whose write
+set is disjoint from every other unit's, and that disjointness is the payoff: two
+branches in the same wave cannot produce a git merge conflict, because no file is in
+both. Forced, not chosen.
+
+**Disjointness is not independence.** A unit's entries may still `depends_on` another
+unit's, and then it waits. Two things can be worked at once only with both — disjoint
+files and no edge between them.
+
+### Ordering
+
+Projected from spec-entry `depends_on` pushed through the module map, never authored,
+for the same reason slice dependency is never authored.
+
+What is handed out is **edges** — the units each unit waits on. Waves (§6a) are a
+reporting view over those edges, not the schedule. A consumer that waits for a whole
+wave rather than for its own blockers waits for work it does not need: on `dark`, strict
+wave barriers would make the last unit wait for fifty-one others when it actually waits
+for two.
+
+### Cycles are contracted
+
+Grouping entries into files can create a cycle the entry graph does not have.
+`depends_on` is acyclic at entry level because the gates require it, but two files can
+each implement one end of the other's dependency. Merging such a group into one unit is
+correct rather than a fudge: files that depend on each other cannot be built separately,
+so they are one piece of work. A contracted unit is a diagnostic about the module map —
+surfaced, never gated.
+
+### Identity, and the cut
+
+Identity **is** the entry set. Same entries, same unit; nothing is allocated and nothing
+is stored, so two projections of the same graph agree without consulting each other.
+
+A projection is computed. A **cut** is a projection a person decided to take, and the
+difference is why one of them is stored at all: the gates going green is not the same
+event as the author being finished. A corpus can be sound and still be mid-revision, and
+a projection that recomputed itself silently would move work units under someone who was
+still writing — or after work had already been handed out from them. So nothing
+recomputes silently. The log is append-only, one line per cut, carrying bodies only for
+the units that changed. Re-cutting is free and expected.
+
+There is one hard gate: **no modules, no cut.** A cut with no write sets is a list of
+entries nobody can be handed.
 
 ---
 
@@ -493,7 +570,7 @@ The planner resolves the spec diff into two sets:
 This makes "peeking at related features" a declared, bounded operation instead of the
 executor wandering the repo.
 
-### 10.3 Shape of the work unit
+### 10.3 Shape of a planned task
 
 - **Deep isolated feature** — one task, full column context, executor goes deep.
 - **Wide shallow change** — group by slice, one task per slice, and the task carries the
@@ -681,8 +758,8 @@ anything that exists.
 - ~~**Interface-change detection**~~ — **closed.** It looked isolated at spec level only
   while consumption was invisible. It is an edge now: a consumer declares `depends_on`,
   so superseding an entry leaves every consumer pointing at something retired, the
-  bad-dependency gate reports each one, and the graph stays unsound — no work package,
-  no plan — until they are re-derived.
+  bad-dependency gate reports each one, and the graph stays unsound — nothing is issued
+  to build from, no plan — until they are re-derived.
 
   The residual case is a slice that consumes another's interface *without* declaring the
   edge. No graph check can see that; the edge is the only evidence there is. It surfaces
