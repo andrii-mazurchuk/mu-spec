@@ -287,6 +287,114 @@ entries nobody can be handed.
 
 ---
 
+## 4b. Tests
+
+### 4b.1 What a test entry is
+
+A **test entry is one test scenario**, and it derives from exactly one **spec** entry.
+One contract, several ways it can fail, so one spec entry usually has several.
+
+Tests fork off the spec layer rather than continuing the chain toward code. An
+implementation module implements spec entries; a test module implements test entries.
+Both are code, and code is never an entry — the module backlink is the same one
+everything else uses.
+
+```
+              ┌──> implementation modules
+  S ──────────┤
+              └──> T ──> test modules
+```
+
+A test entry derives from a spec entry and nothing else. That is not a restriction
+working around a limitation; it is the only anchor in this system guaranteed to
+survive. Identifiers are never reused and never renumbered, while a module path is
+renamed the first time someone tidies a directory — and a test pointing at a renamed
+file points at nothing.
+
+The record carries an identifier, the entry it derives from, a free-text **purpose**
+read by whoever writes the test, and a body saying what must be observed. Amendments
+are append-only with a superseding marker, as everywhere else, and here the reason is
+sharper than elsewhere: **a test that can be edited in place is not absolute.**
+
+**`purpose` is free text on purpose.** The test for a closed vocabulary in this design
+is whether anything mechanical branches on it. Nothing does — ordering follows from
+*what a test derives from*, never from what kind it is claimed to be. Encoding the
+distinction twice would be the drift failure this design refuses everywhere else, and
+a closed list would refuse the test nobody anticipated.
+
+### 4b.2 Tests are the second source of truth
+
+Documentation first, tests second, code last. The agent implementing a spec entry
+**may read the test files and may never write them.** That is not a rule anyone has to
+follow: a test module implements test entries, an implementation module implements
+spec entries, the two share no entry, so they fall into different work units — and a
+work unit's write set is disjoint from every other's by construction (§4a). Different
+unit, different branch, different agent. The separation is a property of the grouping.
+
+### 4b.3 Order
+
+Stated at the level of units, not edges:
+
+> The work unit implementing spec entry `S·X` **follows** any work unit containing test
+> modules for test entries derived from `S·X`.
+
+Deliberately not read off `derives_from`. That edge means justification and only
+justification, and keeping it apart from `depends_on` is what makes slice and unit
+dependency computable rather than guesswork (§3). A third source of unit edges costs
+one sentence; redefining an edge would cost the property.
+
+The pairing is **not** one-to-one and must not be assumed to be. A test module may
+implement test entries derived from several spec entries — a shared fixture is the
+ordinary case — and then several implementation units follow that one test unit. That
+fans out; it merges nothing. Anchoring at the entry rather than at the module is what
+buys that: a broad test file cannot glue unrelated implementation units together.
+
+### 4b.4 What this makes computable
+
+**Which tests to run after building a unit**: those whose test entries derive from that
+unit's spec entries *and* have a module declared. Not a convention — a graph query. It
+is the difference between a red suite that gets ignored and a signal, because a test
+specified but not yet implemented is not yet expected to pass.
+
+**Which spec entries have no verification**: the same shape as `unserved` and
+`unimplemented`, and it is what makes testing automatic rather than something a person
+has to remember to ask for at intent.
+
+### 4b.5 What is deliberately out of scope
+
+**Test entries are dev-time tests.** Unit tests, and contract tests between modules —
+which anchor to the *provider's* spec entry, consistent with the provider owning the
+interface (§4.5).
+
+Acceptance, performance and system-level tests are **excluded, not unrepresentable**.
+Three reasons, and the third is the one that matters:
+
+- They are project-specific. Performance criteria are not universally expressible, and
+  standardising them would force every project to pretend they are.
+- Nothing would branch on the distinction, which is the same argument that makes
+  `purpose` free text.
+- **A failing acceptance test is not a code defect.** Code derives from documentation,
+  so if the documentation is sound the code follows it, and if the documentation is
+  wrong an acceptance test derived from the same documentation is wrong the same way.
+  What it can catch is the thing the spec was *silent* about — which is a gap in the
+  documentation, and belongs in the issue queue (§9a) as a correction, not in a build
+  as a failure.
+
+They remain real files that real projects need. They simply live outside this graph,
+like a README does. One consequence to accept knowingly: `declare_module` refuses an
+empty implements list, so such files cannot be declared, which makes them invisible to
+the module map and to the git-diff audit — an agent touching one shows up as an
+undeclared write.
+
+### 4b.6 Craft belongs in a prompt, not a field
+
+How to write a good test — what an acceptance-flavoured scenario needs loaded, when a
+contract test is worth its cost — is judgement, and judgement belongs to whoever calls
+this unit. The per-test instruction rides in `purpose`; the general craft belongs in a
+prompt tier. Nothing here interprets either.
+
+---
+
 ## 5. Storage and retrieval
 
 Plain filesystem is correct, but only because there is an index on top of it. The tree
@@ -740,6 +848,16 @@ anything that exists.
   argument.
 - **Judgement-call criteria** — what the agent is *obliged* to flag, stated concretely
   enough to be enforceable rather than aspirational.
+- **Where the test guidebook ships.** §4b.6 settles that craft belongs in a prompt
+  rather than a field, not which prompt. A new tier, or additions to the existing ones,
+  is a question about the prompts as they now stand rather than about the design.
+- **Files several work units must edit** — `pyproject.toml`, `.gitignore`, a shared
+  `__init__.py`. Declared, they glue every unit that touches them into one and
+  parallelism dies; undeclared, the disjointness guarantee is void the moment two
+  branches both append a line. **Accepted as unsolved rather than open**: it is not
+  answerable at this level of abstraction, merge conflicts on such files will happen,
+  and a mechanism pretending otherwise would be worse than the honest gap. Recorded so
+  nobody reopens it expecting an answer to be waiting.
 - **Thin intent handling** — when the human says "build me a thing," does the agent
   interrogate or assume-and-flag? `prompts/reference.md` holds the settled half — what
   an `initiate` request must *produce* — and is explicit that the technique is not
