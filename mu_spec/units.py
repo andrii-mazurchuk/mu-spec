@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import Identifier, parse, sort_key
+from mu_spec.identifiers import TEST, Identifier, parse, sort_key
 from mu_spec.slice_gates import cycles
 from mu_spec.storage import Manifest
 from mu_spec.waves import Schedule, schedule_edges
@@ -79,6 +79,17 @@ class Unit:
     def cross_slice(self) -> bool:
         return len(self.slices) > 1
 
+    @property
+    def tests(self) -> bool:
+        """True when this unit holds test entries rather than spec entries.
+
+        Read off the identifiers, never stored and never declared. A module
+        claiming spec and test entries together is refused, so a unit is
+        necessarily all of one kind -- and a `kind` field would be a second
+        statement of what the entry set already says.
+        """
+        return bool(self.entries) and self.entries[0].layer == TEST
+
     def to_json(self) -> dict:
         return {
             "key": self.key,
@@ -86,6 +97,7 @@ class Unit:
             "modules": list(self.modules),
             "slices": list(self.slices),
             "cycle": self.cycle,
+            "tests": self.tests,
         }
 
 
@@ -111,6 +123,23 @@ class Projection:
     # depends_on targets that belong to no unit. The edge is real and cannot
     # be drawn, so the order it implies is invisible.
     dangling: tuple[Identifier, ...] = ()
+    # Live spec entries with no live test entry deriving from them. A
+    # contract nothing can falsify. The graph-level half of coverage, and
+    # the reason it sits here as well as in the gate report: a person
+    # deciding whether to cut is looking at exactly this screen.
+    untested: tuple[Identifier, ...] = ()
+    # Live test entries no module claims. The scenario is written and
+    # nothing implements it yet, so it is in no unit and imposes no order --
+    # which is correct rather than a gap. A test specified but not built is
+    # not yet expected to pass, and ordering implementation behind one would
+    # block work on a file nobody has written.
+    unimplemented_tests: tuple[Identifier, ...] = ()
+    # Test units nothing follows: every spec entry their scenarios judge is
+    # unimplemented, so there is no implementation unit to precede. Ordinary
+    # and temporary while tests run ahead of code -- and worth seeing,
+    # because a test unit that stays unfollowed is testing a contract nobody
+    # is building.
+    unfollowed_tests: tuple[str, ...] = ()
 
     def by_key(self) -> dict[str, Unit]:
         return {u.key: u for u in self.units}
@@ -130,6 +159,9 @@ class Projection:
             "unimplemented": [str(i) for i in self.unimplemented],
             "stale_modules": list(self.stale_modules),
             "dangling": [str(i) for i in self.dangling],
+            "untested": [str(i) for i in self.untested],
+            "unimplemented_tests": [str(i) for i in self.unimplemented_tests],
+            "unfollowed_tests": list(self.unfollowed_tests),
         }
 
 
@@ -199,6 +231,18 @@ def _invert(
         for identifier in sl.members:
             entry_slice[identifier] = name
 
+    # A test entry has no slice membership and never will -- its column is
+    # its parent spec entry's, so it is resolved here rather than written
+    # down. Stored, it would be the second copy that drifts the first time a
+    # slice splits.
+    for identifier in entry_modules:
+        if identifier.layer != TEST:
+            continue
+        for parent in graph.parents(identifier):
+            if parent in entry_slice:
+                entry_slice[identifier] = entry_slice[parent]
+                break
+
     for paths in entry_modules.values():
         paths.sort()
     return entry_modules, entry_slice, sorted(set(stale))
@@ -267,6 +311,39 @@ def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]],
                     dangling.add(target)
                 elif other != unit.key:        # a dependency resolved inside
                     out[unit.key].add(other)   # one unit imposes no order
+
+            # The third source, and the only one that is not a depends_on:
+            # the unit implementing S*X follows any unit holding test
+            # modules for tests derived from S*X. Documentation first, tests
+            # second, code last.
+            #
+            # Computed here rather than read off `derives_from`, which means
+            # justification and only justification -- keeping the two apart
+            # is what makes unit dependency computable instead of guesswork.
+            # A third source costs these lines; redefining an edge would
+            # cost the property.
+            #
+            # The pairing is NOT one-to-one and nothing here assumes it is.
+            # A test module implementing scenarios derived from several spec
+            # entries -- a shared fixture, the ordinary case -- is followed
+            # by each of their implementation units. That fans out and
+            # merges nothing, which is what anchoring at the entry rather
+            # than at the module buys: a broad test file cannot glue
+            # unrelated implementation units together.
+            #
+            # A test with no module resolves to no unit and so imposes no
+            # order. That is the point of the rule, not a hole in it: a
+            # scenario that is written but not yet built is not yet expected
+            # to pass, and blocking on it would stop work for a file nobody
+            # has created.
+            if entry.layer != SPEC:
+                continue
+            for child in graph.children(entry):
+                if child.layer != TEST:
+                    continue
+                other = of.get(child)
+                if other is not None and other != unit.key:
+                    out[unit.key].add(other)
     return (
         {k: tuple(sorted(v)) for k, v in out.items()},
         sorted(dangling, key=sort_key),
@@ -352,6 +429,27 @@ def project(manifest: Manifest, graph: Graph) -> Projection:
             key=sort_key,
         )
     )
+    unimplemented_tests = tuple(
+        sorted(
+            (e.id for e in graph.entries()
+             if e.id.layer == TEST and e.id not in entry_modules),
+            key=sort_key,
+        )
+    )
+    untested = tuple(
+        sorted(
+            (e.id for e in graph.entries()
+             if e.id.layer == SPEC
+             and not any(c.layer == TEST for c in graph.children(e.id))),
+            key=sort_key,
+        )
+    )
+    # A test unit nothing follows. Read off the edges that were just built
+    # rather than recomputed, so the two can never disagree.
+    followed = {k for targets in edges.values() for k in targets}
+    unfollowed_tests = tuple(
+        sorted(u.key for u in units if u.tests and u.key not in followed)
+    )
     return Projection(
         units=tuple(units),
         edges=edges,
@@ -359,6 +457,9 @@ def project(manifest: Manifest, graph: Graph) -> Projection:
         unimplemented=unimplemented,
         stale_modules=tuple(stale),
         dangling=tuple(dangling),
+        untested=untested,
+        unimplemented_tests=unimplemented_tests,
+        unfollowed_tests=unfollowed_tests,
     )
 
 

@@ -322,6 +322,39 @@ is whether anything mechanical branches on it. Nothing does — ordering follows
 distinction twice would be the drift failure this design refuses everywhere else, and
 a closed list would refuse the test nobody anticipated.
 
+### 4b.1a Three rules the contract above rests on
+
+Both surfaced while building it. Neither is a new idea; each is what makes a property
+already claimed here actually true rather than aspirational.
+
+**A module implements spec entries or test entries, never both.** §4b.2 says the
+separation between writing a test and writing the code it judges needs no enforcement,
+because the two share no entry and so land in different work units. That holds only
+while no single file claims both. One mixed file merges those units, the write sets stop
+being disjoint, and a structural guarantee quietly degrades into an honour-system rule.
+Refused at declaration. There is deliberately **no `kind` field** on a module: what a
+module is follows from the identifiers it claims, and a field would be the second
+statement of exactly that.
+
+**A test entry carries no `depends_on` and no `emits_into`.** One scenario needs nothing
+from another scenario. This is not tidiness — it is what makes a unit holding test
+modules a *root*. With no outbound edge to have, such a unit cannot sit inside a cycle,
+so the ordering rule in §4b.3 can never deadlock against a dependency. The same shape as
+a cross-cutting slice landing in wave 0: arranged by the edge rules, not by a scheduler.
+
+**Scenarios can be asked for on their own.** Every request type stopped at spec, so a
+fresh "say how `S·01` can fail" had nowhere to originate and was refused. A
+`verification` request originates at `T`, which is not an exception to the rule that a
+change may not enter below its cause: that rule guards against fixing something low
+while the layers above go on saying the old thing, and a scenario makes no claim those
+layers could contradict. Writing scenarios as part of the `feature` that created the
+spec already worked — once a request has produced entries, propagation is
+unrestricted — so what this adds is only the standalone ask, for a contract specified
+before anyone said how it could fail.
+
+A fourth follows from the rules above rather than being decided: **tests are stored flat
+and join no slice** — §5 has the layout and the reason.
+
 ### 4b.2 Tests are the second source of truth
 
 Documentation first, tests second, code last. The agent implementing a spec entry
@@ -403,6 +436,7 @@ is storage; it is not retrieval.
 ```
 manifest.json                slices, identifier membership sets
 intent.jsonl
+tests.jsonl                  scenarios, flat like intent
 behaviour/
   listings.jsonl
   discovery.jsonl
@@ -418,6 +452,12 @@ history/
 
 **One file per slice per layer.** Not one file per entry — per-file overhead in a read
 tool kills you at fifty reads. Not one file per layer — large systems drown the context.
+
+**Intent and tests are the two exceptions**, and for the same reason: neither has a
+slice. Intent is short by nature and everyone reads all of it. A test's column is the
+column of the spec entry it derives from, so filing it under one would be a second copy
+of a fact the graph already holds — and the copy is what goes stale the first time a
+slice splits.
 
 **Entries are JSON Lines, not prose.** An entry is a record with a fixed set of
 structural fields, and the edges are the load-bearing part. A prose format makes every
@@ -858,6 +898,11 @@ anything that exists.
   answerable at this level of abstraction, merge conflicts on such files will happen,
   and a mechanism pretending otherwise would be worse than the honest gap. Recorded so
   nobody reopens it expecting an answer to be waiting.
+- **A spec diff does not see a test.** §10's planner resolves a *spec* diff into a write
+  set, so amending a scenario produces an empty plan. Not a defect in the planner: the
+  execution scope is a work unit, and `get_work_unit` carries both the scenarios to run
+  and the ones not yet built. Recorded because the two surfaces now disagree about what
+  counts as a change, and whichever of them survives should be the one that says so.
 - **Thin intent handling** — when the human says "build me a thing," does the agent
   interrogate or assume-and-flag? `prompts/reference.md` holds the settled half — what
   an `initiate` request must *produce* — and is explicit that the technique is not

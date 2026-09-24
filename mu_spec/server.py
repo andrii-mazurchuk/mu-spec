@@ -132,7 +132,8 @@ def _tools() -> list[dict[str, Any]]:
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
             "path. Must cite the request it serves. Each entry needs a "
-            "'layer' and a 'title', and may carry 'body', 'supersedes', and "
+            "'layer' and a 'title', and may carry 'body', 'purpose', "
+            "'supersedes', and "
             "three kinds of edge: 'derives_from' (identifiers exactly one "
             "layer up -- what it serves), 'depends_on' (same layer -- what it "
             "needs, and what imposes order), and 'emits_into' (same layer, "
@@ -155,7 +156,12 @@ def _tools() -> list[dict[str, Any]]:
             "'slice' must name a slice that already exists -- one comes from "
             "ratifying a slicing or from split_slice, never from being "
             "named here, because slices split and never merge and one "
-            "created by a typo cannot be undone.",
+            "created by a typo cannot be undone -- and a test entry takes no "
+            "slice at all, because its column is the column of the spec entry "
+            "it derives from. Layer 'T' is a test: one scenario, deriving "
+            "from exactly one spec entry and carrying no horizontal edge of "
+            "either kind. Its 'purpose' is free text for whoever writes the "
+            "test; nothing branches on it.",
             "POST",
             "/projects/{project}/amendments",
             {
@@ -364,7 +370,8 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "get_work_unit",
             "One work unit and everything needed to build it, addressed by "
-            "ANY spec entry it contains. A work unit is a maximal connected "
+            "ANY entry it contains, spec or test. A work unit is a maximal "
+            "connected "
             "group of entries and the files implementing them -- one unit is "
             "one branch. Its `write_set` is module PATHS and is disjoint from "
             "every other unit's by construction, so two units in the same "
@@ -372,9 +379,16 @@ def _tools() -> list[dict[str, Any]]:
             "grouping, not a convention to observe. Also carries the entries "
             "with full bodies, the justification chain, a spine-only read set "
             "of what it depends on elsewhere, cross-cutting entries, and "
-            "`follows` -- the units this one waits on. Computed from the live "
-            "graph, so it answers what to build now; the stored cut is "
-            "get_units. Refused if the graph is unsound.",
+            "`follows` -- the units this one waits on. A unit holding test "
+            "modules is one of those: the unit implementing a spec entry "
+            "follows any unit holding scenarios derived from it, which is how "
+            "documentation-first, tests-second, code-last is ordered rather "
+            "than asked for. `tests` lists the scenarios judging this unit "
+            "that exist as files, with the paths to run; `tests_pending` "
+            "lists the ones written but not yet built, which are not yet "
+            "expected to pass. Computed from the live graph, so it answers "
+            "what to build now; the stored cut is get_units. Refused if the "
+            "graph is unsound.",
             "GET",
             "/projects/{project}/units/{entry}",
             {"project": s, "entry": s},
@@ -406,12 +420,17 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "declare_module",
-            "Record which spec entries a module implements -- the bottom "
-            "layer's backlink. Code is not an entry in this graph, so this is "
-            "the only thing tying a file to the reasoning that produced it. "
-            "Replaces rather than merges: declaring an empty list removes the "
-            "module. Only spec identifiers are accepted; a module claiming an "
-            "architecture entry has skipped the layer that says how.",
+            "Record which spec entries -- or which test entries -- a module "
+            "implements. The bottom layer's backlink: code is not an entry in "
+            "this graph, so this is the only thing tying a file to the "
+            "reasoning that produced it. Replaces rather than merges: "
+            "declaring an empty list removes the module. Spec and test "
+            "identifiers are accepted, but never together in one module: a "
+            "test module and an implementation module share no entry, which "
+            "is what puts them in different work units and so on different "
+            "branches, and a file claiming both collapses that separation. "
+            "A module claiming an architecture entry is refused outright -- "
+            "it has skipped the layer that says how.",
             "POST",
             "/projects/{project}/modules",
             {"project": s, "path": s, "implements": strings},
@@ -419,8 +438,11 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "list_modules",
-            "Every module backlink, plus `unimplemented`: the spec entries no "
-            "module claims yet.",
+            "Every module backlink, plus three reports: `unimplemented`, the "
+            "spec entries no module claims; `unimplemented_tests`, the "
+            "scenarios written but not yet built, which are not yet expected "
+            "to pass and order nothing; and `untested`, the spec entries no "
+            "scenario judges at all.",
             "GET",
             "/projects/{project}/modules",
             {"project": s},
@@ -465,7 +487,9 @@ def _tools() -> list[dict[str, Any]]:
             "review_layer",
             "Read one layer with each entry's justification chain, what "
             "serves it, and the comments attached to it -- so a reviewer sees "
-            "the decision and what it claims to serve in one place.",
+            "the decision and what it claims to serve in one place. 'T' reads "
+            "the scenarios, which is where the second source of truth gets "
+            "reviewed.",
             "GET",
             "/projects/{project}/review",
             {"project": s, "layer": s, "slice": s},

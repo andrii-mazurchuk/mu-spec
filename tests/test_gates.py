@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, UNSERVED, admission_gates
+from mu_spec.gates import (
+    BAD_DEPENDENCY,
+    ORPHAN,
+    UNSERVED,
+    UNTESTED,
+    admission_gates,
+)
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 
@@ -22,12 +28,16 @@ def _kinds(findings):
 
 
 def test_a_well_formed_graph_produces_no_findings():
+    """A complete graph now reaches a test, not just spec. A spec entry with
+    no scenario is a contract nothing can falsify, which is a completeness
+    finding like any other."""
     graph = Graph(
         [
             _entry("I·01"),
             _entry("B·01", "I·01"),
             _entry("A·01", "B·01"),
             _entry("S·01", "A·01"),
+            _entry("T·01", "S·01"),
         ]
     )
     assert admission_gates(graph) == []
@@ -51,6 +61,7 @@ def test_spec_entries_are_never_unserved():
             _entry("B·01", "I·01"),
             _entry("A·01", "B·01"),
             _entry("S·01", "A·01"),
+            _entry("T·01", "S·01"),
         ]
     )
     assert admission_gates(graph) == []
@@ -128,6 +139,7 @@ def test_serving_must_come_from_the_adjacent_layer():
     assert _kinds(admission_gates(graph)) == [
         (ORPHAN, "S·01"),
         (UNSERVED, "I·01"),
+        (UNTESTED, "S·01"),
     ]
 
 
@@ -177,8 +189,14 @@ def test_findings_are_sorted_in_spine_order():
         (ORPHAN, "B·01"),
         (ORPHAN, "S·01"),
         (UNSERVED, "B·01"),
+        (UNTESTED, "S·01"),
     ]
-    assert [str(f.id) for f in admission_gates(graph)] == ["B·01", "B·01", "S·01"]
+    assert [str(f.id) for f in admission_gates(graph)] == [
+        "B·01",
+        "B·01",
+        "S·01",
+        "S·01",
+    ]
 
 
 # -- same-layer dependency edges --------------------------------------------
@@ -202,6 +220,8 @@ def test_a_valid_same_layer_dependency_is_clean():
             _dep("A·02", "B·01", depends_on="A·01"),
             _entry("S·01", "A·01"),
             _entry("S·02", "A·02"),
+            _entry("T·01", "S·01"),
+            _entry("T·02", "S·02"),
         ]
     )
     assert admission_gates(graph) == []

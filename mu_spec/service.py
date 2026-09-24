@@ -28,7 +28,14 @@ from typing import Any, Callable
 
 from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
 from mu_spec.graph import Entry, Graph
-from mu_spec.identifiers import LAYERS, Identifier, InvalidIdentifier, parse, sort_key
+from mu_spec.identifiers import (
+    ALL_LAYERS,
+    TEST,
+    Identifier,
+    InvalidIdentifier,
+    parse,
+    sort_key,
+)
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
 from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
 from mu_spec import lifecycle as lc
@@ -66,6 +73,10 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
         "depends_on": [str(d) for d in entry.depends_on],
         "emits_into": [str(d) for d in entry.emits_into],
     }
+    # Only a test entry carries one, so it is omitted rather than sent empty
+    # on every other entry in the graph.
+    if entry.purpose:
+        view["purpose"] = entry.purpose
     if full:
         view["body"] = entry.body
     return view
@@ -364,8 +375,8 @@ def submit_amendment(
     allocated: list[Identifier] = []
     for item in items:
         layer = item.get("layer")
-        if layer not in LAYERS:
-            raise ServiceError(f"entry layer must be one of {LAYERS}")
+        if layer not in ALL_LAYERS:
+            raise ServiceError(f"entry layer must be one of {ALL_LAYERS}")
         if not item.get("title"):
             raise ServiceError("each entry needs a 'title'")
         marks[layer] = marks.get(layer, 0) + 1
@@ -395,6 +406,7 @@ def submit_amendment(
                     "emits_into",
                 ),
                 title=item["title"],
+                purpose=item.get("purpose", ""),
                 body=item.get("body", ""),
                 supersedes=(
                     _parse_ids([item["supersedes"]], "supersedes")[0]
@@ -421,9 +433,18 @@ def submit_amendment(
             "from what is actually written"
         )
 
+    if slice_name and TEST in layers:
+        raise ServiceError(
+            "a test entry takes no slice. Its column is the column of the "
+            "spec entry it derives from, resolved from the graph whenever "
+            "anyone asks -- recording it here would be a second copy of that "
+            "fact, and the recorded one is what goes stale the first time a "
+            "slice splits"
+        )
+
     spec_type = TYPES[message.type]
     already = (message.resolution or {}).get("produced", [])
-    is_origination = not any(a[:1] in ("I", "B", "A", "S") and "·" in a for a in already)
+    is_origination = not any(a[:1] in ALL_LAYERS and "·" in a for a in already)
     if is_origination:
         if not spec_type.originates_at:
             raise ServiceError(
@@ -681,8 +702,8 @@ def get_spine(store: ProjectStore, project: str, layer: str | None) -> dict:
     manifest = store.load_manifest(project)
     rows = graph.spine()
     if layer:
-        if layer not in LAYERS:
-            raise ServiceError(f"'layer' must be one of {LAYERS}")
+        if layer not in ALL_LAYERS:
+            raise ServiceError(f"'layer' must be one of {ALL_LAYERS}")
         rows = [r for r in rows if r["id"].startswith(layer)]
     return {
         "project": project,
@@ -1088,6 +1109,46 @@ def list_cuts(store: ProjectStore, project: str) -> dict:
     }
 
 
+def _verification(graph: Graph, projection, unit) -> dict:
+    """Which tests judge this unit, split by whether they exist as files yet.
+
+    A graph query rather than a convention, and that is the whole value: the
+    difference between a red suite everyone learns to ignore and a signal.
+    A scenario that has been specified but not yet implemented is not yet
+    expected to pass, so it is reported separately and orders nothing.
+
+    A test unit gets the empty version of this rather than a special case --
+    nothing derives from a test, so the query simply finds nothing, and the
+    caller reads the same shape whichever kind of unit it asked for.
+    """
+    of = projection.unit_of()
+    by_key = projection.by_key()
+    ready: list[dict] = []
+    pending: list[str] = []
+    for identifier in unit.entries:
+        if identifier.layer != units.SPEC:
+            continue
+        for child in graph.children(identifier):
+            if child.layer != TEST:
+                continue
+            found = graph.get(child)
+            if found is None:
+                continue
+            holder = of.get(child)
+            if holder is None:
+                pending.append(str(child))
+                continue
+            view = _entry_view(found, full=True)
+            view["judges"] = str(identifier)
+            view["modules"] = list(by_key[holder].modules)
+            view["unit"] = holder
+            ready.append(view)
+    return {
+        "tests": sorted(ready, key=lambda v: v["id"]),
+        "tests_pending": sorted(set(pending)),
+    }
+
+
 def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     """One work unit and everything needed to build it, addressed by any
     entry it contains.
@@ -1133,8 +1194,8 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     if key is None:
         raise ServiceError(
             f"{identifier} belongs to no work unit. Either it is not a spec "
-            "entry, or no module implements it -- an entry nothing implements "
-            "is in no unit and so is in no piece of work"
+            "or test entry, or no module implements it -- an entry nothing "
+            "implements is in no unit and so is in no piece of work"
         )
     unit = projection.by_key()[key]
 
@@ -1186,6 +1247,10 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         "read_set": sorted(read_set, key=lambda v: v["id"]),
         "cross_cutting": cross,
         "follows": list(projection.edges.get(key, ())),
+        "followed_by": sorted(
+            other for other, targets in projection.edges.items() if key in targets
+        ),
+        **_verification(graph, projection, unit),
         "audit": {
             "editable_paths": list(unit.modules),
             "rule": "any file touched outside editable_paths breaks the one "
@@ -1352,6 +1417,25 @@ def list_modules(store: ProjectStore, project: str) -> dict:
             str(e.id)
             for e in graph.entries()
             if e.id.layer == "S" and not manifest.implementers(e.id)
+        ],
+        # The same question asked of tests: the scenario is written and no
+        # file implements it. Reported separately because the consequence is
+        # different -- an unimplemented spec entry is work not started, an
+        # unimplemented test is a scenario that orders nothing and is not
+        # yet expected to pass.
+        "unimplemented_tests": [
+            str(e.id)
+            for e in graph.entries()
+            if e.id.layer == TEST and not manifest.implementers(e.id)
+        ],
+        # Spec entries with no scenario at all. Not the same as having no
+        # module: this one says nothing can falsify the contract, whoever
+        # builds it.
+        "untested": [
+            str(e.id)
+            for e in graph.entries()
+            if e.id.layer == "S"
+            and not any(c.layer == TEST for c in graph.children(e.id))
         ],
     }
 
@@ -1608,8 +1692,8 @@ def review_layer(
     """Read a layer with each entry's justification chain attached, so a
     reviewer sees the decision and what it claims to serve in one place
     rather than reading whole documents."""
-    if layer not in LAYERS:
-        raise ServiceError(f"'layer' must be one of {LAYERS}")
+    if layer not in ALL_LAYERS:
+        raise ServiceError(f"'layer' must be one of {ALL_LAYERS}")
     manifest = store.load_manifest(project)
     graph = store.load_graph(project)
 

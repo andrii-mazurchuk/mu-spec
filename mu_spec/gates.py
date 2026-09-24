@@ -17,6 +17,13 @@ Three live here, because all three are answerable from the graph alone:
   it? This is a COMPLETENESS question: it measures how far knowledge has
   actually been carried down, and being incomplete is the ordinary state of
   a project mid-propagation.
+- untested -- does every spec entry have at least one test entry deriving
+  from it? Also COMPLETENESS, and deliberately a separate finding rather
+  than folding tests into `unserved`. Tests fork off spec instead of
+  continuing the chain below it, so an untested spec entry is not a chain
+  that stopped short -- it is a contract nobody has said how to falsify.
+  Different question, different remedy, and only one of them means the
+  pipeline has not finished propagating.
 
 Keeping those apart matters, because they have different consequences.
 Unsound blocks: an amendment that would introduce an orphan is refused, and
@@ -37,11 +44,19 @@ from __future__ import annotations
 import dataclasses
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import LAYERS, Identifier, derives_legally, sort_key
+from mu_spec.identifiers import (
+    LAYERS,
+    SPEC,
+    TEST,
+    Identifier,
+    derives_legally,
+    sort_key,
+)
 
 ORPHAN = "orphan"
 UNSERVED = "unserved"
 BAD_DEPENDENCY = "bad_dependency"
+UNTESTED = "untested"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,6 +101,18 @@ def orphans(graph: Graph) -> list[Finding]:
 
         problems: list[str] = []
         good = 0
+        # A test derives from EXACTLY one spec entry, where every other layer
+        # may derive from several. One scenario, one contract: a test citing
+        # two contracts cannot say which one it falsifies when it fails, and
+        # the ordering rule -- the unit implementing S*X follows the unit
+        # holding tests derived from S*X -- would drag an unrelated
+        # implementation unit behind it for a scenario that never judged it.
+        if entry.id.layer == TEST and len(entry.derives_from) != 1:
+            problems.append(
+                f"a test derives from exactly one spec entry; {entry.id} "
+                f"names {len(entry.derives_from)}"
+            )
+
         for parent in entry.derives_from:
             if not derives_legally(entry.id, parent):
                 problems.append(
@@ -107,6 +134,24 @@ def orphans(graph: Graph) -> list[Finding]:
     return findings
 
 
+def untested(graph: Graph) -> list[Finding]:
+    """A live spec entry must have at least one live test entry deriving from
+    it. A contract with no scenario is a contract nothing can falsify.
+
+    Reported, never blocking -- for the same reason `unserved` does not
+    block, and one sharper. Tests are written before the code and after the
+    spec, so *every* spec entry is untested for the window between those two
+    events. A gate here would refuse the project during the ordinary course
+    of writing it.
+    """
+    return [
+        Finding(UNTESTED, entry.id, "no test entry derives from it")
+        for entry in graph.entries()
+        if entry.id.layer == SPEC
+        and not any(c.layer == TEST for c in graph.children(entry.id))
+    ]
+
+
 def unserved(graph: Graph) -> list[Finding]:
     """An entry above the bottom layer must have at least one live entry
     deriving from it. A requirement nothing serves is a requirement nobody
@@ -120,7 +165,12 @@ def unserved(graph: Graph) -> list[Finding]:
     return [
         Finding(UNSERVED, entry.id, "nothing derives from it")
         for entry in graph.entries()
-        if entry.id.depth != _BOTTOM_DEPTH
+        # A test is a leaf by construction -- nothing derives from one, ever
+        # -- so asking this of it would report every test in the project
+        # forever. What a test is missing is a module, and that is the module
+        # map's report, not this one.
+        if entry.id.layer != TEST
+        and entry.id.depth != _BOTTOM_DEPTH
         and not any(
             derives_legally(child, entry.id) for child in graph.children(entry.id)
         )
@@ -144,6 +194,26 @@ def bad_dependencies(graph: Graph) -> list[Finding]:
     findings: list[Finding] = []
     for entry in graph.entries():
         problems: list[str] = []
+        # A test carries no horizontal edge of either kind. One scenario
+        # needs nothing from another scenario, and this is not tidiness: it
+        # is what makes a work unit holding test modules a *root*. With no
+        # outbound edge to have, a test unit cannot take part in a cycle, so
+        # the ordering rule that puts implementation after tests can never
+        # deadlock against a dependency. The same shape as a cross-cutting
+        # slice landing in wave 0 -- arranged by the edge rules, not by a
+        # scheduler.
+        if entry.id.layer == TEST:
+            if entry.depends_on:
+                problems.append(
+                    "a test entry depends on nothing -- one scenario needs "
+                    "nothing from another, and an outbound edge is what "
+                    "would let a test unit sit inside a cycle"
+                )
+            if entry.emits_into:
+                problems.append(
+                    "a test entry emits into nothing -- it publishes no "
+                    "behaviour, it observes one"
+                )
         for target in entry.depends_on:
             if target == entry.id:
                 problems.append(f"{target} depends on itself")
@@ -168,5 +238,10 @@ def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
     way the graph does."""
-    findings = orphans(graph) + bad_dependencies(graph) + unserved(graph)
+    findings = (
+        orphans(graph)
+        + bad_dependencies(graph)
+        + unserved(graph)
+        + untested(graph)
+    )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

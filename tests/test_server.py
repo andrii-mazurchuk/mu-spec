@@ -2685,3 +2685,193 @@ def test_a_unit_that_depends_on_another_reports_it_in_follows(store, prompts):
     _, index = call(store, prompts, "GET", "/projects/m/units/S·01")
     assert ledger["follows"] == [index["unit"]["key"]]
     assert index["follows"] == []
+
+
+# -- tests as entries --------------------------------------------------------
+
+
+def _scenario(store, prompts, mid, judges="S·01", title="the empty case",
+              purpose="", **outer):
+    """Write one scenario. `outer` goes on the amendment itself, which is how
+    a test can try to hand one a slice it must not have."""
+    return call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "T",
+                    "title": title,
+                    "purpose": purpose,
+                    "body": f"observe: {title}",
+                    "derives_from": [judges],
+                }
+            ],
+            **outer,
+        },
+    )
+
+
+def test_a_scenario_is_admitted_at_the_test_layer(store, prompts):
+    mid = _implemented(store, prompts)
+    status, payload = _scenario(
+        store, prompts, mid, purpose="the boundary nobody documents"
+    )
+    assert status == 200
+    assert payload["created"] == ["T·01"]
+
+    _, entry = call(store, prompts, "GET", "/projects/m/entries/T·01")
+    assert entry["derives_from"] == ["S·01"]
+    assert entry["purpose"] == "the boundary nobody documents"
+    assert entry["layer"] == "test"
+
+
+def test_a_scenario_takes_no_slice(store, prompts):
+    """Its column is the column of the spec entry it derives from, resolved
+    from the graph. A second copy here is what goes stale the first time a
+    slice splits."""
+    mid = _implemented(store, prompts)
+    status, payload = _scenario(store, prompts, mid, slice="listings")
+    assert status == 400
+    assert "no slice" in payload["error"]
+
+
+def test_a_scenario_may_not_judge_two_contracts(store, prompts):
+    mid = _implemented(store, prompts)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "in_response_to": mid,
+            "entries": [
+                {
+                    "layer": "T",
+                    "title": "two at once",
+                    "derives_from": ["S·01", "S·03"],
+                }
+            ],
+        },
+    )
+    assert status == 409
+    assert payload["admitted"] is False
+
+
+def test_an_untested_spec_entry_is_reported_and_the_graph_stays_sound(
+    store, prompts
+):
+    """The distinction the whole layer placement exists for: a spec entry
+    with no scenario is INCOMPLETE, never unsound. Work is still issued."""
+    _implemented(store, prompts)
+    _, gates = call(store, prompts, "GET", "/projects/m/gates")
+    kinds = {(f["kind"], f["id"]) for f in gates["findings"]}
+    assert ("untested", "S·01") in kinds
+    assert gates["sound"] is True
+
+    status, _ = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert status == 200
+
+
+def test_a_module_may_not_implement_a_spec_and_a_test_entry(store, prompts):
+    """The rule the separation rests on. One mixed file merges the test unit
+    into the implementation unit and the disjoint write sets stop being a
+    property of the grouping."""
+    mid = _implemented(store, prompts)
+    _scenario(store, prompts, mid)
+    status, payload = call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/modules",
+        {"path": "mixed.py", "implements": ["S·01", "T·01"]},
+    )
+    assert status == 400
+    assert "both spec and test" in payload["error"]
+
+
+def test_the_implementation_unit_follows_the_unit_holding_its_scenarios(
+    store, prompts
+):
+    """Documentation first, tests second, code last -- ordered rather than
+    asked for. The test unit is a root, so it lands in wave 0."""
+    mid = _implemented(store, prompts)
+    _scenario(store, prompts, mid)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "tests/test_index.py", "implements": ["T·01"]})
+
+    _, impl = call(store, prompts, "GET", "/projects/m/units/S·01")
+    _, tests = call(store, prompts, "GET", "/projects/m/units/T·01")
+
+    assert tests["unit"]["tests"] is True
+    assert impl["unit"]["tests"] is False
+    assert tests["unit"]["key"] in impl["follows"]
+    assert impl["unit"]["key"] in tests["followed_by"]
+    assert tests["write_set"] == ["tests/test_index.py"]
+
+    _, units_view = call(store, prompts, "GET", "/projects/m/units")
+    wave_zero = units_view["live"]["waves"][0]["units"]
+    assert tests["unit"]["key"] in wave_zero
+
+
+def test_a_unit_carries_the_scenarios_to_run_and_the_ones_not_built_yet(
+    store, prompts
+):
+    """The difference between a red suite everyone ignores and a signal. A
+    scenario with no module is not yet expected to pass, so it is reported
+    apart and orders nothing."""
+    mid = _implemented(store, prompts)
+    _scenario(store, prompts, mid, title="the empty case")
+    _scenario(store, prompts, mid, title="the duplicate case")
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "tests/test_index.py", "implements": ["T·01"]})
+
+    _, impl = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert [t["id"] for t in impl["tests"]] == ["T·01"]
+    assert impl["tests"][0]["modules"] == ["tests/test_index.py"]
+    assert impl["tests"][0]["judges"] == "S·01"
+    assert impl["tests_pending"] == ["T·02"]
+
+
+def test_the_module_list_reports_both_halves_of_coverage(store, prompts):
+    mid = _implemented(store, prompts)
+    _scenario(store, prompts, mid)
+    _, payload = call(store, prompts, "GET", "/projects/m/modules")
+    assert payload["untested"] == ["S·02", "S·03"]
+    assert payload["unimplemented_tests"] == ["T·01"]
+    assert payload["unimplemented"] == ["S·02"]
+
+
+def test_scenarios_can_be_asked_for_on_their_own(store, prompts):
+    """Found by running it, not by reading it. Every other request type
+    stops at spec, so a fresh ask for scenarios had nowhere to originate and
+    'write the tests for S·01' was refused outright. Writing them as part
+    of the feature that created the spec always worked -- once a request has
+    produced entries, propagation is unrestricted -- but the standalone ask
+    is the ordinary case for a contract specified before anyone said how it
+    could fail.
+
+    Originating at T is not a hole in the rule that a change may not enter
+    below its cause: a scenario adds no claim to the derivation chain, so
+    there is nothing above it that could then be contradicted.
+    """
+    _implemented(store, prompts)
+    status, msg = post(store, prompts, "verification", "say how search fails")
+    assert status == 201
+
+    status, payload = _scenario(store, prompts, msg["message_id"])
+    assert status == 200
+    assert payload["created"] == ["T·01"]
+
+
+def test_an_observation_still_creates_nothing(store, prompts):
+    """The new type widens what may be asked for, not who may write. A
+    comment originates nothing, at T or anywhere else."""
+    _implemented(store, prompts)
+    _, msg = post(store, prompts, "comment", "is the empty query handled?")
+    status, payload = _scenario(store, prompts, msg["message_id"])
+    assert status == 400
+    assert "never creates entries" in payload["error"]

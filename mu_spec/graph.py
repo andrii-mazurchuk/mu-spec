@@ -53,6 +53,14 @@ class Entry:
     # load, and a title that silently changes when someone reflows a
     # paragraph is a bad foundation for that.
     title: str = ""
+    # Free text, and only a test entry ever carries it: what the scenario is
+    # for, read by whoever writes the test. Deliberately not a closed
+    # vocabulary -- the test for one in this design is whether anything
+    # mechanical branches on the value, and nothing does. Ordering follows
+    # from what a test DERIVES FROM, never from what kind it claims to be,
+    # so a vocabulary would be a second statement of a fact already held
+    # elsewhere, and the maintained copy is the one that goes stale.
+    purpose: str = ""
     body: str = ""
     # Set on the *replacement*, naming the entry it retires. Amendments are
     # append-only: the superseded entry stays in the file and stays

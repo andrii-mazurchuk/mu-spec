@@ -626,6 +626,79 @@ def main(argv=None) -> int:
         show("undeclared", aud["undeclared"])
         print(f"    {aud['detail']}")
 
+    # --------------------------------------------------------------- 5f
+    step("5f.", "TESTS — the second source of truth")
+    print("  Documentation first, tests second, code last. A test is an entry")
+    print("  like any other, deriving from exactly ONE spec entry -- one")
+    print("  scenario, one contract. It carries no slice: its column is the")
+    print("  column of the entry it judges, so writing one down would be a")
+    print("  second copy of a fact the graph already holds.")
+    print()
+
+    _, mods = call("GET", f"/projects/{P}/modules")
+    show("spec entries no scenario judges", mods["untested"])
+    print("    Reported, never a blocker. Tests are written after the spec and")
+    print("    before the code, so every entry is untested in between -- a gate")
+    print("    here would refuse the project during the ordinary course of")
+    print("    writing it.")
+    print()
+
+    tests = request("verification", "say how search can fail", project=P)
+    amend(
+        P,
+        tests,
+        [
+            {
+                "layer": "T",
+                "title": "an empty query returns everything, not nothing",
+                "purpose": "the boundary the spec is silent about",
+                "body": "Given no query text, the index returns all listings.",
+                "derives_from": ["S·01"],
+            }
+        ],
+    )
+    status, m = call(
+        "POST", f"/projects/{P}/modules",
+        {"path": "tests/test_index.py", "implements": ["T·01"]},
+    )
+    print(f"  declare_module -> {status} tests/test_index.py implements "
+          f"{m.get('implements')}")
+    print()
+    print("  A module implements spec entries OR test entries, never both.")
+    _, refused = call(
+        "POST", f"/projects/{P}/modules",
+        {"path": "mixed.py", "implements": ["S·01", "T·01"]},
+    )
+    print(f"    mixed.py -> refused: {refused.get('error', '')[:64]}...")
+
+    _, impl = call("GET", f"/projects/{P}/units/S·01")
+    _, tunit = call("GET", f"/projects/{P}/units/T·01")
+    if impl.get("issued") and tunit.get("issued"):
+        print()
+        print("  The two land in different work units, so the write sets are")
+        print("  disjoint -- different branch, different agent. Nobody has to")
+        print("  obey a rule about not editing the tests: there is no shared")
+        print("  file to edit.")
+        show("implementation write set", impl["write_set"])
+        show("test write set", tunit["write_set"])
+        print()
+        print(f"  the implementation unit follows {len(impl['follows'])} unit(s),")
+        print(f"  the test unit among them: "
+              f"{tunit['unit']['key'] in impl['follows']}")
+        print("  A test unit has no outbound edge to have, so it is a ROOT --")
+        print("  which is why the ordering rule can never deadlock, and why it")
+        print("  lands in wave 0 without anything arranging that.")
+        for t in impl["tests"]:
+            print()
+            print(f"  run after building: {t['id']}  {t['title']}")
+            print(f"    judges  {t['judges']}")
+            print(f"    purpose {t.get('purpose', '')}")
+            print(f"    in      {', '.join(t['modules'])}")
+        print()
+        show("specified but not built yet", impl["tests_pending"])
+        print("    Not yet expected to pass, so it orders nothing. That is the")
+        print("    difference between a red suite people ignore and a signal.")
+
     # ---------------------------------------------------------------- 6
     step("6.", "REVIEW THE FINAL LAYER")
     _, review = call("GET", f"/projects/{P}/review?layer=A&slice=discovery")

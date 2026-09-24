@@ -25,11 +25,30 @@ import re
 # graph, so it has no identifiers of its own to allocate.
 LAYERS = ("I", "B", "A", "S")
 
+# Tests are a valid layer that is deliberately NOT in the derivation chain.
+#
+# A test forks off spec rather than continuing downward from it: an
+# implementation module implements spec entries, a test module implements
+# test entries, and nothing ever derives from a test. Putting T inside
+# LAYERS would make spec stop being the bottom of the chain, and the
+# completeness gate -- which asks whether knowledge has reached the bottom
+# -- would start reporting every untested spec entry as unserved. That is a
+# different question with a different consequence, and it has its own report.
+#
+# What T *does* need is a position, so a spine sorts it last and so "one
+# layer up from a test" resolves to spec by the same arithmetic everything
+# else uses. Hence a depth past the end of the chain rather than a place in
+# it.
+TEST = "T"
+SPEC = "S"
+ALL_LAYERS = LAYERS + (TEST,)
+
 LAYER_NAMES = {
     "I": "intent",
     "B": "behaviour",
     "A": "architecture",
     "S": "spec",
+    "T": "test",
 }
 
 # U+00B7 MIDDLE DOT, the form the design doc is written in.
@@ -56,9 +75,9 @@ class Identifier:
     number: int
 
     def __post_init__(self) -> None:
-        if self.layer not in LAYERS:
+        if self.layer not in ALL_LAYERS:
             raise InvalidIdentifier(
-                f"unknown layer {self.layer!r}, expected one of {LAYERS}"
+                f"unknown layer {self.layer!r}, expected one of {ALL_LAYERS}"
             )
         if self.number < 1:
             raise InvalidIdentifier(
@@ -70,7 +89,15 @@ class Identifier:
 
     @property
     def depth(self) -> int:
-        """Position in LAYERS. Lower is closer to intent."""
+        """Position in the derivation chain. Lower is closer to intent.
+
+        A test sits one past the end. That is what makes `derives_legally`
+        resolve a test's parent to spec without a special case, and what
+        sorts tests last in a spine -- while keeping spec the bottom of the
+        chain for anything asking how far knowledge has been carried down.
+        """
+        if self.layer == TEST:
+            return len(LAYERS)
         return LAYERS.index(self.layer)
 
     @property
@@ -95,6 +122,12 @@ def derives_legally(source: Identifier, target: Identifier) -> bool:
     changes. It also keeps the two edge kinds unambiguous: `derives_from` is
     exactly one layer up, `depends_on` is exactly the same layer, and nothing
     else is expressible.
+
+    Tests need no case of their own. A test sits one past spec, so "exactly
+    one layer up" already means spec and nothing else -- and since no layer
+    sits past a test, nothing can legally derive from one. Both halves of
+    the test contract fall out of the arithmetic rather than being asserted
+    on top of it.
     """
     return target.depth == source.depth - 1
 

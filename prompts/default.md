@@ -16,6 +16,7 @@ decides how deep the change may reach:
 - `initiate` — start a project from a raw idea
 - `feature` — something the product does not do yet
 - `correction` — something is wrong
+- `verification` — say how an existing contract can be caught failing
 - `comment` — an observation attached to part of the design; changes nothing
 - `question` — needs an answer, not a change
 

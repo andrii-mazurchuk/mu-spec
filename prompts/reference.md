@@ -19,8 +19,11 @@ that fills the graph in -- is `GET /prompts/wayfinding`.
  "body": "Module capture/store.py. CapturedRecord is frozen ..."}
 ```
 
-- **`layer`** is one of `I`, `B`, `A`, `S`. You never choose the identifier;
-  this unit allocates it.
+- **`layer`** is one of `I`, `B`, `A`, `S`, or `T`. You never choose the
+  identifier; this unit allocates it. `T` is a **test**: one scenario,
+  deriving from exactly one spec entry, carrying no horizontal edge of
+  either kind and no slice. It may also carry a free-text `purpose` for
+  whoever writes the test; nothing mechanical branches on it.
 - **`title`** is one line, and it is what everyone reads in the spine
   forever. Write it as a claim, not a label: `A person can see where one
   month's money went`, never `Reporting`.

@@ -17,6 +17,15 @@ contain it. `originates_at` is the deepest an accepted message may reach
 when the first entry is created in response to it; propagation downward from
 there is unrestricted, because that is the pipeline doing its job.
 
+Tests are the one thing reachable that is not *below* anything. A scenario
+forks off spec rather than continuing under it, so `verification` originating
+at `T` is not a hole in the rule above -- the rule guards against fixing
+something low while the layers above go on saying the old thing, and a
+scenario makes no claim those layers could contradict. Writing scenarios as
+part of a `feature` already works without it: once a message has produced
+entries, propagation is unrestricted. What this type adds is the standalone
+ask, for a contract that was specified before anyone said how it could fail.
+
 Messages are held in one append-only log for the whole unit rather than per
 project, because `initiate` has no project yet by definition.
 """
@@ -72,6 +81,17 @@ TYPES: dict[str, MessageType] = {
             "and described the wrong thing). It may not originate lower: "
             "patching a decision or a spec while the layers above still say "
             "the old thing is how the artifacts start lying.",
+        ),
+        MessageType(
+            "verification",
+            ("T",),
+            False,
+            "Ask for the scenarios that would falsify part of the design. "
+            "Originates at test, which is not an exception to the rule that "
+            "a change may not enter below its cause: a scenario adds no "
+            "claim to the derivation chain and says nothing the layers above "
+            "could then contradict. It says how an existing contract can be "
+            "caught failing.",
         ),
         MessageType(
             "comment",

@@ -11,6 +11,8 @@ Layout, per the design doc:
                                are projected from the entries themselves
       intent.jsonl             intent is not sliced -- short by nature,
                                everyone reads it
+      tests.jsonl              tests are not sliced either -- a test's column
+                               is its parent spec entry's, and is derived
       behaviour/<slice>.jsonl  one file per slice per layer. Not one file per
       architecture/<slice>.jsonl  entry (per-file overhead kills you at fifty
       spec/<slice>.jsonl          reads); not one file per layer (large
@@ -32,7 +34,9 @@ from pathlib import Path
 
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
+    ALL_LAYERS,
     LAYERS,
+    TEST,
     Identifier,
     InvalidIdentifier,
     parse,
@@ -42,6 +46,17 @@ from mu_spec.identifiers import (
 INTENT_LAYER = "I"
 LAYER_DIRS = {"B": "behaviour", "A": "architecture", "S": "spec"}
 INTENT_FILE = "intent.jsonl"
+# Tests are stored flat, like intent, and for a related reason: they have no
+# slice. A test's column is its parent spec entry's, which is derivable from
+# the graph at any moment -- so writing it down would be a second copy of a
+# fact already held, and the written copy is the one that goes stale.
+#
+# One file per layer rather than one per slice is also simply true to what
+# the split buys. That split exists to bound how many files a reader opens;
+# nothing outside this unit reads the tree, and everything in it is served
+# from a graph loaded whole. So the granularity buys nothing here, and the
+# flat file is what `intent.jsonl` already is.
+TESTS_FILE = "tests.jsonl"
 # Where behaviour lives before slicing has run. Slices are cut once
 # behaviour is complete, so behaviour necessarily exists before any slice
 # does; demanding a slice name for it made the designed order impossible.
@@ -55,6 +70,7 @@ PROPOSAL_FILE = "proposal.json"
 # recoverable from what it says now.
 UNITS_FILE = "units.jsonl"
 BEHAVIOUR_LAYER = "B"
+SPEC_LAYER = "S"
 MANIFEST_FILE = "manifest.json"
 
 # Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
@@ -124,6 +140,7 @@ def parse_entries(text: str) -> list[Entry]:
                 depends_on=_ids(raw.get("depends_on"), "depends_on", where),
                 emits_into=_ids(raw.get("emits_into"), "emits_into", where),
                 title=str(raw.get("title", "")),
+                purpose=str(raw.get("purpose", "")),
                 body=str(raw.get("body", "")),
                 supersedes=(
                     _ids([supersedes], "supersedes", where)[0]
@@ -154,6 +171,8 @@ def render_entries(entries: list[Entry]) -> str:
             record["emits_into"] = [str(d) for d in entry.emits_into]
         if entry.title:
             record["title"] = entry.title
+        if entry.purpose:
+            record["purpose"] = entry.purpose
         if entry.body:
             record["body"] = entry.body
         if entry.supersedes is not None:
@@ -307,6 +326,7 @@ class ProjectStore:
         for sub in ("behaviour", "architecture", "spec", "history"):
             (path / sub).mkdir(parents=True, exist_ok=True)
         (path / INTENT_FILE).write_text("", encoding="utf-8")
+        (path / TESTS_FILE).write_text("", encoding="utf-8")
         self._write_manifest(path, Manifest(project=project))
 
     # -- manifest -----------------------------------------------------------
@@ -328,7 +348,7 @@ class ProjectStore:
         """Hand out the next identifier for a layer and record it. The mark
         only ever moves up: this is where "never reused" is actually
         enforced, rather than merely documented."""
-        if layer not in LAYERS:
+        if layer not in ALL_LAYERS:
             raise ValueError(f"unknown layer {layer!r}")
         manifest = self.load_manifest(project)
         nxt = manifest.allocation.get(layer, 0) + 1
@@ -337,16 +357,32 @@ class ProjectStore:
         return Identifier(layer=layer, number=nxt)
 
     def set_module(self, project: str, path: str, implements: list[str]) -> None:
-        """Declare which spec entries a module implements.
+        """Declare which spec entries -- or which test entries -- a module
+        implements.
 
         Replaces rather than merges: a module that has stopped implementing
         something must be able to say so, or the write set keeps handing out
         files nobody needs. Declaring nothing removes it.
 
         Every identifier is checked against the live graph, and must be at
-        spec. Code implements spec; a module claiming an architecture entry
-        has skipped the layer that says how, and the backlink would point at
-        a decision rather than an instruction.
+        spec or at test. The layers above are refused: code implements spec,
+        and a module claiming an architecture entry has skipped the layer
+        that says how, so the backlink would point at a decision rather than
+        an instruction.
+
+        **A module implements spec entries or test entries, never both**, and
+        this is the rule the whole test separation rests on. The design's
+        claim is that "the agent implementing a spec entry may read the test
+        files and may never write them" needs no enforcement, because a test
+        module and an implementation module share no entry and therefore fall
+        into different work units -- different branch, different agent. That
+        is only true while no single file claims both. One mixed file and the
+        two collide into one unit, the write sets stop being disjoint, and a
+        structural guarantee quietly degrades into an honour-system rule.
+
+        There is no stored `kind`. What a module is follows from the
+        identifiers it claims, and a field would be a second statement of
+        exactly that.
         """
         if not isinstance(path, str) or not path.strip():
             raise ValueError("a module path is required")
@@ -357,14 +393,27 @@ class ProjectStore:
                 identifier = parse(str(raw))
             except InvalidIdentifier as exc:
                 raise ValueError(str(exc)) from exc
-            if identifier.layer != "S":
+            if identifier.layer not in (SPEC_LAYER, TEST):
                 raise ValueError(
                     f"{identifier} is at {identifier.layer_name}; a module "
-                    "implements spec entries, not the layers above them"
+                    "implements spec entries or test entries, not the layers "
+                    "above them"
                 )
             if identifier not in graph:
                 raise ValueError(f"{identifier} does not exist")
             parsed.add(identifier)
+
+        kinds = {i.layer for i in parsed}
+        if len(kinds) > 1:
+            raise ValueError(
+                f"{path.strip()} claims both spec and test entries. A module "
+                "implements one or the other: a test module and an "
+                "implementation module share no entry, which is what puts "
+                "them in different work units and so on different branches. "
+                "A file claiming both merges those units and the separation "
+                "between writing a test and writing the code it judges stops "
+                "being structural"
+            )
 
         manifest = self.load_manifest(project)
         if parsed:
@@ -400,6 +449,8 @@ class ProjectStore:
         path = self._project_dir(project)
         if layer == INTENT_LAYER:
             return path / INTENT_FILE
+        if layer == TEST:
+            return path / TESTS_FILE
         if not slice_name:
             if layer == BEHAVIOUR_LAYER:
                 return path / LAYER_DIRS[layer] / HOLDING_FILE
@@ -436,7 +487,10 @@ class ProjectStore:
         if slice_name:
             manifest = self.load_manifest(project)
             sl = manifest.slices.setdefault(slice_name, Slice(name=slice_name))
-            sl.members.update(e.id for e in entries)
+            # A test entry never joins a slice. Its column is its parent
+            # spec entry's, derived on demand; a stored membership would be
+            # the second copy that goes stale.
+            sl.members.update(e.id for e in entries if e.id.layer != TEST)
             self.save_manifest(project, manifest)
 
     def settle_holding(self, project: str) -> list[Identifier]:
@@ -487,6 +541,7 @@ class ProjectStore:
     def load_all(self, project: str) -> list[Entry]:
         path = self._project_dir(project)
         entries = self._read_file(path / INTENT_FILE)
+        entries.extend(self._read_file(path / TESTS_FILE))
         for layer_dir in LAYER_DIRS.values():
             directory = path / layer_dir
             if directory.exists():
