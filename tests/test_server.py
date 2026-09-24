@@ -2485,3 +2485,203 @@ def test_a_split_after_ratification_does_not_duplicate_held_behaviour(store, pro
     assert status == 200, spine
     ids = [r["id"] for r in spine["spine"]]
     assert len(ids) == len(set(ids)), f"duplicated: {ids}"
+
+
+# -- work units: cutting, reading, and being handed one ----------------------
+
+
+def _unsound(store, prompts, mid):
+    """Retire B·01, leaving A·01 derived from an entry that no longer lives.
+
+    The same path the slice-context tests use: this is what "unsound" looks
+    like when it happens for real, rather than a hand-built broken file.
+    """
+    _, msg = post(store, prompts, "correction", "ranking is wrong")
+    call(
+        store,
+        prompts,
+        "POST",
+        "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [
+                {
+                    "layer": "B",
+                    "title": "ranked by rating",
+                    "derives_from": ["I·01"],
+                    "supersedes": "B·01",
+                }
+            ],
+        },
+    )
+    return mid
+
+
+def test_cutting_with_no_modules_declared_is_refused(store, prompts):
+    """A cut with no write sets is not a cut -- it is a list of entries
+    nobody can be handed. And the refusal has to say which entries have no
+    module, because "declare some modules" without naming them leaves the
+    person who cannot cut with nowhere to start."""
+    seed(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/units/cut", {})
+    assert status == 409
+    assert payload["cut"] is False
+    assert "module" in payload["reason"]
+    assert payload["unimplemented"] == ["S·01"]
+
+
+def test_cutting_an_unsound_graph_is_refused_before_the_module_check(
+    store, prompts
+):
+    """The two refusals are not interchangeable. Modules are declared here,
+    so the only thing left to object to is the broken chain -- and a cut
+    taken from one would hand out work derived from a retired entry."""
+    mid = seed(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search/index.py", "implements": ["S·01"]})
+    _unsound(store, prompts, mid)
+    status, payload = call(store, prompts, "POST", "/projects/m/units/cut", {})
+    assert status == 409
+    assert payload["cut"] is False
+    assert "unsound" in payload["reason"]
+    assert payload["gates"]["sound"] is False
+
+
+def test_a_successful_cut_returns_the_units_and_a_sequence_number(
+    store, prompts
+):
+    """The sequence number is how a piece of work handed out later can be
+    traced back to the projection it came from."""
+    _implemented(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/units/cut",
+                           {"note": "first"})
+    assert status == 200
+    assert payload["cut"] is True
+    assert payload["seq"] == 1
+    assert payload["note"] == "first"
+    assert sorted(m for u in payload["units"] for m in u["modules"]) == [
+        "payouts/ledger.py",
+        "search/index.py",
+    ]
+
+
+def test_re_cutting_with_nothing_changed_writes_no_unit_bodies(store, prompts):
+    """The carry-forward rule, and the reason the log is a log rather than a
+    series of snapshots: a cut names every unit it holds but stores a body
+    only for the ones that moved, so re-cutting -- which is free and
+    expected -- does not rewrite the whole projection every time."""
+    _implemented(store, prompts)
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "first"})
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "again"})
+
+    lines = store.units_path("m").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    first, second = json.loads(lines[0]), json.loads(lines[1])
+    assert set(first["units"]) == set(first["members"])
+    assert second["members"] == first["members"]
+    assert second["units"] == {}
+
+
+def test_units_before_any_cut_still_shows_the_live_projection(store, prompts):
+    """A person deciding whether to cut needs to see what a cut would
+    contain. Refusing to answer until one has been taken would make the
+    decision unmakeable."""
+    _implemented(store, prompts)
+    status, payload = call(store, prompts, "GET", "/projects/m/units")
+    assert status == 200
+    assert payload["cut"] is None
+    assert payload["drift"] is None
+    assert sorted(m for u in payload["live"]["units"] for m in u["modules"]) == [
+        "payouts/ledger.py",
+        "search/index.py",
+    ]
+
+
+def test_units_after_a_cut_attaches_drift_and_reports_nothing_moved(
+    store, prompts
+):
+    """Drift is attached rather than left to a second call, because the only
+    caller that wants the cut wants to know whether it is still current."""
+    _implemented(store, prompts)
+    _, cut = call(store, prompts, "POST", "/projects/m/units/cut", {})
+    _, payload = call(store, prompts, "GET", "/projects/m/units")
+    assert payload["cut"]["seq"] == 1
+    drift = payload["drift"]
+    assert sorted(drift["unchanged"]) == sorted(u["key"] for u in cut["units"])
+    assert drift["changed"] == []
+    assert drift["edges_changed"] is False
+
+
+def test_a_work_unit_is_reachable_through_any_entry_it_holds(store, prompts):
+    """A unit's identity is its entry set, which does not fit in a URL. So
+    any member names it, and every member must name the same one -- if they
+    did not, two people working the same unit would be handed different
+    write sets."""
+    _two_columns(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "core.py", "implements": ["S·01", "S·02"]})
+    status_a, by_first = call(store, prompts, "GET", "/projects/m/units/S·01")
+    status_b, by_second = call(store, prompts, "GET", "/projects/m/units/S·02")
+    assert (status_a, status_b) == (200, 200)
+    assert by_first["unit"]["key"] == by_second["unit"]["key"]
+    assert by_first["write_set"] == by_second["write_set"] == ["core.py"]
+    assert by_first["unit"]["entries"] == ["S·01", "S·02"]
+
+
+def test_a_work_units_write_set_is_module_paths_not_entry_ids(store, prompts):
+    """The write set is what a branch may edit, so it has to be files. An
+    entry identifier is not something a diff can be audited against."""
+    _implemented(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert payload["write_set"] == ["search/index.py"]
+    assert payload["audit"]["editable_paths"] == ["search/index.py"]
+
+
+def test_an_entry_no_module_implements_has_no_work_unit(store, prompts):
+    """S·02 is stated and nothing was built for it. Inventing an empty unit
+    would hand someone a branch with no files in it; the honest answer is
+    that this entry is in no piece of work yet."""
+    _implemented(store, prompts)
+    status, payload = call(store, prompts, "GET", "/projects/m/units/S·02")
+    assert status == 400
+    assert "no work unit" in payload["error"]
+    assert "nothing implements" in payload["error"]
+
+
+def test_a_work_unit_is_refused_when_the_graph_is_unsound(store, prompts):
+    """Same reason nothing else is issued from a broken chain: the code
+    would be derived from a retired entry."""
+    mid = _implemented(store, prompts)
+    _unsound(store, prompts, mid)
+    status, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert status == 409
+    assert payload["issued"] is False
+    assert payload["gates"]["sound"] is False
+
+
+def test_listing_cuts_reports_each_cuts_header(store, prompts):
+    """Which cut a piece of work came from is answerable later only because
+    this log exists -- the graph cannot recover it."""
+    _implemented(store, prompts)
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "first"})
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "second"})
+    status, payload = call(store, prompts, "GET", "/projects/m/units/cuts")
+    assert status == 200
+    assert [(c["seq"], c["note"]) for c in payload["cuts"]] == [
+        (1, "first"),
+        (2, "second"),
+    ]
+    assert all(c["units"] == 2 for c in payload["cuts"])
+
+
+def test_a_unit_that_depends_on_another_reports_it_in_follows(store, prompts):
+    """Disjoint files are not independence. S·03 depends on S·01, so the
+    ledger's unit waits for the index's -- and the direction matters: the
+    index waits for nobody, and saying otherwise would serialise work that
+    could have run at the same time."""
+    _implemented(store, prompts)
+    _, ledger = call(store, prompts, "GET", "/projects/m/units/S·03")
+    _, index = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert ledger["follows"] == [index["unit"]["key"]]
+    assert index["follows"] == []
