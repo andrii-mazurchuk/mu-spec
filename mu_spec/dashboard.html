@@ -47,6 +47,9 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.45 var(--san
   border-radius:var(--radius);padding:4px 8px;font:inherit;max-width:220px}
 .kpi{display:flex;flex-direction:column;line-height:1.15}
 .kpi b{font-size:15px;font-variant-numeric:tabular-nums}
+/* Only once testing has started. An all-untested project is not a
+   project in trouble, it is a project that has not reached tests. */
+.kpi.warnkpi b{color:var(--warn)}
 .kpi span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
 .flag{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
 .ok{background:var(--ok-bg);color:var(--ok)}
@@ -102,6 +105,44 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .node.sel rect{stroke:var(--brand);stroke-width:2}
 .node.mod rect{stroke-dasharray:3 3}
 .node.dim{opacity:.16}
+
+/* ── the verification band ───────────────────────────────────────
+   A second ROW, not a continuation of the columns above. The rule
+   across the full width is what says so before any label does. */
+.bandrule{stroke:var(--rule);stroke-width:1.5;stroke-dasharray:2 6}
+.bandcap{font:600 11px var(--sans);letter-spacing:.09em;
+  text-transform:uppercase;fill:var(--dim)}
+
+/* A GHOST is a copy of a spec entry, drawn beneath the corpus so the
+   spec-to-test edge is one short hop instead of an arc across the
+   whole picture. It is a reference, never a second entry, so it is
+   drawn as an outline with nothing filled in. */
+.node.ghost rect{fill:none;stroke-dasharray:1 4;stroke:var(--rule)}
+.node.ghost .accent{opacity:.45}
+.node.ghost .id{fill:var(--ink-soft)}
+.node.ghost .t{fill:var(--dim);font-style:italic}
+
+/* A scenario. Squarer than an entry on purpose: it is a different
+   kind of thing, and the shape says that before the colour does. */
+.node.tst rect{rx:2}
+
+/* Written, no file yet. Emphatically NOT a failure state -- it is not
+   yet expected to pass, and nothing waits on it -- so it is drawn as
+   unfinished rather than as broken: no fill, never a warning colour. */
+.node.unbuilt rect{fill:none;stroke-dasharray:5 3}
+.node.unbuilt .t{fill:var(--dim)}
+
+/* A contract nothing says how to falsify. Shown only once testing has
+   started; before the first scenario exists every contract is
+   untested and badging all of them says nothing. */
+.node.untested .accent{fill:none;stroke:var(--sl);stroke-width:1;
+  stroke-dasharray:3 3}
+
+/* Work units on the spine, on demand. A unit groups entries and files
+   across columns and across both bands, so a hull or a column would
+   assert an adjacency the graph does not have. Selecting anything
+   lights the rest of the branch it would be built on instead. */
+.node.peer rect{stroke:var(--brand);stroke-width:1.5;stroke-dasharray:4 2}
 .far .t{display:none}
 .edge{fill:none;stroke:var(--rule);stroke-width:1.4;marker-end:url(#a-idle)}
 .edge.e{stroke-dasharray:3 4}
@@ -213,6 +254,12 @@ aside h3:first-child{margin-top:0}
   border-radius:5px;padding:1px 6px;margin:2px 3px 0 0;font-family:var(--mono);font-size:11.5px;
   cursor:pointer;color:var(--ink)}
 .pill:hover{border-color:var(--brand);color:var(--brand)}
+.jump{background:var(--panel-alt);border:1px solid var(--rule);color:var(--ink-soft);
+  border-radius:5px;padding:3px 9px;font:500 11.5px var(--sans);cursor:pointer;margin-left:10px}
+.jump:hover{border-color:var(--brand);color:var(--brand)}
+.pill.flat{cursor:default;color:var(--ink-soft)}
+.pill.flat:hover{border-color:var(--rule);color:var(--ink-soft)}
+.tstag{color:var(--brand);font:600 10px var(--mono);letter-spacing:.04em}
 .muted{color:var(--dim);font-size:12px}
 .warnish{color:var(--warn)}
 
@@ -385,6 +432,8 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   <span class="flag" id="f-complete">—</span>
   <div class="kpi"><b id="k-entries">–</b><span>entries</span></div>
   <div class="kpi"><b id="k-slices">–</b><span>slices</span></div>
+  <div class="kpi"><b id="k-tests">–</b><span>scenarios</span></div>
+  <div class="kpi" id="kpi-untested"><b id="k-untested">–</b><span>untested</span></div>
   <div class="kpi"><b id="k-waves">–</b><span>waves</span></div>
   <div class="kpi"><b id="k-xing">–</b><span>crossings</span></div>
   <div class="kpi"><b id="k-issues">–</b><span>open issues</span></div>
@@ -417,6 +466,8 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     <div class="viewbar" id="viewbar">
       <span id="vb-spine">
         <label><input type="checkbox" id="t-group"> group columns by slice</label>
+        <button id="to-verify" class="jump" hidden>↓ verification band</button>
+        <button id="to-corpus" class="jump" hidden>↑ corpus</button>
       </span>
       <span id="vb-order" hidden>
         <label>layer <select id="ord-layer"></select></label>
@@ -484,9 +535,29 @@ async function get(path){
    new project, not a broken one. */
 const soft = (path, fallback) => get(path).catch(() => fallback);
 
-const LAYERS=[["I","Intent"],["B","Behaviour"],["A","Architecture"],["S","Spec"],["M","Modules"]];
+/* Six columns, two BANDS.
+
+   Tests fork off spec rather than continuing under it, so they do not
+   belong on the same row as the corpus: a T column sitting between Spec
+   and Modules at the same height would draw a chain that does not exist.
+   They get a column position of their own -- x between spec and modules --
+   and a band of their own below everything else.
+
+   The upper band is the corpus: I B A S, and the implementation files at M.
+   The lower band is verification: a GHOST of each tested spec entry at the
+   same x as the real one, the scenarios at T, and the test files at M. The
+   ghost is what lets the spec-to-test edge draw as one short vertical hop
+   inside the band instead of a long arc crossing the whole picture and
+   every edge in it. */
+const LAYERS=[["I","Intent"],["B","Behaviour"],["A","Architecture"],["S","Spec"],
+              ["T","Tests"],["M","Modules"]];
 const LIX = Object.fromEntries(LAYERS.map((l,i)=>[l[0],i]));
 const MODULE_LAYER = LIX.M;
+const TEST_LAYER = LIX.T;
+const CORPUS=0, VERIFY=1;
+const GHOST = id => "⧉" + id;      // the copy's id; never an entry
+const isGhost = id => typeof id === "string" && id[0] === "⧉";
+const realOf = id => isGhost(id) ? id.slice(1) : id;
 
 /* Slice names are data, so colours are assigned by position in the
    sorted name list rather than written down anywhere. */
@@ -498,6 +569,7 @@ const STATE = {
   project:null, projects:[], entries:[], byId:{},
   slices:{},          // name -> {type, hue, wave, deps, size, cohesion}
   waves:[], gates:null, issues:[], requests:[], modules:[],
+  unimplemented:[], unimplementedTests:[], untested:[],
   units:null,        // the stored cut, its drift, and the live projection
   locality:null, bodies:{}, live:false,
   proposal:null,        // the pending slicing decision, if any
@@ -538,6 +610,8 @@ async function fetchProject(project){
     id: e.id,
     title: e.title || "",
     layer: LIX[e.id[0]],
+    band: e.id[0] === "T" ? VERIFY : CORPUS,
+    test: e.id[0] === "T",
     slice: e.slice || "unsliced",
     derives: e.derives_from || [],
     deps: e.depends_on || [],
@@ -549,10 +623,20 @@ async function fetchProject(project){
      that produced it, so it is drawn as the bottom column and takes
      the slice colour of what it implements. */
   const byId = Object.fromEntries(entries.map(e=>[e.id,e]));
+
+  /* A scenario has no slice and never will -- its column is the column of
+     the spec entry it judges, resolved here rather than stored. Writing it
+     down would be a second copy of a fact the graph already holds, and the
+     copy is what goes stale the first time a slice splits. */
+  for(const e of entries)
+    if(e.test) e.slice = (byId[e.derives[0]] || {}).slice || "unsliced";
+
   for(const m of (modules.modules || [])){
     const impl = m.implements || [];
+    const test = impl.length > 0 && impl[0][0] === "T";
     entries.push({
       id: m.path, title: m.path, layer: MODULE_LAYER, module: true,
+      test, band: test ? VERIFY : CORPUS,
       slice: (byId[impl[0]] || {}).slice || "unsliced",
       derives: impl, deps: [], emits: []
     });
@@ -579,6 +663,12 @@ async function fetchProject(project){
     issues: issues.issues || [],
     requests: (inbox.messages || []).slice().sort((a,b)=>(b.at||0)-(a.at||0)),
     modules: modules.modules || [],
+    /* Three reports that are easy to conflate and have different
+       remedies: a contract nobody built, a scenario nobody built, and a
+       contract nobody said how to falsify. */
+    unimplemented: modules.unimplemented || [],
+    unimplementedTests: modules.unimplemented_tests || [],
+    untested: modules.untested || [],
     locality: (insights.change_locality || {}).mean,
     proposal: proposal && proposal.status === "pending" ? proposal : null,
     units
@@ -626,6 +716,55 @@ function applyProject(d){
 const hueOf = s => s==="unsliced" ? UNSLICED : (STATE.slices[s]||{}).hue || UNSLICED;
 const isXC  = s => (STATE.slices[s]||{}).type === "cross_cutting";
 
+/* -- verification ------------------------------------------------------
+   Every one of these is a graph query, not a stored flag. A test that has
+   been written but not yet built is the case worth being careful about:
+   it is NOT a failure and must not read as one. It orders nothing, and it
+   is not yet expected to pass. */
+const testsOf   = id => STATE.entries.filter(e => e.test && !e.module
+                                              && e.derives.includes(id));
+const modulesOf = id => STATE.entries.filter(e => e.module && e.derives.includes(id));
+const hasTests  = () => STATE.entries.some(e => e.test && !e.module);
+/* Only meaningful once testing has started. Before the first scenario
+   exists every contract is untested, and badging all of them says nothing
+   except that the project has not got there yet -- which the header
+   already says once, in a number. */
+const isUntested = id => hasTests() && STATE.untested.includes(id);
+const isUnbuilt  = e  => e.test && !e.module && !modulesOf(e.id).length;
+
+/* -- work units --------------------------------------------------------
+   The stored cut when there is one, the live projection otherwise. Both
+   come from the unit; this page projects nothing, because two statements
+   of the same fact drift. */
+/* The LIVE projection, not the stored cut -- and the two answer different
+   questions, which is why this differs from the Waves view one deliberately.
+
+   Found by driving the page: t-finance had a cut taken before any scenario
+   existed, so the spine showed an entry whose Verification panel said "the
+   unit building this follows the unit holding those files" directly above a
+   Work unit panel saying "waits on nothing". Both were reading truthfully;
+   they were reading different projections.
+
+   The spine answers "what would I build now", so it takes the live graph --
+   the same choice `get_work_unit` makes, and for the same reason. Waves
+   answers "what was handed out", so it keeps the cut and reports drift. */
+function unitSource(){
+  const u = STATE.units;
+  return (u && u.live) || (u && u.cut) || null;
+}
+/* id -> unit key, for entries AND module paths. A unit is entries and the
+   files implementing them, so both kinds of node belong to one. */
+function unitIndex(){
+  const src = unitSource(), map = {};
+  for(const u of ((src && src.units) || [])){
+    for(const id of (u.entries || [])) map[id] = u.key;
+    for(const m of (u.modules || [])) map[m] = u.key;
+  }
+  return map;
+}
+const unitOf = id => UNITX[realOf(id)];
+let UNITX = {};
+
 const kids   = id => STATE.entries.filter(e=>e.derives.includes(id));
 const downTo = id => {const s=new Set();(function w(x){for(const k of kids(x))
   if(!s.has(k.id)){s.add(k.id);w(k.id)}})(id);return s};
@@ -655,15 +794,24 @@ const sideOf = id => {
    ============================================================= */
 const NODE_W=212, NODE_H=46, NODE_GAP=26, LAYER_GAP=392, SWEEPS=14;
 const GROUP_GAP=44;                                // between slice groups in a column
+/* Between the corpus and the verification band. Deliberately large: the
+   two are not one picture with a gap, they are two rows, and a reader has
+   to see that a scenario is not the next link in the chain. */
+const BAND_GAP=200;
 const STEP_GAP=300, LANE_PAD=30, LANE_LABEL=190;   // the order view
 let GROUPED=false;
 const COL_X = i => i*LAYER_GAP;
 
-function adjacency(){
-  const adj=new Map(), link=(a,b)=>{
+/* Adjacency over ONE band's own vertical edges. The bands are laid out
+   separately -- crossing reduction inside the verification band must not
+   be pulled around by the corpus above it, and vice versa -- so the
+   relation is built from the node set being laid out, never from all of
+   STATE. */
+function adjacency(nodes){
+  const adj=new Map(), have=new Set(nodes.map(n=>n.id)), link=(a,b)=>{
     if(!adj.has(a))adj.set(a,[]); adj.get(a).push(b);
     if(!adj.has(b))adj.set(b,[]); adj.get(b).push(a);};
-  for(const e of STATE.entries) for(const p of e.derives) if(STATE.byId[p]) link(p,e.id);
+  for(const e of nodes) for(const p of e.derives) if(have.has(p)) link(p,e.id);
   return adj;
 }
 
@@ -819,22 +967,80 @@ function assignYGrouped(order,adj){
   return {y,bands};
 }
 
-function buildScene(){
-  const order0=LAYERS.map((L,i)=>STATE.entries.filter(e=>e.layer===i).map(e=>e.id));
-  const adj=adjacency();
-  const {order,crossings}=reduceCrossings(order0,adj);
-  const grouped=GROUPED?assignYGrouped(order,adj):null;
-  const y=grouped?grouped.y:assignY(order,adj);
-  const bands=grouped?grouped.bands:[];
-  const pos=new Map();
-  order.forEach((col,i)=>col.forEach(id=>pos.set(id,{x:COL_X(i),y:y.get(id),col:i})));
+/* The verification band's node set.
 
+   A GHOST is a copy of a spec entry, drawn in this band at the same x as
+   the real one. It exists so the spec-to-test edge is a short hop inside
+   the band rather than a long arc up through the corpus, crossing every
+   edge on the way. Only spec entries that something actually judges get
+   one: thirty ghosts for no scenarios is thirty pieces of furniture.
+
+   A ghost is never an entry. It carries no body, is in no unit of its own,
+   and clicking one selects the entry it copies. */
+function verifyNodes(){
+  const tests = STATE.entries.filter(e => e.test && !e.module);
+  if(!tests.length) return [];
+  const judged = [...new Set(tests.flatMap(t => t.derives))]
+    .filter(id => (STATE.byId[id] || {}).layer === LIX.S);
+  const ghosts = judged.map(id => ({
+    id: GHOST(id), ghost: true, real: id, layer: LIX.S, band: VERIFY,
+    title: (STATE.byId[id] || {}).title || "",
+    slice: (STATE.byId[id] || {}).slice || "unsliced",
+    derives: [], deps: [], emits: []
+  }));
+  /* The scenarios point at the GHOST for layout, never at the real entry:
+     an edge to the corpus would drag this band's y-assignment up into it. */
+  const rewired = tests.map(t => ({...t, derives: t.derives.map(GHOST)}));
+  const files = STATE.entries.filter(e => e.module && e.test);
+  return [...ghosts, ...rewired, ...files];
+}
+
+/* One band, laid out on its own. Columns keep their real index so COL_X
+   stays the single source of x for both bands -- an empty column is just
+   an empty array, which every step below already handles. */
+function layoutBand(nodes){
+  const order0 = LAYERS.map((L,i)=>nodes.filter(e=>e.layer===i).map(e=>e.id));
+  const adj = adjacency(nodes);
+  const {order,crossings} = reduceCrossings(order0,adj);
+  const grouped = GROUPED ? assignYGrouped(order,adj) : null;
+  const y = grouped ? grouped.y : assignY(order,adj);
+  const ys = [...y.values()];
+  return {order, y, adj, crossings, bands: grouped ? grouped.bands : [],
+          height: ys.length ? Math.max(...ys)+NODE_H : 0};
+}
+
+function buildScene(){
+  const corpus = STATE.entries.filter(e => e.band !== VERIFY);
+  const verify = verifyNodes();
+  const A = layoutBand(corpus);
+  const B = verify.length ? layoutBand(verify) : null;
+  const bandTop = A.height + BAND_GAP;
+
+  const pos = new Map(), node = new Map();
+  for(const e of corpus) node.set(e.id, e);
+  A.order.forEach((col,i)=>col.forEach(id=>
+    pos.set(id,{x:COL_X(i), y:A.y.get(id), col:i, band:CORPUS})));
+  const bands = A.bands.map(b=>({...b, band:CORPUS}));
+
+  if(B){
+    for(const e of verify) node.set(e.id, e);
+    B.order.forEach((col,i)=>col.forEach(id=>
+      pos.set(id,{x:COL_X(i), y:B.y.get(id)+bandTop, col:i, band:VERIFY})));
+    for(const b of B.bands) bands.push({...b, top:b.top+bandTop, band:VERIFY});
+  }
+
+  /* Vertical edges are resolved inside a band. The only edge that would
+     cross one is spec-to-test, and the ghost is exactly what stands in for
+     it -- so there is no cross-band line to draw, by construction. */
   const vEdges=[];
-  for(const e of STATE.entries) for(const p of e.derives)
+  for(const e of [...corpus, ...verify]) for(const p of e.derives)
     if(pos.has(p)&&pos.has(e.id)) vEdges.push({kind:"v",from:p,to:e.id});
 
+  /* A scenario carries no horizontal edge of either kind -- that is what
+     makes a unit holding test files a root -- so this loop finds none in
+     the verification band, and nothing here has to exclude them. */
   const hEdges=[];
-  for(const e of STATE.entries){
+  for(const e of corpus){
     for(const d of e.deps)  if(pos.has(d)&&pos.has(e.id)) hEdges.push({kind:"h",from:d,to:e.id});
     for(const m of e.emits) if(pos.has(m)&&pos.has(e.id)) hEdges.push({kind:"e",from:e.id,to:m});
   }
@@ -846,9 +1052,12 @@ function buildScene(){
   }
   for(const c in byCol) laneFor(byCol[c]);
 
-  const ys=[...y.values()];
-  return {pos,order,vEdges,hEdges,crossings,bands,
-          width:COL_X(LAYERS.length-1)+NODE_W, height:ys.length?Math.max(...ys)+NODE_H:0};
+  const ys=[...pos.values()].map(p=>p.y);
+  return {pos, node, order:A.order, vEdges, hEdges, bands,
+          crossings:A.crossings + (B?B.crossings:0),
+          verify: !!B, bandTop,
+          width:COL_X(LAYERS.length-1)+NODE_W,
+          height:ys.length?Math.max(...ys)+NODE_H:0};
 }
 
 /* A vertical edge leaves the right edge of its parent and arrives at
@@ -884,6 +1093,7 @@ let MODE="spine", ORDER_LAYER=1;    // Behaviour: the first layer that has depen
 let RD_LAYER="*", RD_FIND="";       // the read view: all layers, no filter
 
 function drawSpine(){
+  UNITX=unitIndex();
   SCENE=buildScene();
   const g=$("scene"); g.innerHTML="";
 
@@ -897,14 +1107,34 @@ function drawSpine(){
     return;
   }
 
-  // Only columns that hold something. An empty Modules column labelled
-  // anyway reads as "nothing here yet" occupying a fifth of the width.
-  LAYERS.forEach((L,i)=>{
-    if(!STATE.entries.some(e=>e.layer===i)) return;
-    const t=svgEl("text",{class:"colhead",x:COL_X(i),y:-26}); t.textContent=L[1];
+  // Only columns that hold something, headed once per band. An empty
+  // column labelled anyway reads as "nothing here yet" occupying a sixth
+  // of the width -- and the Tests column is empty in the corpus by
+  // definition, so this is what keeps the upper band four columns wide
+  // until scenarios exist.
+  const head=(i,label,top)=>{
+    const t=svgEl("text",{class:"colhead",x:COL_X(i),y:top-26}); t.textContent=label;
     g.appendChild(t);
-    g.appendChild(svgEl("line",{class:"colrule",x1:COL_X(i),y1:-18,x2:COL_X(i)+NODE_W,y2:-18}));
-  });
+    g.appendChild(svgEl("line",{class:"colrule",
+      x1:COL_X(i),y1:top-18,x2:COL_X(i)+NODE_W,y2:top-18}));
+  };
+  const inBand=(i,band)=>[...SCENE.pos].some(([id,q])=>q.col===i&&q.band===band);
+  LAYERS.forEach((L,i)=>{ if(inBand(i,CORPUS)) head(i,L[1],0); });
+
+  if(SCENE.verify){
+    const top = SCENE.bandTop;
+    /* The band is a second ROW, not a continuation of the columns above.
+       A rule across the full width says so before any label does. */
+    const left=COL_X(LIX.S)-40;
+    g.appendChild(svgEl("line",{class:"bandrule",
+      x1:left, y1:top-70, x2:SCENE.width+40, y2:top-70}));
+    const cap=svgEl("text",{class:"bandcap",x:left,y:top-80});
+    cap.textContent="VERIFICATION — how these contracts can be caught failing";
+    g.appendChild(cap);
+    const NAMES={[LIX.S]:"Spec (the entries judged)",[LIX.T]:"Tests",
+                 [MODULE_LAYER]:"Test files"};
+    LAYERS.forEach((L,i)=>{ if(inBand(i,VERIFY)) head(i,NAMES[i]||L[1],top); });
+  }
 
   // Bands first, so every edge and node draws over them.
   (SCENE.bands||[]).forEach((b,i)=>{
@@ -931,19 +1161,31 @@ function drawSpine(){
   }
 
   for(const [id,p] of SCENE.pos){
-    const e=STATE.byId[id], hue=hueOf(e.slice);
-    const n=svgEl("g",{class:"node"+(e.module?" mod":""),
+    const e=SCENE.node.get(id), hue=hueOf(e.slice);
+    const cls=["node"];
+    if(e.module) cls.push("mod");
+    if(e.ghost) cls.push("ghost");
+    if(e.test) cls.push("tst");
+    if(isUnbuilt(e)) cls.push("unbuilt");
+    if(!e.module && !e.ghost && e.layer===LIX.S && isUntested(e.id)) cls.push("untested");
+    const n=svgEl("g",{class:cls.join(" "),
       transform:`translate(${p.x} ${p.y-NODE_H/2})`,
-      "data-id":id,"data-slice":e.slice,style:`--sl:${hue}`,tabindex:"0"});
+      "data-id":id,"data-real":realOf(id),"data-slice":e.slice,
+      "data-unit":unitOf(id)||"",style:`--sl:${hue}`,tabindex:"0"});
     n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
     n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
-    const label = e.module ? short(e.id) : e.id;
+    const label = e.module ? short(e.id) : realOf(e.id);
     const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=clip(label,24);
     const s=svgEl("text",{class:"sl",x:12+Math.min(label.length,24)*7.2+8,y:17});
     s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14)+(isXC(e.slice)?" ✳":"");
     const t=svgEl("text",{class:"t",x:12,y:34});
-    t.textContent=clip(e.module?"implements "+e.derives.join(", "):e.title,30);
-    const tip=svgEl("title"); tip.textContent=e.module?e.id:e.title;
+    const note = e.ghost ? "judged below"
+      : e.module ? "implements "+e.derives.join(", ")
+      : e.title;
+    t.textContent=clip(note,30);
+    const tip=svgEl("title");
+    tip.textContent = e.ghost ? realOf(e.id)+" — "+e.title
+      : e.module ? e.id : e.title;
     n.append(i,s,t,tip);
     g.appendChild(n);
   }
@@ -951,7 +1193,11 @@ function drawSpine(){
   $("k-xing").textContent=SCENE.crossings;
   $("n-h").textContent=SCENE.hEdges.filter(e=>e.kind==="h").length;
   $("n-e").textContent=SCENE.hEdges.filter(e=>e.kind==="e").length;
+  const toV=$("to-verify"), toC=$("to-corpus");
+  if(toV){ toV.hidden=!SCENE.verify; toV.onclick=()=>jumpTo(VERIFY); }
+  if(toC){ toC.hidden=!SCENE.verify; toC.onclick=()=>jumpTo(CORPUS); }
   $("hint").textContent="drag to pan · wheel to zoom · click an entry for its chain · "+
+    (SCENE.verify?"the verification band is below the corpus · ":"")+
     "click a slice in the rail to isolate it";
   applyView();
   // Rule 2: a poll must never take the reader's pan and zoom away.
@@ -1319,6 +1565,19 @@ function fitTo(box){
 }
 const fit=()=>{ try{ fitTo($("scene").getBBox()); }catch(_){} };
 
+/* The bands are deliberately far apart -- far enough that fit() hits its
+   legibility floor before both are on screen, which is correct and is also
+   why these exist. Computed from the scene rather than from a stored
+   scroll position, so they stay right when the graph changes under them. */
+function jumpTo(band){
+  if(!SCENE) return;
+  const x0=COL_X(band===VERIFY?LIX.S:0)-40;
+  const x1=(band===VERIFY?COL_X(MODULE_LAYER)+NODE_W:SCENE.width)+40;
+  const y0=band===VERIFY?SCENE.bandTop-90:-40;
+  const y1=band===VERIFY?SCENE.height+20:(SCENE.bandTop?SCENE.bandTop-BAND_GAP:SCENE.height)+20;
+  fitTo({x:x0,y:y0,width:x1-x0,height:y1-y0});
+}
+
 /* A real graph is wider than the pane, so an entry reached from the
    issue queue is routinely off-screen. Selecting it without moving
    there makes the click look inert -- the inspector fills in somewhere
@@ -1340,7 +1599,25 @@ function reveal(id){
 function litSet(){
   if(!sel) return null;
   const side=sideOf(sel);
-  return new Set([sel,...upFrom(sel),...downTo(sel),...side.need,...side.served]);
+  const ids=[sel,...upFrom(sel),...downTo(sel),...side.need,...side.served];
+  /* A ghost stands in for its entry, so it lights when the entry does.
+     Otherwise selecting a spec entry dims the copy of itself sitting
+     directly under the scenarios that judge it. */
+  return new Set([...ids, ...ids.map(GHOST)]);
+}
+
+/* The work unit a selection belongs to, as a set of node ids. THIS is
+   work units on the spine, and it is deliberately not a hull and not a
+   column: a unit groups entries and files across columns and across both
+   bands, so any permanent shape drawn around one states an adjacency the
+   graph does not have. Shown on demand instead -- select anything, and
+   the branch it would be built on lights up with it. */
+function unitSet(){
+  const key = sel && unitOf(sel);
+  if(!key) return null;
+  const out=new Set();
+  for(const id of Object.keys(UNITX)) if(UNITX[id]===key){ out.add(id); out.add(GHOST(id)); }
+  return out;
 }
 
 /* THE only writer of visual state. Every control calls this and
@@ -1348,10 +1625,11 @@ function litSet(){
    real operation rather than a second code path that has to
    remember to undo whatever the first one did. */
 function repaint(){
-  const g=$("scene"), lit=litSet();
+  const g=$("scene"), lit=litSet(), unit=unitSet();
   for(const n of g.querySelectorAll(".node")){
     const inSlice = !focusSlice || n.dataset.slice===focusSlice;
-    n.classList.toggle("sel", n.dataset.id===sel);
+    n.classList.toggle("sel", n.dataset.real===sel);
+    n.classList.toggle("peer", !!(unit && unit.has(n.dataset.id) && n.dataset.real!==sel));
     n.classList.toggle("dim", !inSlice || !!(lit && !lit.has(n.dataset.id)));
   }
   for(const p of g.querySelectorAll(".edge")){
@@ -1361,7 +1639,8 @@ function repaint(){
     const shown = (k==="v") || (k==="h"&&$("t-h").checked) || (k==="e"&&$("t-e").checked);
     p.classList.toggle("off", !shown);
     const ends=[p.dataset.from,p.dataset.to];
-    const inSlice = !focusSlice || ends.every(i=>(STATE.byId[i]||{}).slice===focusSlice);
+    const inSlice = !focusSlice ||
+      ends.every(i=>(STATE.byId[realOf(i)]||{}).slice===focusSlice);
     const on = inSlice && !!lit && ends.every(i=>lit.has(i));
     p.classList.toggle("lit", on);
     p.classList.toggle("dim", !inSlice || !!(lit && !on));
@@ -1373,6 +1652,7 @@ function repaint(){
    as independent filters they intersect, and an entry selected
    outside the focused slice dims the whole graph with no way back. */
 function pick(id){
+  id = realOf(id);                 // clicking a copy selects what it copies
   const e=STATE.byId[id]; if(!e) return;
   focusSlice=null; syncLegend();
   sel=id; repaint(); reveal(id);
@@ -1393,11 +1673,86 @@ function pick(id){
      ${pills(e.module?"implements":"derives from — one layer up", e.derives)}
      ${pills("depends on — same layer, imposes order", e.deps)}
      ${pills("emits into — cross-cutting, no order", e.emits)}
-     ${pills("derived below", kids(e.id).map(k=>k.id))}
+     ${pills("derived below", kids(e.id).filter(k=>!k.test).map(k=>k.id))}
+     ${verifyPanel(e)}
+     ${unitPanel(e)}
      <h3>Radius</h3>
      <p class="muted"><b style="color:var(--ink);font-size:15px">${down.size}</b> entries downstream ·
         <b style="color:var(--ink);font-size:15px">${side.served.size}</b> waiting on it in-layer</p>`;
   if(!e.module) loadBody(id);
+}
+
+/* What judges this entry, or what this scenario judges. A graph query in
+   both directions -- nothing is stored, so "which tests do I run after
+   building this" has a mechanical answer rather than a convention. */
+function verifyPanel(e){
+  const pill=(label,ids)=>ids.length
+    ? `<div class="edgelist"><span>${esc(label)}</span>${ids.map(i=>
+        `<button class="pill" data-goto="${esc(i)}">${esc(
+          (STATE.byId[i]||{}).module?short(i):i)}</button>`).join("")}</div>` : "";
+
+  if(e.test && !e.module){
+    const files=modulesOf(e.id);
+    return `<h3>Scenario</h3>
+      ${pill("judges \u2014 exactly one contract", e.derives)}
+      ${files.length
+        ? pill("written in", files.map(f=>f.id))
+        : `<p class="muted">No file implements this yet, so it is in no work
+           unit and orders nothing. <b>Not a failure</b> \u2014 a scenario that
+           has been specified but not built is not yet expected to pass.</p>`}`;
+  }
+  if(e.module || e.layer!==LIX.S) return "";
+
+  const ts=testsOf(e.id);
+  if(!ts.length) return `<h3>Verification</h3>
+    <p class="muted">Nothing says how this contract can be caught failing.
+    Reported, never a blocker: tests are written after the spec and before
+    the code, so every entry is untested in between.</p>`;
+  const ready=ts.filter(t=>modulesOf(t.id).length);
+  const pending=ts.filter(t=>!modulesOf(t.id).length);
+  return `<h3>Verification</h3>
+    ${pill("run after building", ready.map(t=>t.id))}
+    ${pill("written, no file yet", pending.map(t=>t.id))}
+    <p class="muted">The unit building this <b>follows</b> the unit holding
+    those files. Documentation first, tests second, code last \u2014 ordered
+    rather than asked for.</p>`;
+}
+
+/* The branch this node would be built on. Named here rather than drawn as
+   a shape on the graph: a unit groups across columns and across both
+   bands, so a hull around one asserts an adjacency that does not exist.
+   Selecting the node lights its peers instead. */
+function unitPanel(e){
+  const key=unitOf(e.id);
+  if(!key) return `<h3>Work unit</h3>
+    <p class="muted">In none \u2014 no file implements this, so it is in no
+    piece of work yet.</p>`;
+  const src=unitSource();
+  const byKey=Object.fromEntries(((src&&src.units)||[]).map(u=>[u.key,u]));
+  const u=byKey[key]||{}, follows=((src&&src.edges)||{})[key]||[];
+  const followedBy=Object.entries((src&&src.edges)||{})
+    .filter(pair=>(pair[1]||[]).includes(key)).map(pair=>pair[0]);
+  const label=k=>((byKey[k]||{}).tests?"tests: ":"")+(((byKey[k]||{}).modules||[])[0]||k);
+  const nMod=(u.modules||[]).length, nEnt=(u.entries||[]).length;
+  return `<h3>Work unit</h3>
+    <p><code>${esc(key)}</code>${u.tests?` \u00b7 <b class="tstag">tests</b>`:""}${
+      u.cycle?` \u00b7 <span class="warnish">contracted</span>`:""}</p>
+    <p class="muted">${nMod} file${nMod===1?"":"s"} \u00b7 ${nEnt} entr${
+      nEnt===1?"y":"ies"} \u00b7 ${
+      follows.length?`follows ${follows.length}`:"waits on nothing"}${
+      followedBy.length?` \u00b7 ${followedBy.length} waiting on it`:""}</p>
+    <p class="muted">${u.tests
+      ? "A unit holding test files has no outbound edge to have, so it is a <b>root</b>: it lands in wave 0 and cannot sit inside a cycle."
+      : "Its files are disjoint from every other unit's by construction, so nothing else can be editing them while this is built."}</p>
+    ${follows.length?`<div class="edgelist"><span>follows</span>${
+      follows.map(k=>`<span class="pill flat">${esc(label(k))}</span>`
+      ).join("")}</div>`:""}
+    ${followedBy.length?`<div class="edgelist"><span>waited on by</span>${
+      followedBy.map(k=>`<span class="pill flat">${esc(label(k))}</span>`
+      ).join("")}</div>`:""}
+    ${(STATE.units&&STATE.units.cut)?`<p class="muted">From the live graph.
+      The stored cut is what work was actually handed out from — see
+      Waves.</p>`:""}`;
 }
 
 /* A body is fetched only when an entry is actually opened. The spine
@@ -1412,7 +1767,11 @@ async function loadBody(id){
   }
   try{
     const d=await get("projects/"+enc(STATE.project)+"/entries/"+enc(id));
-    STATE.bodies[id]=d.body||"(no body)";
+    /* `purpose` rides with the body rather than with the spine:
+       it is prose for whoever writes the test, and the spine
+       carries none by design. One fetch brings both. */
+    const why = d.purpose ? "PURPOSE — "+d.purpose+"\n\n" : "";
+    STATE.bodies[id]=why+(d.body||"(no body)");
   }catch(_){ STATE.bodies[id]="(body unavailable)"; }
   if(sel===id && el()) el().textContent=STATE.bodies[id];
 }
@@ -1426,7 +1785,20 @@ function resetInspector(){
   from — and it routinely crosses slices.</p>
   <p class="muted"><b>⌒ dashed</b> emits_into, same layer, only into a cross-cutting slice.
   Imposes no order.</p>
-  <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>`;
+  <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>
+  <h3>The lower band</h3>
+  <p class="muted">Scenarios do not continue the chain under spec, they fork off it —
+  so they get a row of their own rather than a fifth link that does not exist.</p>
+  <p class="muted"><b>outlined box</b> a copy of a spec entry, placed under the scenarios
+  that judge it. It is a reference, not a second entry; clicking one selects the entry
+  it copies.</p>
+  <p class="muted"><b>dashed scenario</b> written, no file yet. It is in no work unit, so
+  it orders nothing and is not yet expected to pass — not a failure.</p>
+  <h3>Work units</h3>
+  <p class="muted">Select anything and the rest of its work unit lights up — the files and
+  entries that would be built on one branch. Shown on selection rather than drawn as a
+  shape, because a unit groups across columns and across both bands, and any outline
+  around one states an adjacency the graph does not have.</p>`;
 }
 
 /* Blank canvas, or Escape, releases whichever mode is active. */
@@ -1478,6 +1850,23 @@ function drawWaves(){
       SEL_UNIT = SEL_UNIT === b.dataset.unit ? null : b.dataset.unit;
       drawWaves(); showUnit(SEL_UNIT);
     };
+}
+
+/* Scenarios judging a contract nobody is building. Ordinary and temporary
+   while tests run ahead of code -- which is the intended order -- so this
+   is stated rather than flagged. A standing one is the thing worth seeing. */
+function unfollowedNote(source){
+  const keys = (STATE.units && STATE.units.live
+    && STATE.units.live.unfollowed_tests) || [];
+  if(!keys.length) return "";
+  const byKey = Object.fromEntries((source.units||[]).map(x=>[x.key,x]));
+  const names = keys.map(k=>((byKey[k]||{}).modules||[])[0]||k);
+  return `<div class="earlynote"><b>${keys.length} test unit${
+    keys.length===1?"":"s"} nothing follows</b>
+    ${names.map(esc).join(", ")} — every contract these scenarios judge is
+    unimplemented, so there is no unit to precede. Ordinary while tests run
+    ahead of the code. A standing one is judging a contract nobody is
+    building.</div>`;
 }
 
 /* A unit in the inspector. The card in the wave is a summary; this is the
@@ -1608,15 +1997,20 @@ function unitWaves(){
       const mods = x.modules || [], ents = x.entries || [], sls = x.slices || [];
       const only = sls.length === 1 ? sls[0] : null;
       const follows = ((source.edges||{})[k]||[]).length;
-      return `<button class="unitchip${x.cycle?" cyc":""}${sls.length>1?" multi":""}"
+      const waiting = Object.values(source.edges||{})
+        .filter(v=>(v||[]).includes(k)).length;
+      return `<button class="unitchip${x.cycle?" cyc":""}${sls.length>1?" multi":""}${
+          x.tests?" tst":""}"
           style="--sl:${hueOf(only||"unsliced")}" data-unit="${esc(k)}"
           aria-pressed="${SEL_UNIT===k}">
         <b>${esc(mods[0]||k)}</b>
         ${mods.length>1?`<span class="more">+ ${esc(mods.slice(1).join(", "))}</span>`:""}
         <span class="facts">
+          ${x.tests?`<em class="tstag">scenarios</em>`:""}
           <em>${ents.length} ${ents.length===1?"entry":"entries"}</em>
           <em>${mods.length} ${mods.length===1?"file":"files"}</em>
           ${follows?`<em>follows ${follows}</em>`:`<em>waits on nothing</em>`}
+          ${waiting?`<em>${waiting} waiting on it</em>`:""}
           ${x.cycle?`<em>cycle</em>`:""}
           ${sls.length>1?`<em>${sls.length} slices</em>`:""}
         </span></button>`;
@@ -1643,9 +2037,14 @@ function unitWaves(){
     <p class="muted" style="max-width:64ch">A work unit is a maximal connected group of spec entries
     and the files implementing them. Its files are disjoint from every other unit's <b>by
     construction</b>, so two units in one wave cannot produce a merge conflict — that is a property
-    of the grouping, not a rule anyone has to follow. Order comes from the same
-    <code>depends_on</code> edges one layer down. <b>The edges are the contract; these waves are a
-    view.</b> A unit waits for what it actually depends on, not for a whole wave to finish.</p>`;
+    of the grouping, not a rule anyone has to follow.
+    <br><br>Order has <b>two</b> sources. Most of it is projected from <code>depends_on</code> one
+    layer down. The rest is verification: <b>the unit implementing a contract follows the unit
+    holding the scenarios that judge it</b> — documentation first, tests second, code last, ordered
+    rather than asked for. A unit holding test files has no outbound edge to have, so it is always
+    a root and always lands in wave 0; that is why this ordering can never deadlock.
+    <br><br><b>The edges are the contract; these waves are a view.</b> A unit waits for what it
+    actually depends on, not for a whole wave to finish.</p>${unfollowedNote(source)}`;
 }
 
 /* =============================================================
@@ -1667,7 +2066,7 @@ function unitWaves(){
    handed: the ticket step cannot start while one exists.
    ============================================================= */
 function moduleIndex(){
-  const by = {};                      // spec id -> paths implementing it
+  const by = {};                      // entry id -> paths implementing it
   const slicesOf = {};                // path -> set of slices it reaches
   for(const m of STATE.modules){
     for(const id of (m.implements || [])){
@@ -1678,10 +2077,73 @@ function moduleIndex(){
   }
   const spec = STATE.entries.filter(e => e.layer === LIX.S && !e.module);
   const gaps = spec.filter(e => !(by[e.id] || []).length);
+  /* A module's kind is read off the identifiers it claims -- there is no
+     stored field, because a field would be a second statement of exactly
+     that. Mixed modules are refused at declaration. */
+  const isTestModule = m => ((m.implements || [])[0] || "")[0] === "T";
   const shared = Object.entries(slicesOf)
     .filter(([, s]) => s.size > 1)
     .map(([path, s]) => ({path, slices: [...s].sort()}));
-  return {by, spec, gaps, shared, slicesOf};
+  const tests = STATE.entries.filter(e => e.test && !e.module);
+  return {by, spec, gaps, shared, slicesOf, tests,
+          testFiles: STATE.modules.filter(isTestModule),
+          codeFiles: STATE.modules.filter(m => !isTestModule(m))};
+}
+
+/* Coverage has two independent questions and they must not be run
+   together. "No file implements this contract" is work not started.
+   "Nothing says how this contract can fail" is a contract nobody can
+   falsify. A project can be perfect on one and empty on the other. */
+function verifySection(ix){
+  const nUn = STATE.untested.length, nPending = STATE.unimplementedTests.length;
+  const head = !ix.tests.length
+    ? `<div class="gate blocked"><span class="big">${ix.spec.length}</span><span>
+         <b>Nothing says how any of this can fail</b>
+         <em>Not a blocker, and not a defect: scenarios are written after the
+         spec and before the code, so every contract is untested in between.
+         A gate here would refuse the project during the ordinary course of
+         writing it.</em></span></div>`
+    : nUn
+      ? `<div class="gate blocked"><span class="big">${nUn}</span><span>
+           <b>${nUn===1?"One contract has":"Contracts with"} no scenario</b>
+           <em>${ix.spec.length-nUn} of ${ix.spec.length} can be caught failing.
+           Reported, never a blocker.</em></span></div>`
+      : `<div class="gate open"><span class="big">${ix.spec.length}</span><span>
+           <b>Every contract has a scenario</b>
+           <em>Each one says how it can be caught failing, so "which tests do
+           I run after building this" is a graph query rather than a
+           convention.</em></span></div>`;
+
+  const pending = nPending
+    ? `<div class="gate blocked" style="margin-top:-8px">
+         <span class="big">${nPending}</span><span>
+         <b>${nPending===1?"One scenario is":"Scenarios"} written but not built</b>
+         <em>${STATE.unimplementedTests.map(i=>`<code>${esc(i)}</code>`).join(", ")}
+         <br><b>Not a failure.</b> A scenario with no file is in no work unit,
+         so it orders nothing and is not yet expected to pass.</em></span></div>`
+    : "";
+
+  const rows = ix.tests.map(t => {
+    const files = modulesOf(t.id);
+    return `<div class="specrow${files.length?"":" gap"}">
+      <code>${esc(t.id)}</code>
+      <span class="ttl">${esc(t.title)}</span>
+      <span class="files">${files.length
+        ? files.map(f=>`<button class="file" data-path="${esc(f.id)}"
+            title="${esc(f.id)}">${esc(shortPath(f.id))}</button>`).join("")
+        : `<span class="nofile">no file yet</span>`}</span>
+    </div>`;
+  }).join("");
+
+  return `<h3 class="again">Verification — contract to scenario</h3>${head}${pending}
+    ${rows?`<div class="modslice" style="--sl:var(--brand)">
+      <h4>scenarios<em>${ix.tests.length-nPending}/${ix.tests.length} built</em></h4>
+      ${rows}</div>`:""}
+    <p class="muted" style="max-width:66ch">A scenario derives from exactly one contract —
+    one scenario, one thing it can catch. A file implements spec entries or test entries and
+    never both, which is what puts the scenario and the code it judges in
+    <b>different work units</b>, and so on different branches under different agents. Nobody
+    has to obey a rule about not editing the tests: there is no shared file to edit.</p>`;
 }
 
 function drawModules(){
@@ -1743,6 +2205,7 @@ function drawModules(){
   }).join("");
 
   el.innerHTML = `<h3>Modules — spec to code</h3>${gate}${shared}${sections}
+    ${verifySection(ix)}
     <p class="muted" style="max-width:66ch">Code is not an entry in this graph and never is.
     A module is the backlink: a file path and the spec identifiers it implements, declared
     through <code>declare_module</code>. It is not a layer and not a grouping under slices —
@@ -2334,6 +2797,14 @@ function drawStrip(){
   }
   $("k-entries").textContent=STATE.entries.filter(e=>!e.module).length;
   $("k-slices").textContent=Object.keys(STATE.slices).length;
+  /* Coverage as a number, not as a badge on every node. Before the first
+     scenario exists every contract is untested, and thirty identical
+     badges say only that the project has not got there yet -- which this
+     says once. */
+  $("k-tests").textContent=STATE.entries.filter(e=>e.test&&!e.module).length;
+  $("k-untested").textContent=STATE.untested.length;
+  $("kpi-untested").classList.toggle("warnkpi",
+    hasTests() && STATE.untested.length>0);
   $("k-issues").textContent=STATE.issues.filter(i=>i.status==="open").length;
   $("k-loc").textContent=STATE.locality==null?"–":Number(STATE.locality).toFixed(2);
 }
@@ -2346,7 +2817,7 @@ function drawLayerPicker(){
   const opts=LAYERS.map((L,i)=>({i,name:L[1],
       n:STATE.entries.filter(e=>e.layer===i).length,
       d:STATE.entries.filter(e=>e.layer===i).reduce((a,e)=>a+e.deps.length,0)}))
-    .filter(o=>o.n>0);
+    .filter(o=>o.n>0 && o.i!==TEST_LAYER);
   sel.innerHTML=opts.map(o=>
     `<option value="${o.i}">${esc(o.name)} · ${o.n} entries${
       o.d?" · "+o.d+" deps":" · no dependencies"}</option>`).join("");

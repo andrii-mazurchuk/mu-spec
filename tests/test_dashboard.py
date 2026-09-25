@@ -424,3 +424,89 @@ def test_page_escapes_stored_text():
     assert "function esc" in text or "const esc=" in text
     # No identifier interpolated straight into an inline handler.
     assert not re.search(r'onclick="\w+\(\$\{', text)
+
+
+# -- the verification band ---------------------------------------------------
+
+
+def test_tests_are_a_column_between_spec_and_modules():
+    """The column order is load-bearing. Tests sit between Spec and Modules on
+    x, so the corpus leaves that column empty and the band below occupies
+    exactly Spec, Tests and Modules -- which is what puts a scenario under the
+    contract it judges rather than beside it."""
+    page = dashboard.read_page()
+    layers = re.search(r"const LAYERS=\[(.*?)\];", page, re.S).group(1)
+    order = re.findall(r'\["([IBASTM])"', layers)
+    assert order == ["I", "B", "A", "S", "T", "M"]
+
+
+def test_the_band_is_laid_out_separately_from_the_corpus():
+    """Two bands, laid out independently. Crossing reduction inside the
+    verification band must not be dragged around by the corpus above it, so
+    adjacency is built from the node set being laid out rather than from all
+    of STATE."""
+    page = dashboard.read_page()
+    assert "function layoutBand(" in page
+    assert "function adjacency(nodes)" in page
+    assert "const corpus = STATE.entries.filter(e => e.band !== VERIFY)" in page
+
+
+def test_a_ghost_is_never_an_entry():
+    """The copy of a spec entry under the scenarios that judge it exists so
+    that edge is one short hop instead of an arc across the whole picture.
+    It must resolve back to the real entry everywhere a reader can act on
+    it, or selecting one would open something that does not exist."""
+    page = dashboard.read_page()
+    assert "const GHOST = id =>" in page
+    assert "const realOf = id =>" in page
+    # selection resolves the copy to the entry it copies
+    assert re.search(r"function pick\(id\)\{\s*\n\s*id = realOf\(id\);", page)
+
+
+def test_scenarios_have_no_slice_of_their_own():
+    """A test's column is its parent's, resolved from the graph. A stored
+    membership would be the second copy that goes stale the first time a
+    slice splits -- which is the same argument the unit itself makes."""
+    page = dashboard.read_page()
+    assert "if(e.test) e.slice = (byId[e.derives[0]] || {}).slice" in page
+
+
+def test_an_unbuilt_scenario_is_not_styled_as_a_failure():
+    """A scenario written but not built is in no work unit, orders nothing,
+    and is not yet expected to pass. Drawn as unfinished, never as broken --
+    so it must not take a warning colour."""
+    page = dashboard.read_page()
+    rule = re.search(r"\.node\.unbuilt rect\{([^}]*)\}", page).group(1)
+    assert "--warn" not in rule and "--down" not in rule
+    assert "stroke-dasharray" in rule
+
+
+def test_work_units_on_the_spine_are_shown_on_selection_not_drawn():
+    """A unit groups entries and files across columns AND across both bands,
+    so a hull or a column around one states an adjacency the graph does not
+    have. Selection lights the peers instead."""
+    page = dashboard.read_page()
+    assert "function unitSet()" in page
+    assert '.node.peer rect{' in page
+    assert "<hull" not in page
+
+
+def test_the_spine_reads_the_live_projection_not_the_stored_cut():
+    """The two answer different questions. The spine answers "what would I
+    build now", so it takes the live graph -- the same choice get_work_unit
+    makes. A stale cut made an entry's Verification panel say it follows a
+    test unit directly above a Work unit panel saying it waits on nothing."""
+    page = dashboard.read_page()
+    body = re.search(r"function unitSource\(\)\{(.*?)\n\}", page, re.S).group(1)
+    assert "u.live" in body
+    assert body.index("u.live") < body.index("u.cut")
+
+
+def test_the_waves_copy_states_both_sources_of_unit_order():
+    """It used to say order comes from depends_on and nothing else. That was
+    true until verification became a second source, and a paragraph
+    confidently stating a false rule is worse than no paragraph."""
+    page = dashboard.read_page()
+    assert "Order has</b> two sources" in page or "Order has <b>two</b> sources" in page
+    assert "follows the unit\n    holding the scenarios" in page \
+        or "follows the unit" in page
