@@ -262,7 +262,48 @@ def test_grouped_columns_share_a_midline():
     short one opposite the start of the long one."""
     text = page()
     assert "assignYGrouped" in text
-    assert "tallest" in text and "t-group" in text
+    assert "tallest" in text
+
+
+def test_slice_grouping_is_the_only_layout():
+    """Ungrouped was a second reading of the same picture that nobody chose
+    deliberately, and the control mostly sat on the wrong setting."""
+    text = page()
+    assert "const GROUPED=true;" in text
+    assert "t-group" not in text, "the toggle should be gone, not defaulted"
+
+
+def test_grouping_resolves_a_slice_through_every_node_being_drawn():
+    """Slices were read off STATE.byId, which holds no ghosts -- so every
+    copy fell into "unsliced" and the band lost slice grouping exactly where
+    the reader needs to know which column a scenario judges."""
+    text = page()
+    assert "const nodeOf = id =>" in text
+    assert 'const s=nodeOf(id).slice||"unsliced";' in text
+
+
+def test_a_copy_can_actually_be_clicked():
+    """An SVG rect with fill:none takes no pointer events, so a click on a
+    ghost fell through to the canvas -- which reads that as clicking blank
+    space and CLEARS the selection. Inert and quietly destructive."""
+    text = page()
+    ghost = re.search(r"\.node\.ghost rect\{([^}]*)\}", text).group(1)
+    unbuilt = re.search(r"\.node\.unbuilt rect\{([^}]*)\}", text).group(1)
+    for rule in (ghost, unbuilt):
+        assert "fill:none" in rule
+        assert "pointer-events:all" in rule
+
+
+def test_the_fork_can_be_drawn_two_ways():
+    """Band and inline trade against each other rather than one being right:
+    band reads as one picture but duplicates every judged contract and puts
+    the chain back to intent off screen; inline duplicates nothing and reads
+    straight across but scatters verification down the whole corpus."""
+    text = page()
+    assert 'let LAYOUT="band";' in text
+    assert 'const inline = LAYOUT === "inline";' in text
+    # the data is identical in both -- this is a drawing decision only
+    assert "const corpus = inline ? STATE.entries" in text
 
 
 def test_the_order_view_does_not_write_into_the_crossings_kpi():
@@ -448,7 +489,7 @@ def test_the_band_is_laid_out_separately_from_the_corpus():
     page = dashboard.read_page()
     assert "function layoutBand(" in page
     assert "function adjacency(nodes)" in page
-    assert "const corpus = STATE.entries.filter(e => e.band !== VERIFY)" in page
+    assert "STATE.entries.filter(e => e.band !== VERIFY)" in page
 
 
 def test_a_ghost_is_never_an_entry():

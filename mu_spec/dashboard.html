@@ -117,7 +117,8 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
    spec-to-test edge is one short hop instead of an arc across the
    whole picture. It is a reference, never a second entry, so it is
    drawn as an outline with nothing filled in. */
-.node.ghost rect{fill:none;stroke-dasharray:1 4;stroke:var(--rule)}
+.node.ghost rect{fill:none;stroke-dasharray:1 4;stroke:var(--rule);
+  pointer-events:all}
 .node.ghost .accent{opacity:.45}
 .node.ghost .id{fill:var(--ink-soft)}
 .node.ghost .t{fill:var(--dim);font-style:italic}
@@ -129,7 +130,7 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 /* Written, no file yet. Emphatically NOT a failure state -- it is not
    yet expected to pass, and nothing waits on it -- so it is drawn as
    unfinished rather than as broken: no fill, never a warning colour. */
-.node.unbuilt rect{fill:none;stroke-dasharray:5 3}
+.node.unbuilt rect{fill:none;stroke-dasharray:5 3;pointer-events:all}
 .node.unbuilt .t{fill:var(--dim)}
 
 /* A contract nothing says how to falsify. Shown only once testing has
@@ -254,6 +255,11 @@ aside h3:first-child{margin-top:0}
   border-radius:5px;padding:1px 6px;margin:2px 3px 0 0;font-family:var(--mono);font-size:11.5px;
   cursor:pointer;color:var(--ink)}
 .pill:hover{border-color:var(--brand);color:var(--brand)}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:5px;overflow:hidden}
+.segb{background:var(--panel);border:0;border-right:1px solid var(--rule);
+  color:var(--ink-soft);padding:3px 11px;font:500 11.5px var(--sans);cursor:pointer}
+.segb:last-child{border-right:0}
+.segb[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink)}
 .jump{background:var(--panel-alt);border:1px solid var(--rule);color:var(--ink-soft);
   border-radius:5px;padding:3px 9px;font:500 11.5px var(--sans);cursor:pointer;margin-left:10px}
 .jump:hover{border-color:var(--brand);color:var(--brand)}
@@ -465,7 +471,10 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   <section class="stage">
     <div class="viewbar" id="viewbar">
       <span id="vb-spine">
-        <label><input type="checkbox" id="t-group"> group columns by slice</label>
+        <span class="seg" id="lay-seg">
+          <button class="segb" data-lay="band" aria-pressed="true">band</button>
+          <button class="segb" data-lay="inline" aria-pressed="false">inline</button>
+        </span>
         <button id="to-verify" class="jump" hidden>↓ verification band</button>
         <button id="to-corpus" class="jump" hidden>↑ corpus</button>
       </span>
@@ -799,7 +808,15 @@ const GROUP_GAP=44;                                // between slice groups in a 
    to see that a scenario is not the next link in the chain. */
 const BAND_GAP=200;
 const STEP_GAP=300, LANE_PAD=30, LANE_LABEL=190;   // the order view
-let GROUPED=false;
+/* Always. See the viewbar comment: ungrouped was a second reading of the
+   same picture that nobody chose deliberately. */
+const GROUPED=true;
+/* How the verification layer is drawn. "band" puts scenarios in a row of
+   their own below the corpus, with a copy of each judged spec entry beside
+   them. "inline" puts them in the Tests column at corpus level, beside the
+   contract they judge. The two trade against each other and neither wins
+   outright, which is why both exist -- see LAYOUT MODES below. */
+let LAYOUT="band";
 const COL_X = i => i*LAYER_GAP;
 
 /* Adjacency over ONE band's own vertical edges. The bands are laid out
@@ -807,6 +824,12 @@ const COL_X = i => i*LAYER_GAP;
    be pulled around by the corpus above it, and vice versa -- so the
    relation is built from the node set being laid out, never from all of
    STATE. */
+/* Every node currently being laid out, ghosts included. STATE.byId holds
+   only real entries, so anything reading a ghost's slice through it gets
+   "unsliced" -- which silently dropped the copies out of slice grouping. */
+let NODEX = {};
+const nodeOf = id => NODEX[id] || STATE.byId[id] || {};
+
 function adjacency(nodes){
   const adj=new Map(), have=new Set(nodes.map(n=>n.id)), link=(a,b)=>{
     if(!adj.has(a))adj.set(a,[]); adj.get(a).push(b);
@@ -937,46 +960,77 @@ function sliceRank(){
    the start of the long one, so every edge out of it rakes downward and
    the picture reads as lopsided rather than as layered. */
 function assignYGrouped(order,adj){
+  /* One ROW per slice, shared by every column -- so `capture` in Spec sits
+     opposite `capture` in Architecture and opposite `capture` in Tests, and
+     the picture reads as a grid: layers across, slices down.
+
+     This replaces centring each column on a shared midline. That fixed the
+     right problem (layers are wildly uneven -- nine intents against
+     thirty-four architecture entries, so top-alignment rakes every edge
+     downward) but fixed it per column, which misaligns the slices. The
+     Tests column showed it plainly: one small `capture` group, centred, ended
+     up floating opposite `observability` three columns to its left, next to
+     entries it has nothing to do with.
+
+     Rows are sized by the FULLEST column, and a shorter column's members are
+     centred inside the row. So a slice reads as one horizontal strip whatever
+     the counts are. */
   const rank=sliceRank(), y=new Map(), bands=[];
-  const cols=[];
-  let tallest=0;
+
+  const perCol=[];
+  const heights=new Map();                 // slice -> tallest member count
   for(let col=0;col<order.length;col++){
     const groups=new Map();
-    for(const id of order[col]){              // preserves the optimised order
-      const s=(STATE.byId[id]||{}).slice||"unsliced";
+    for(const id of order[col]){           // preserves the optimised order
+      const s=nodeOf(id).slice||"unsliced";
       (groups.get(s)||groups.set(s,[]).get(s)).push(id);
     }
-    const ordered=[...groups.entries()].sort((a,b)=>(rank[a[0]]??99)-(rank[b[0]]??99));
-    let cursor=0;
-    const local=[], localBands=[];
-    for(const [name,members] of ordered){
-      const top=cursor;
-      for(const id of members){ local.push([id,cursor+NODE_H/2]); cursor+=NODE_H+NODE_GAP; }
-      localBands.push({col,slice:name,top:top-10,height:cursor-top-NODE_GAP+20});
-      cursor+=GROUP_GAP;
-    }
-    const height=Math.max(0,cursor-GROUP_GAP-NODE_GAP+NODE_H);
-    cols.push({local,localBands,height});
-    tallest=Math.max(tallest,height);
+    perCol.push(groups);
+    for(const [name,members] of groups)
+      heights.set(name, Math.max(heights.get(name)||0, members.length));
   }
-  for(const c of cols){
-    const off=(tallest-c.height)/2;
-    for(const [id,v] of c.local) y.set(id,v+off);
-    for(const b of c.localBands) bands.push({...b,top:b.top+off});
+  if(!heights.size) return {y,bands};
+
+  const names=[...heights.keys()].sort((a,b)=>(rank[a]??99)-(rank[b]??99));
+  const span=n=>n*NODE_H+(n-1)*NODE_GAP;   // height of n stacked nodes
+
+  const top=new Map();
+  let cursor=0;
+  for(const name of names){
+    top.set(name,cursor);
+    cursor+=span(heights.get(name))+GROUP_GAP;
+  }
+  const total=Math.max(0,cursor-GROUP_GAP);
+
+  for(let col=0;col<perCol.length;col++){
+    /* Intent is never sliced -- short by nature, everyone reads all of it --
+       so a column of nothing but unsliced entries has no row to belong to.
+       Filing it under the `unsliced` row banished intent to the bottom of
+       the picture while every entry deriving from it sat in a slice row
+       above, and every edge out of it raked upward across the whole graph.
+       Centred over the full height instead, which is where its fan-out
+       reads from. The same rule covers behaviour before slicing is
+       ratified, for the same reason: it has no owner yet. */
+    const members=[...perCol[col].values()].flat();
+    const bare=members.length
+      && members.every(id=>(nodeOf(id).slice||"unsliced")==="unsliced");
+    if(bare){
+      const off=(total-span(members.length))/2;
+      members.forEach((id,n)=>y.set(id,off+n*(NODE_H+NODE_GAP)+NODE_H/2));
+      continue;                       // no band: unsliced names no slice
+    }
+    for(const [name,group] of perCol[col]){
+      const rowTop=top.get(name);
+      // centred inside the row, so a column holding two of a six-member
+      // slice sits opposite the middle of it rather than at its head
+      const off=rowTop+(span(heights.get(name))-span(group.length))/2;
+      group.forEach((id,n)=>y.set(id,off+n*(NODE_H+NODE_GAP)+NODE_H/2));
+      bands.push({col,slice:name,top:off-10,height:span(group.length)+20});
+    }
   }
   return {y,bands};
 }
 
-/* The verification band's node set.
-
-   A GHOST is a copy of a spec entry, drawn in this band at the same x as
-   the real one. It exists so the spec-to-test edge is a short hop inside
-   the band rather than a long arc up through the corpus, crossing every
-   edge on the way. Only spec entries that something actually judges get
-   one: thirty ghosts for no scenarios is thirty pieces of furniture.
-
-   A ghost is never an entry. It carries no body, is in no unit of its own,
-   and clicking one selects the entry it copies. */
 function verifyNodes(){
   const tests = STATE.entries.filter(e => e.test && !e.module);
   if(!tests.length) return [];
@@ -1009,9 +1063,36 @@ function layoutBand(nodes){
           height: ys.length ? Math.max(...ys)+NODE_H : 0};
 }
 
+/* =============================================================
+   LAYOUT MODES
+
+   Two ways to draw the same fork, and they trade against each other
+   rather than one being right.
+
+   BAND puts scenarios in a row below the corpus, with a copy of each
+   judged spec entry beside them. The verification layer reads as one
+   picture you can take in whole. The costs are real: every judged
+   contract appears twice, and the chain from a scenario back to intent
+   is not on screen -- the copy is a jump to somewhere far away.
+
+   INLINE puts scenarios in the Tests column at corpus level, beside the
+   contract they judge. Nothing is duplicated and the whole derivation
+   reads straight across: intent, behaviour, architecture, spec,
+   scenario. The cost is that the verification layer stops being one
+   thing you can look at -- it is scattered down the length of the
+   corpus, and a project with few scenarios has a mostly empty column
+   running its whole height.
+
+   Neither is a compromise of the other, so both are kept and the reader
+   picks. Nothing about the DATA changes between them; this is a drawing
+   decision and the graph is identical underneath.
+   ============================================================= */
 function buildScene(){
-  const corpus = STATE.entries.filter(e => e.band !== VERIFY);
-  const verify = verifyNodes();
+  const inline = LAYOUT === "inline";
+  const corpus = inline ? STATE.entries : STATE.entries.filter(e => e.band !== VERIFY);
+  const verify = inline ? [] : verifyNodes();
+  NODEX = {};
+  for(const e of [...corpus, ...verify]) NODEX[e.id] = e;
   const A = layoutBand(corpus);
   const B = verify.length ? layoutBand(verify) : null;
   const bandTop = A.height + BAND_GAP;
@@ -1776,6 +1857,9 @@ async function loadBody(id){
   if(sel===id && el()) el().textContent=STATE.bodies[id];
 }
 
+/* Re-rendered on a layout change: half of it describes things that only
+   one of the two drawings has, and a legend for furniture that is not on
+   screen is worse than no legend. */
 function resetInspector(){
   $("detail").innerHTML=`<h3>Entry</h3>
   <p class="muted">Pick an entry in the spine. Click blank canvas or press Esc to release.</p>
@@ -1786,12 +1870,21 @@ function resetInspector(){
   <p class="muted"><b>⌒ dashed</b> emits_into, same layer, only into a cross-cutting slice.
   Imposes no order.</p>
   <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>
-  <h3>The lower band</h3>
-  <p class="muted">Scenarios do not continue the chain under spec, they fork off it —
-  so they get a row of their own rather than a fifth link that does not exist.</p>
-  <p class="muted"><b>outlined box</b> a copy of a spec entry, placed under the scenarios
-  that judge it. It is a reference, not a second entry; clicking one selects the entry
-  it copies.</p>
+  <h3>Scenarios</h3>
+  <p class="muted">A scenario forks off spec rather than continuing under it, so it is
+  never the fifth link in the chain. Two ways to draw that, and they trade against each
+  other — <b>band</b> and <b>inline</b>, in the bar above.</p>
+  ${LAYOUT==="band"
+    ? `<p class="muted"><b>band</b> puts scenarios in a row below the corpus. The
+       verification layer reads as one picture. The costs: every judged contract appears
+       twice, and the chain back to intent is not on screen.</p>
+       <p class="muted"><b>outlined box</b> a copy of a spec entry, placed beside the
+       scenarios that judge it. A reference, not a second entry — clicking one selects
+       the entry it copies.</p>`
+    : `<p class="muted"><b>inline</b> puts scenarios in the Tests column beside the
+       contract they judge. Nothing is duplicated and the whole derivation reads straight
+       across. The cost: verification stops being one thing you can look at, and a
+       project with few scenarios has a mostly empty column running its height.</p>`}
   <p class="muted"><b>dashed scenario</b> written, no file yet. It is in no work unit, so
   it orders nothing and is not yet expected to pass — not a failure.</p>
   <h3>Work units</h3>
@@ -2556,8 +2649,11 @@ function show(v){
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
 $("t-e").onchange=repaint;
-$("t-group").onchange=()=>{ GROUPED=$("t-group").checked; sel=null; focusSlice=null;
-  syncLegend(); drawScene(); resetInspector(); };
+for(const b of document.querySelectorAll("#lay-seg .segb"))
+  b.onclick=()=>{ LAYOUT=b.dataset.lay; sel=null; focusSlice=null;
+    for(const o of document.querySelectorAll("#lay-seg .segb"))
+      o.setAttribute("aria-pressed", o.dataset.lay===LAYOUT);
+    syncLegend(); drawScene(); resetInspector(); };
 $("ord-layer").onchange=()=>{ ORDER_LAYER=+$("ord-layer").value; sel=null;
   syncLegend(); drawOrder(); resetInspector(); };
 $("rd-layer").onchange=()=>{ RD_LAYER=$("rd-layer").value; drawRead(); };
