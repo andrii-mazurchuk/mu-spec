@@ -2621,20 +2621,24 @@ def test_units_after_a_cut_attaches_drift_and_reports_nothing_moved(
     assert drift["edges_changed"] is False
 
 
-def test_a_work_unit_is_reachable_through_any_entry_it_holds(store, prompts):
-    """A unit's identity is its entry set, which does not fit in a URL. So
-    any member names it, and every member must name the same one -- if they
-    did not, two people working the same unit would be handed different
-    write sets."""
+def test_two_entries_in_one_file_are_two_units_over_one_write_set(store, prompts):
+    """One file, two contracts, two tickets. They hand out the same write set
+    and neither is an order on the other, so what stops them colliding is
+    `overlap` -- which the unit view has to carry, or a dispatcher has no way
+    to know not to run them together."""
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "core.py", "implements": ["S·01", "S·02"]})
     status_a, by_first = call(store, prompts, "GET", "/projects/m/units/S·01")
     status_b, by_second = call(store, prompts, "GET", "/projects/m/units/S·02")
     assert (status_a, status_b) == (200, 200)
-    assert by_first["unit"]["key"] == by_second["unit"]["key"]
+    assert by_first["unit"]["key"] == "S·01"
+    assert by_second["unit"]["key"] == "S·02"
     assert by_first["write_set"] == by_second["write_set"] == ["core.py"]
-    assert by_first["unit"]["entries"] == ["S·01", "S·02"]
+    assert by_first["unit"]["entries"] == ["S·01"]
+    assert by_first["overlap"] == ["S·02"]
+    assert by_second["overlap"] == ["S·01"]
+    assert by_first["follows"] == [] and by_second["follows"] == []
 
 
 def test_a_work_units_write_set_is_module_paths_not_entry_ids(store, prompts):

@@ -146,10 +146,13 @@ That is for reviewing or authoring a column, not for building one -- a slice's
 files are not disjoint from another slice's, so a slice is not a safe branch
 scope.
 
-What becomes actual development work is a **work unit**: spec entries and the
-files implementing them, grouped so that no file belongs to two units. That is
-what makes one unit one branch, and two units in the same wave unable to
-collide. `POST /projects/{project}/units/cut` records the cut work is handed
+What becomes actual development work is a **work unit**: one spec entry and the
+files implementing it, which is what makes one unit one branch and one ticket
+of predictable size. Files are **not** exclusive to a unit -- a file
+implementing several spec entries is written by several units -- so each unit
+also carries an `overlap` list naming the units it shares files with. Those
+must not be worked at the same time. Overlap is not an order: neither waits for
+the other, and a consumer decides which goes first. `POST /projects/{project}/units/cut` records the cut work is handed
 out from -- a person's decision, never automatic, because every gate can be
 green while the author is still revising. `GET /projects/{project}/units/{entry}`
 then returns one unit by any spec entry in it: its write set, its bodies, and

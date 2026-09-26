@@ -222,57 +222,100 @@ effect of writing an entry.
 
 ## 4a. Work units
 
-A slice is a column to read. A **work unit** is a piece of work to do: a maximal
-connected subgraph of the entry-to-module graph — spec entries and the files
-implementing them, joined transitively by implements-edges, with nothing outside
-connecting in. One unit is one branch.
+A slice is a column to read. A **work unit** is a piece of work to do: one spec entry
+together with every module implementing it. A **test unit** is the test entries derived
+from one spec entry, together with every module implementing those.
 
-### The grain was settled by measurement
+Units are 1:1 with spec entries, twice over — one implementation unit always, one test
+unit whenever scenarios exist and have modules declared. One unit is one branch, and one
+dispatchable ticket.
 
-Three other grains were available, and all three were eliminated by counting rather
-than by argument.
+### The grain was settled by bounded cognitive load
 
-- **An entry is too fine.** Two entries living in one file would both write it, and
-  `t-finance`'s `bot.py` implements eight.
-- **A module is too fine the other way.** An entry spans files: `dark`'s `S·73` spans
-  `.env`, `pyproject.toml`, a justfile, a compose file and a preconditions module, and
-  eleven of dark's sixty-eight entries span more than one.
+A unit is what gets handed to an agent as a single ticket, so the property that decides
+the grain is that its size must be **predictable, and independent of the project's worst
+file**.
+
+Three other grains were available.
+
+- **An entry-module pair is too fine.** `t-finance`'s `S·11` spans four modules, and
+  eight of its thirty entries span more than one. Splitting per pair turns one contract
+  into four tickets that then have to be reassembled by whoever reads them.
 - **A slice is too coarse.** It over-serialises, and a module straddling two slices
   belongs to neither exclusively.
+- **A maximal connected subgraph is unbounded.** Grouping by "shares a module"
+  propagates: one shared entry glues two files together, those files drag in their own
+  other entries, and the component closes only when it runs out of reach. On
+  `t-finance`, `server.py` implements eight entries, four of which are implemented
+  elsewhere as well, and the component that results is eleven entries across five
+  modules. Nobody chose that size and nobody can tune it — it is a property of the
+  project's worst fan-out, which is exactly what a ticket's size must not be.
 
-Maximal-connected is not a fourth preference. It is the *smallest* grouping whose write
-set is disjoint from every other unit's, and that disjointness is the payoff: two
-branches in the same wave cannot produce a git merge conflict, because no file is in
-both. Forced, not chosen.
+Anchoring on the spec entry bounds it: on `t-finance`, at most four modules per unit and
+1.3 on average. Both fan-outs are real — an entry spans several modules, and a module
+implements several entries — so neither side can be the grain on its own. The spec entry
+is the only anchor that is one-per-contract by definition.
 
-**Disjointness is not independence.** A unit's entries may still `depends_on` another
-unit's, and then it waits. Two things can be worked at once only with both — disjoint
-files and no edge between them.
+### Write sets overlap, and overlap is not an order
+
+A file implementing several spec entries is written by several units. That is expected,
+not a defect to be grouped away.
+
+**Overlap is reported as a relation** — computed in both directions, stored in neither,
+exactly as `covers`/`covered_by` are. It is deliberately **not an edge**. Two
+overlapping units must not be dispatched *simultaneously*; beyond that they need no
+order relative to each other, and inventing one where the spec states no dependency
+would be a scheduler deciding — the thing this section refuses everywhere else. On
+`t-finance`: thirty-seven overlapping pairs, twelve of them inside a single wave.
+
+**Overlap is not dependence, and disjointness is not independence.** A unit's entries may
+`depends_on` another unit's, and then it waits. Two units may be worked at the same time
+only with both — no edge between them, and no shared file.
+
+### What a unit emits
+
+Three things, so that whoever consumes a unit can choose its own batch size:
+
+- **`edges`** — the units this one waits on. The contract.
+- **`overlap`** — the units it may not run beside.
+- **`size`** — entries, modules, body bytes.
+
+A harness driving a frontier model may take three units in one session; one driving a
+mid-size model takes one. That adjustment belongs to the consumer, and mu-spec never
+makes it — which is the same reason the grain is the atom rather than the batch.
 
 ### Ordering
 
-Projected from spec-entry `depends_on` pushed through the module map, never authored,
-for the same reason slice dependency is never authored.
+Projected from spec-entry `depends_on`, never authored, for the same reason slice
+dependency is never authored. There is one further edge: the unit implementing `S·X`
+follows the test unit for `S·X` (§4b.3).
 
-What is handed out is **edges** — the units each unit waits on. Waves (§6a) are a
-reporting view over those edges, not the schedule. A consumer that waits for a whole
-wave rather than for its own blockers waits for work it does not need: on `dark`, strict
-wave barriers would make the last unit wait for fifty-one others when it actually waits
-for two.
+What is handed out is **edges**. Waves (§6a) are a reporting view over those edges, not
+the schedule. A consumer that waits for a whole wave rather than for its own blockers
+waits for work it does not need: on `dark`, strict wave barriers would make the last unit
+wait for fifty-one others when it actually waits for two.
 
-### Cycles are contracted
+In that view a **test unit is pulled forward** to sit immediately before the earliest
+unit that follows it, rather than at the front of the project. Presentation only; the
+edges do not move.
 
-Grouping entries into files can create a cycle the entry graph does not have.
-`depends_on` is acyclic at entry level because the gates require it, but two files can
-each implement one end of the other's dependency. Merging such a group into one unit is
-correct rather than a fudge: files that depend on each other cannot be built separately,
-so they are one piece of work. A contracted unit is a diagnostic about the module map —
-surfaced, never gated.
+### Cycles cannot occur
+
+Units are 1:1 with spec entries; `depends_on` between spec entries is acyclic because the
+gates require it; and the only other edge kind points *into* a test unit, which has no
+outbound edge to leave by (§4b.1a). A directed acyclic graph relabelled is still one, so
+there is nothing here to detect and nothing to contract.
+
+This is a property rather than a policy, and it is what the earlier module-grouping grain
+could not claim: grouping entries by file could manufacture a cycle the entry graph did
+not have, which then had to be contracted and reported.
 
 ### Identity, and the cut
 
-Identity **is** the entry set. Same entries, same unit; nothing is allocated and nothing
-is stored, so two projections of the same graph agree without consulting each other.
+Identity **is** the spec entry, plus which of the two kinds the unit is — `S·13` and
+`S·13:T`. Nothing is allocated and nothing is stored, so two projections of the same
+graph agree without consulting each other, and a unit's name is readable by whoever
+receives the ticket rather than being a digest nobody can place.
 
 A projection is computed. A **cut** is a projection a person decided to take, and the
 difference is why one of them is stored at all: the gates going green is not the same
@@ -327,20 +370,22 @@ a closed list would refuse the test nobody anticipated.
 Both surfaced while building it. Neither is a new idea; each is what makes a property
 already claimed here actually true rather than aspirational.
 
-**A module implements spec entries or test entries, never both.** §4b.2 says the
-separation between writing a test and writing the code it judges needs no enforcement,
-because the two share no entry and so land in different work units. That holds only
-while no single file claims both. One mixed file merges those units, the write sets stop
-being disjoint, and a structural guarantee quietly degrades into an honour-system rule.
+**A module implements spec entries or test entries, never both.** §4b.2 says the agent
+implementing a spec entry may read the test files and may never write them. A unit's
+write set is every module implementing *its own* entries, so a file claiming both kinds
+would land the test file inside the **implementation** unit's write set — handing the
+agent permission to edit the tests that judge it. That is what the refusal protects, and
+it survives write sets that overlap (§4a), which the older disjointness argument did not.
 Refused at declaration. There is deliberately **no `kind` field** on a module: what a
 module is follows from the identifiers it claims, and a field would be the second
 statement of exactly that.
 
 **A test entry carries no `depends_on` and no `emits_into`.** One scenario needs nothing
-from another scenario. This is not tidiness — it is what makes a unit holding test
-modules a *root*. With no outbound edge to have, such a unit cannot sit inside a cycle,
-so the ordering rule in §4b.3 can never deadlock against a dependency. The same shape as
-a cross-cutting slice landing in wave 0: arranged by the edge rules, not by a scheduler.
+from another scenario. This is not tidiness — with no outbound edge to have, a test unit
+has no way back out of it, so it cannot sit inside a cycle and the ordering rule in §4b.3
+can never deadlock against a dependency. Arranged by the edge rules, not by a scheduler.
+It does **not** make a test unit a wave-0 root: it sits immediately before the
+implementation it serves (§4a).
 
 **Scenarios can be asked for on their own.** Every request type stopped at spec, so a
 fresh "say how `S·01` can fail" had nowhere to originate and was refused. A
@@ -359,10 +404,11 @@ and join no slice** — §5 has the layout and the reason.
 
 Documentation first, tests second, code last. The agent implementing a spec entry
 **may read the test files and may never write them.** That is not a rule anyone has to
-follow: a test module implements test entries, an implementation module implements
-spec entries, the two share no entry, so they fall into different work units — and a
-work unit's write set is disjoint from every other's by construction (§4a). Different
-unit, different branch, different agent. The separation is a property of the grouping.
+follow: a test module implements test entries, an implementation module implements spec
+entries, no module may claim both (§4b.1a), and a unit's write set is every module
+implementing *its own* entries — so a test file can never appear in an implementation
+unit's write set. Different unit, different branch, different agent. The separation is a
+property of the grain, not of anyone's discipline.
 
 ### 4b.3 Order
 
@@ -892,12 +938,15 @@ anything that exists.
   rather than a field, not which prompt. A new tier, or additions to the existing ones,
   is a question about the prompts as they now stand rather than about the design.
 - **Files several work units must edit** — `pyproject.toml`, `.gitignore`, a shared
-  `__init__.py`. Declared, they glue every unit that touches them into one and
-  parallelism dies; undeclared, the disjointness guarantee is void the moment two
-  branches both append a line. **Accepted as unsolved rather than open**: it is not
-  answerable at this level of abstraction, merge conflicts on such files will happen,
-  and a mechanism pretending otherwise would be worse than the honest gap. Recorded so
-  nobody reopens it expecting an answer to be waiting.
+  `__init__.py`. **Narrowed, not closed, by the grain in §4a.** Under the older
+  maximal-connected grain a declared shared file glued every unit touching it into one
+  and parallelism died. Anchoring on the spec entry means such a file merely *overlaps*:
+  the units stay separate tickets, and what the overlap relation says is that they may
+  not be dispatched at the same time. So the failure mode is no longer a silent merge
+  conflict but a dispatch constraint, which is mechanical and reported. What remains
+  unsolved is the cost: a file every unit touches serialises everything that touches it,
+  and no mechanism at this level can make that cheaper. Recorded so nobody reopens it
+  expecting parallel edits to a shared file to become safe.
 - **A spec diff does not see a test.** §10's planner resolves a *spec* diff into a write
   set, so amending a scenario produces an empty plan. Not a defect in the planner: the
   execution scope is a work unit, and `get_work_unit` carries both the scenarios to run

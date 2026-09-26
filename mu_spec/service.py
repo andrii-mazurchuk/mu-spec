@@ -1285,12 +1285,19 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         "followed_by": sorted(
             other for other, targets in projection.edges.items() if key in targets
         ),
+        # Units sharing a file with this one. Not an order -- there is no
+        # direction to have -- so it is handed out separately from `follows`
+        # and means only "not at the same time as".
+        "overlap": list(projection.overlap.get(key, ())),
         **_verification(graph, projection, unit),
         "audit": {
             "editable_paths": list(unit.modules),
-            "rule": "any file touched outside editable_paths breaks the one "
-            "guarantee work units provide -- that no two units share a file. "
-            "It is almost always a dependency nobody declared",
+            "rule": "any file touched outside editable_paths is a write this "
+            "unit never declared, and is almost always a dependency nobody "
+            "declared. Files inside it may be shared with the units named in "
+            "`overlap`, which is why those must not be worked at the same "
+            "time -- but each of them declares the file too, so a write here "
+            "is still within this unit's own write set",
         },
     }
 

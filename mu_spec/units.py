@@ -1,27 +1,42 @@
 """Work units: what a single piece of work is, and what it may write.
 
-A **work unit** is a maximal connected subgraph of the entry-to-module graph
--- spec entries and the files that implement them, joined transitively by
-implements-edges, with nothing outside connecting in. One unit is one branch.
+A **work unit** is one spec entry together with every module implementing it.
+A **test unit** is the test entries derived from one spec entry, together with
+every module implementing those. Units are 1:1 with spec entries, twice over:
+one implementation unit always, one test unit whenever scenarios exist and
+have modules declared. One unit is one branch, and one dispatchable ticket.
 
-The grain matters and was settled by measurement rather than argument. An
-**entry** is too fine: two entries living in one file would both write it, and
-`bot.py` holds eight. A **module** is too fine in the other direction: an entry
-spans files -- `dark`'s `S*73` spans `.env`, `pyproject.toml`, a justfile, a
-compose file and a preconditions module, and eleven of its sixty-eight entries
-span more than one. A **slice** is too coarse: it over-serialises, and a file
-that straddles two slices belongs to neither exclusively.
+The grain is settled by **bounded cognitive load**. A unit is what gets handed
+to an agent as a single ticket, so its size has to be predictable and
+independent of the project's worst file. Three other grains were available. An
+**entry-module pair** is too fine: `t-finance`'s `S*11` spans four modules, and
+splitting per pair turns one contract into four tickets somebody then has to
+reassemble. A **slice** is too coarse: it over-serialises, and a file
+straddling two slices belongs to neither exclusively. A **maximal connected
+subgraph** -- what this module used to compute -- is unbounded: grouping by
+"shares a module" propagates, so one shared entry glues two files, those files
+drag in their own other entries, and on `t-finance` the component that results
+is eleven entries across five modules. Nobody chose that size and nobody can
+tune it; it is a property of `server.py`'s fan-out, which is what a ticket's
+size must not be. Anchoring on the spec entry bounds it at four modules, 1.3
+on average.
 
-Maximal-connected is not a preference among those. It is the *smallest*
-grouping whose write set is disjoint from every other unit's, and that
-disjointness is the whole point: two branches in the same wave cannot produce
-a merge conflict, because no file is in both. The merging is forced by "no two
-units touch the same file", not chosen.
+**Write sets overlap, and overlap is not an order.** A file implementing
+several spec entries is written by several units, and that is expected rather
+than a defect to be grouped away. `overlap` reports which units must not be
+dispatched *simultaneously*. It is deliberately not an edge: beyond that
+constraint they need no order, and inventing one where the spec states no
+dependency would be this module scheduling, which it does not do.
 
-**Disjointness is not independence.** A unit's entries may still `depends_on`
-another unit's, and then it waits. Running two things at once needs both
-disjoint files (given here by construction) and no edge between them (given by
-the projection below).
+**Overlap is not dependence, and disjointness is not independence.** A unit's
+entries may `depends_on` another unit's, and then it waits. Two units may be
+worked at once only with both -- no edge between them, and no shared file.
+
+**Cycles cannot occur.** Units are 1:1 with spec entries, `depends_on` between
+spec entries is acyclic because the gates require it, and the only other edge
+kind points *into* a test unit, which has no outbound edge to leave by. A
+directed acyclic graph relabelled is still one, so there is nothing here to
+detect and nothing to contract.
 
 Nothing here is authored. There is no field to declare a unit in and no field
 to declare an edge in, for the same reason slice dependency has none: two
@@ -31,53 +46,52 @@ statements of one fact drift, and the maintained one goes stale.
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 from mu_spec.graph import Graph
 from mu_spec.identifiers import TEST, Identifier, parse, sort_key
-from mu_spec.slice_gates import cycles
 from mu_spec.storage import Manifest
 from mu_spec.waves import Schedule, schedule_edges
 
 SPEC = "S"
-# Twelve hex of a sha256 over the sorted entry list. Long enough that a
-# collision across a few hundred units is not a thing worth a line of code,
-# short enough to read in a URL and in a log.
-KEY_LENGTH = 12
+# What marks a test unit's key apart from its implementation unit's. Both are
+# anchored to the same spec entry, so the anchor alone does not name them.
+TEST_SUFFIX = ":T"
 
 
-def unit_key(entries: Iterable[Identifier]) -> str:
-    """The content address of a work unit: a digest of the entries it holds.
+def unit_key(anchor: Identifier, tests: bool = False) -> str:
+    """The name of a work unit: its anchor spec entry, and which kind it is.
 
-    Identity **is** the entry set. Same entries, same unit; different
-    entries, different unit. Nothing is allocated, nothing is stored, and
-    two projections of the same graph agree without having to consult each
-    other -- which is what lets a cut be compared with a later one at all.
+    Identity **is** the anchor plus the kind. Nothing is allocated, nothing
+    is stored, and two projections of the same graph agree without having to
+    consult each other -- which is what lets a cut be compared with a later
+    one at all.
+
+    Readable on purpose. A digest was needed while a unit was a connected
+    component with no name of its own; a unit anchored to a spec entry has
+    one, and whoever receives the ticket can place it without a lookup.
     """
-    canonical = "\n".join(str(i) for i in sorted(entries, key=sort_key))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:KEY_LENGTH]
+    return f"{anchor}{TEST_SUFFIX if tests else ''}"
 
 
 @dataclasses.dataclass(frozen=True)
 class Unit:
     key: str
+    # The spec entry this unit is anchored to. For a test unit, the spec
+    # entry its scenarios judge -- never one of its own test identifiers.
+    anchor: Identifier
     entries: tuple[Identifier, ...]
     # The write set, and the only thing a branch for this unit may edit.
     modules: tuple[str, ...]
     # Which slices this unit's entries belong to. More than one means a file
     # in it straddles a slice boundary -- reported, never refused.
     slices: tuple[str, ...] = ()
-    # True when this unit is the contraction of two or more components that
-    # depended on each other. Their files cannot be built separately, which
-    # is a fact about the module map worth seeing.
-    cycle: bool = False
-
-    @property
-    def cross_slice(self) -> bool:
-        return len(self.slices) > 1
+    # Total body bytes of this unit's entries. The one size signal that is
+    # not already the length of a list above, and the one that matters: a
+    # single entry can carry more to read than five.
+    body_bytes: int = 0
 
     @property
     def tests(self) -> bool:
@@ -90,14 +104,29 @@ class Unit:
         """
         return bool(self.entries) and self.entries[0].layer == TEST
 
+    @property
+    def size(self) -> dict:
+        """What a consumer reads to pick its own batch size.
+
+        Reported, never compared against a threshold here. How much one
+        session can hold depends on the model driving it, and this unit
+        knows nothing about that.
+        """
+        return {
+            "entries": len(self.entries),
+            "modules": len(self.modules),
+            "body_bytes": self.body_bytes,
+        }
+
     def to_json(self) -> dict:
         return {
             "key": self.key,
+            "anchor": str(self.anchor),
             "entries": [str(i) for i in self.entries],
             "modules": list(self.modules),
             "slices": list(self.slices),
-            "cycle": self.cycle,
             "tests": self.tests,
+            "size": self.size,
         }
 
 
@@ -110,6 +139,16 @@ class Projection:
     # not need: on `dark` the last unit would wait for fifty-one others when
     # it actually waits for two.
     edges: dict[str, tuple[str, ...]]
+    # Unit key -> the keys it shares a module with. Symmetric, computed in
+    # both directions, stored in neither -- as `covers`/`covered_by` are.
+    #
+    # Deliberately NOT an edge. Two units writing one file must not be
+    # dispatched at the same time, and beyond that they need no order
+    # relative to each other; inventing one where the spec states no
+    # dependency would be this module scheduling. Honouring it is the
+    # consumer's business, which is why it is reported separately from the
+    # contract above rather than folded into it.
+    overlap: dict[str, tuple[str, ...]]
     schedule: Schedule
     # Live spec entries no live module claims. They are in no unit, so they
     # are in no piece of work -- which is exactly why this is reported
@@ -151,6 +190,7 @@ class Projection:
         return {
             "units": [u.to_json() for u in self.units],
             "edges": {k: list(v) for k, v in sorted(self.edges.items())},
+            "overlap": {k: list(v) for k, v in sorted(self.overlap.items())},
             "waves": [
                 {"wave": n, "units": list(w), "width": len(w)}
                 for n, w in enumerate(self.schedule.waves)
@@ -163,42 +203,6 @@ class Projection:
             "unimplemented_tests": [str(i) for i in self.unimplemented_tests],
             "unfollowed_tests": list(self.unfollowed_tests),
         }
-
-
-class _Find:
-    """Union-find over module paths.
-
-    Deliberately over paths alone rather than over a mixed entry/module node
-    set. A component that holds a module is exactly a group of paths closed
-    under "shares an entry", and the entries supply the relation -- so there
-    is no second kind of node, no tagging scheme, and no question about
-    whether a path could collide with a stringified identifier.
-    """
-
-    def __init__(self) -> None:
-        self._parent: dict[str, str] = {}
-
-    def add(self, item: str) -> None:
-        self._parent.setdefault(item, item)
-
-    def find(self, item: str) -> str:
-        root = item
-        while self._parent[root] != root:
-            root = self._parent[root]
-        while self._parent[item] != root:      # path compression, iterative
-            self._parent[item], item = root, self._parent[item]
-        return root
-
-    def union(self, a: str, b: str) -> None:
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self._parent[max(ra, rb)] = min(ra, rb)   # deterministic root
-
-    def groups(self) -> dict[str, list[str]]:
-        out: dict[str, list[str]] = {}
-        for item in self._parent:
-            out.setdefault(self.find(item), []).append(item)
-        return out
 
 
 def entry_slices(manifest: Manifest, graph: Graph) -> dict[Identifier, str]:
@@ -337,45 +341,131 @@ def _invert(
     return entry_modules, entry_slice, sorted(set(stale))
 
 
-def _components(entry_modules: dict[Identifier, list[str]]) -> list[list[str]]:
-    """Module paths grouped into maximal connected sets."""
-    find = _Find()
-    for paths in entry_modules.values():
-        for path in paths:
-            find.add(path)
-        first = paths[0]
-        for other in paths[1:]:
-            find.union(first, other)
-    return [sorted(members) for members in find.groups().values()]
-
-
 def _build(
-    components: list[list[str]],
     entry_modules: dict[Identifier, list[str]],
     entry_slice: dict[Identifier, str],
+    graph: Graph,
 ) -> list[Unit]:
-    owner: dict[str, int] = {}
-    for index, members in enumerate(components):
-        for path in members:
-            owner[path] = index
+    """One unit per implemented spec entry, plus one per spec entry with
+    built scenarios.
 
-    held: list[list[Identifier]] = [[] for _ in components]
-    for identifier, paths in entry_modules.items():
-        held[owner[paths[0]]].append(identifier)
+    A module appearing in several units is normal, and is exactly what
+    `overlap` reports. It is not grouped away: grouping is what made unit
+    size a property of the project's worst file rather than of the contract
+    being built.
 
-    units = []
-    for index, members in enumerate(components):
-        entries = tuple(sorted(held[index], key=sort_key))
-        slices = tuple(sorted({entry_slice[e] for e in entries if e in entry_slice}))
-        units.append(
-            Unit(
-                key=unit_key(entries),
-                entries=entries,
-                modules=tuple(members),
-                slices=slices,
+    A test unit is anchored to the spec entry its scenarios judge, never to
+    one of its own identifiers. That is what makes the pairing exact without
+    being one-to-one -- a shared fixture serving three spec entries lands in
+    three test units and glues none of their implementations together.
+    """
+    tests_of: dict[Identifier, list[Identifier]] = {}
+    for identifier in entry_modules:
+        if identifier.layer != TEST:
+            continue
+        for parent in graph.parents(identifier):
+            tests_of.setdefault(parent, []).append(identifier)
+
+    def sized(entries: tuple[Identifier, ...]) -> int:
+        total = 0
+        for identifier in entries:
+            entry = graph.get(identifier)
+            if entry is not None:
+                total += len(entry.body.encode("utf-8"))
+        return total
+
+    anchors = sorted(
+        {i for i in entry_modules if i.layer == SPEC} | set(tests_of),
+        key=sort_key,
+    )
+    units: list[Unit] = []
+    for anchor in anchors:
+        # Tests first, so a unit and the one that must precede it sit next to
+        # each other in every listing that does not re-sort.
+        for tests in (True, False):
+            if tests:
+                held = tuple(sorted(tests_of.get(anchor, ()), key=sort_key))
+            else:
+                held = (anchor,) if anchor in entry_modules else ()
+            if not held:
+                continue
+            modules = tuple(sorted({m for e in held for m in entry_modules[e]}))
+            slices = tuple(
+                sorted({entry_slice[e] for e in held if e in entry_slice})
             )
-        )
+            units.append(
+                Unit(
+                    key=unit_key(anchor, tests),
+                    anchor=anchor,
+                    entries=held,
+                    modules=modules,
+                    slices=slices,
+                    body_bytes=sized(held),
+                )
+            )
     return units
+
+
+def overlap(units: list[Unit]) -> dict[str, tuple[str, ...]]:
+    """Which units share a module, and so may not be dispatched at once.
+
+    Symmetric and computed in both directions, stored in neither. Every unit
+    is a key even when it overlaps nothing, so a consumer can look one up
+    without having to know whether the absence means "no overlap" or "not
+    computed".
+    """
+    by_module: dict[str, list[str]] = {}
+    for unit in units:
+        for path in unit.modules:
+            by_module.setdefault(path, []).append(unit.key)
+
+    out: dict[str, set[str]] = {u.key: set() for u in units}
+    for sharers in by_module.values():
+        if len(sharers) < 2:
+            continue
+        for key in sharers:
+            out[key].update(k for k in sharers if k != key)
+    return {k: tuple(sorted(v)) for k, v in out.items()}
+
+
+def wave_view(units: list[Unit], edges: dict[str, tuple[str, ...]]) -> Schedule:
+    """Waves as a person reads them, with test units pulled forward.
+
+    A test unit waits on nothing, so longest-path puts it in wave 0. True,
+    and useless to read: forty test tickets at the front of a project says
+    nothing about when any of them is wanted, and writing a scenario for a
+    contract seven waves out invites doing it before the contract settles.
+
+    So a test unit is shown immediately before the earliest unit that
+    follows it. Presentation only -- the edges do not move, and a consumer
+    honouring edges rather than waves sees no difference at all.
+    """
+    base = schedule_edges(edges)
+    depth = base.wave_of()
+    if not depth:
+        return base
+
+    followers: dict[str, list[str]] = {}
+    for key, deps in edges.items():
+        for dep in deps:
+            followers.setdefault(dep, []).append(key)
+
+    moved = dict(depth)
+    for unit in units:
+        after = [depth[f] for f in followers.get(unit.key, ()) if f in depth]
+        if unit.tests and after and unit.key in moved:
+            moved[unit.key] = min(after) - 1
+
+    floor = min(moved.values())
+    moved = {k: v - floor for k, v in moved.items()}
+    top = max(moved.values())
+    return Schedule(
+        waves=tuple(
+            tuple(sorted(k for k, v in moved.items() if v == number))
+            for number in range(top + 1)
+        ),
+        unschedulable=base.unschedulable,
+    )
 
 
 def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]], list[Identifier]]:
@@ -401,95 +491,37 @@ def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]],
                 elif other != unit.key:        # a dependency resolved inside
                     out[unit.key].add(other)   # one unit imposes no order
 
-            # The third source, and the only one that is not a depends_on:
-            # the unit implementing S*X follows any unit holding test
-            # modules for tests derived from S*X. Documentation first, tests
-            # second, code last.
-            #
-            # Computed here rather than read off `derives_from`, which means
-            # justification and only justification -- keeping the two apart
-            # is what makes unit dependency computable instead of guesswork.
-            # A third source costs these lines; redefining an edge would
-            # cost the property.
-            #
-            # The pairing is NOT one-to-one and nothing here assumes it is.
-            # A test module implementing scenarios derived from several spec
-            # entries -- a shared fixture, the ordinary case -- is followed
-            # by each of their implementation units. That fans out and
-            # merges nothing, which is what anchoring at the entry rather
-            # than at the module buys: a broad test file cannot glue
-            # unrelated implementation units together.
-            #
-            # A test with no module resolves to no unit and so imposes no
-            # order. That is the point of the rule, not a hole in it: a
-            # scenario that is written but not yet built is not yet expected
-            # to pass, and blocking on it would stop work for a file nobody
-            # has created.
-            if entry.layer != SPEC:
-                continue
-            for child in graph.children(entry):
-                if child.layer != TEST:
-                    continue
-                other = of.get(child)
-                if other is not None and other != unit.key:
-                    out[unit.key].add(other)
+    # The second source, and the only one that is not a depends_on: the unit
+    # implementing S*X follows the test unit for S*X. Documentation first,
+    # tests second, code last.
+    #
+    # Computed here rather than read off `derives_from`, which means
+    # justification and only justification -- keeping the two apart is what
+    # makes unit dependency computable instead of guesswork. A second source
+    # costs these lines; redefining an edge would cost the property.
+    #
+    # Both units share an anchor, so this is a lookup rather than a search.
+    # The pairing is still not one-to-one and nothing here assumes it is: a
+    # shared fixture serving several spec entries is a member of each of
+    # their test units, so each implementation unit waits for its own. That
+    # fans out and merges nothing.
+    #
+    # A spec entry whose scenarios have no module has no test unit, and so
+    # imposes no order. That is the point of the rule rather than a hole in
+    # it: a scenario written but not yet built is not yet expected to pass,
+    # and ordering implementation behind one would block work on a file
+    # nobody has written.
+    for unit in units:
+        if unit.tests:
+            continue
+        mate = unit_key(unit.anchor, tests=True)
+        if mate in out:
+            out[unit.key].add(mate)
+
     return (
         {k: tuple(sorted(v)) for k, v in out.items()},
         sorted(dangling, key=sort_key),
     )
-
-
-def _contract(
-    units: list[Unit], edges: dict[str, tuple[str, ...]], graph: Graph
-) -> tuple[list[Unit], dict[str, tuple[str, ...]], list[Identifier]]:
-    """Merge units that depend on each other into one.
-
-    Grouping entries into files can create a cycle the entry graph does not
-    have -- two files each implementing one end of the other's dependency --
-    and `depends_on` is acyclic at entry level because the gates require it.
-    Merging is the correct answer rather than a fudge: files that depend on
-    each other cannot be built separately, so they are one piece of work.
-
-    One pass reaches the fixed point. Condensing every strongly connected
-    component at once yields the condensation, which is acyclic by
-    construction, so a merge cannot create a new cycle. If that were ever
-    wrong it would surface as a non-empty `schedule.unschedulable` rather
-    than as a hang, which is why there is no iteration cap here and no
-    assertion: the check already exists and is already reported.
-
-    A one-node cycle needs no handling -- a dependency resolved inside a
-    single unit is dropped as a self-edge before this runs.
-    """
-    groups = [g for g in cycles(edges) if len(g) > 1]
-    if not groups:
-        return units, edges, []
-
-    by_key = {u.key: u for u in units}
-    merged_of: dict[str, str] = {}
-    survivors: list[Unit] = []
-    grouped: set[str] = set()
-
-    for members in groups:
-        parts = [by_key[k] for k in members]
-        entries = tuple(sorted({e for p in parts for e in p.entries}, key=sort_key))
-        modules = tuple(sorted({m for p in parts for m in p.modules}))
-        slices = tuple(sorted({s for p in parts for s in p.slices}))
-        unit = Unit(
-            key=unit_key(entries),
-            entries=entries,
-            modules=modules,
-            slices=slices,
-            cycle=True,
-        )
-        survivors.append(unit)
-        for key in members:
-            merged_of[key] = unit.key
-            grouped.add(key)
-
-    survivors.extend(u for u in units if u.key not in grouped)
-    survivors.sort(key=lambda u: sort_key(u.entries[0]) if u.entries else ("", 0))
-    rebuilt, dangling = _edges(survivors, graph)
-    return survivors, rebuilt, dangling
 
 
 def project(manifest: Manifest, graph: Graph) -> Projection:
@@ -500,16 +532,8 @@ def project(manifest: Manifest, graph: Graph) -> Projection:
     because a person who cannot cut needs to be able to see why.
     """
     entry_modules, entry_slice, stale = _invert(manifest, graph)
-    units = _build(_components(entry_modules), entry_modules, entry_slice)
-    units.sort(key=lambda u: sort_key(u.entries[0]) if u.entries else ("", 0))
-
+    units = _build(entry_modules, entry_slice, graph)
     edges, dangling = _edges(units, graph)
-    units, edges, after = _contract(units, edges, graph)
-    # Union rather than substitution. Contraction cannot change which targets
-    # are dangling -- merging units only ever gives an edge somewhere to land
-    # -- so the two sets agree today. Replacing one with the other would be
-    # relying on that; combining them does not have to.
-    dangling = sorted(set(dangling) | set(after), key=sort_key)
 
     unimplemented = tuple(
         sorted(
@@ -542,10 +566,11 @@ def project(manifest: Manifest, graph: Graph) -> Projection:
     return Projection(
         units=tuple(units),
         edges=edges,
-        schedule=schedule_edges(edges),
+        overlap=overlap(units),
+        schedule=wave_view(units, edges),
         unimplemented=unimplemented,
         stale_modules=tuple(stale),
-        dangling=tuple(dangling),
+        dangling=tuple(sorted(dangling, key=sort_key)),
         untested=untested,
         unimplemented_tests=unimplemented_tests,
         unfollowed_tests=unfollowed_tests,
@@ -602,13 +627,19 @@ class Cut:
         return {u.key: u for u in self.units}
 
     def to_json(self) -> dict:
-        schedule = schedule_edges(self.edges)
+        schedule = wave_view(list(self.units), self.edges)
         return {
             "seq": self.seq,
             "at": self.at,
             "note": self.note,
             "units": [u.to_json() for u in self.units],
             "edges": {k: list(v) for k, v in sorted(self.edges.items())},
+            # Recomputed from the units this cut stores, as the waves above
+            # are. A relation over stored bodies is not itself worth storing.
+            "overlap": {
+                k: list(v)
+                for k, v in sorted(overlap(list(self.units)).items())
+            },
             "waves": [
                 {"wave": n, "units": list(w), "width": len(w)}
                 for n, w in enumerate(schedule.waves)
@@ -635,20 +666,33 @@ class CutError(ValueError):
 
 def _unit_body(unit: Unit) -> dict:
     return {
+        "anchor": str(unit.anchor),
         "entries": [str(i) for i in unit.entries],
         "modules": list(unit.modules),
         "slices": list(unit.slices),
-        "cycle": unit.cycle,
+        "body_bytes": unit.body_bytes,
     }
 
 
 def _unit_from_body(key: str, body: dict) -> Unit:
+    entries = tuple(parse(i) for i in body.get("entries", ()))
+    stored = body.get("anchor")
+    if stored is None and not entries:
+        raise CutError(
+            f"work unit {key} has neither an anchor nor entries, so there is "
+            "no write set to hand out"
+        )
     return Unit(
         key=key,
-        entries=tuple(parse(i) for i in body.get("entries", ())),
+        # A cut written before units were anchored carries no anchor. Its
+        # first entry is the closest true thing, and an old cut is a record
+        # of what went out rather than something to re-derive -- refusing to
+        # read history would lose the audit trail to gain nothing.
+        anchor=parse(stored) if stored else entries[0],
+        entries=entries,
         modules=tuple(body.get("modules", ())),
         slices=tuple(body.get("slices", ())),
-        cycle=bool(body.get("cycle", False)),
+        body_bytes=int(body.get("body_bytes", 0)),
     )
 
 
@@ -766,6 +810,42 @@ def append_cut(
         unfollowed_tests=projection.unfollowed_tests,
         dangling=projection.dangling,
     )
+
+
+class _Find:
+    """Union-find over strings, used by `drift` and nowhere else.
+
+    It grouped module paths into work units while a unit was a connected
+    component. A unit is now anchored to a spec entry and has a stable name,
+    so nothing in the projection needs this; what still does is comparing a
+    stored cut against the live graph, where the "shares an entry" relation
+    between two *generations* of units is genuinely a grouping problem.
+    """
+
+    def __init__(self) -> None:
+        self._parent: dict[str, str] = {}
+
+    def add(self, item: str) -> None:
+        self._parent.setdefault(item, item)
+
+    def find(self, item: str) -> str:
+        root = item
+        while self._parent[root] != root:
+            root = self._parent[root]
+        while self._parent[item] != root:      # path compression, iterative
+            self._parent[item], item = root, self._parent[item]
+        return root
+
+    def union(self, a: str, b: str) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self._parent[max(ra, rb)] = min(ra, rb)   # deterministic root
+
+    def groups(self) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for item in self._parent:
+            out.setdefault(self.find(item), []).append(item)
+        return out
 
 
 def drift(cut: Cut, live: Projection) -> dict:

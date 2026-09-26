@@ -204,9 +204,11 @@ probably undocumented, and that is an issue against the spec, not a scenario.
 ### A scenario carries no horizontal edges
 
 No `depends_on`, no `emits_into`, and both are refused. One scenario needs
-nothing from another. This is also what makes a work unit holding test files
-a root: with no outbound edge to have, it cannot sit in a cycle, and the
-ordering that puts implementation after tests can never deadlock.
+nothing from another. This is also what leaves a work unit holding test files
+with no outbound edge, so it cannot sit in a cycle and the ordering that puts
+implementation after tests can never deadlock. It does not put such a unit at
+the front of the project: it is scheduled immediately before the
+implementation it judges.
 
 ### What is not a scenario
 
@@ -229,10 +231,11 @@ POST /projects/{project}/modules
 ```
 
 **A module implements spec entries or test entries, never both.** Refused
-otherwise, and the refusal is load-bearing: a test file and the file it
-judges share no entry, which is what puts them in different work units and so
-on different branches. One mixed file collapses that, and "the implementer
-may read the tests and never write them" stops being structural.
+otherwise, and the refusal is load-bearing. A unit's write set is every module
+implementing *its own* entries, so a file claiming both kinds would put the
+test file inside the **implementation** unit's write set -- letting the agent
+edit the tests that judge it. "The implementer may read the tests and never
+write them" stops being structural the moment one file claims both.
 
 A scenario with no file yet is fine and expected. It is in no work unit, so
 it orders nothing and is **not yet expected to pass**.

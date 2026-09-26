@@ -6,7 +6,9 @@ piece of code exists rather than a restatement of it:
 - a test derives from exactly one spec entry, and from nothing else ever
 - spec stays the bottom of the derivation chain, so an untested project is
   incomplete and never unsound
-- a test unit is a root, structurally, so the ordering rule cannot deadlock
+- a test unit has no outbound edge, so the ordering rule cannot deadlock,
+  and it is shown immediately before the work it precedes rather than at
+  the front of the project
 - the implementation unit follows the test unit, fanning out and merging
   nothing
 """
@@ -209,15 +211,40 @@ def test_the_implementation_unit_follows_the_test_unit():
     assert projection.edges[tests.key] == ()
 
 
-def test_a_test_unit_lands_in_wave_zero():
-    """Not arranged -- a consequence of a test having no outbound edge, the
-    same way a cross-cutting slice lands in wave 0 by construction."""
+def test_a_test_unit_is_shown_just_before_the_work_it_precedes():
+    """A test unit waits on nothing, so longest-path puts it in wave 0. True,
+    and useless to read -- every test ticket in a project would pile up at the
+    front, saying nothing about when any of them is wanted, and inviting
+    scenarios to be written for contracts that have not settled.
+
+    So the view pulls it forward to sit immediately before its follower. The
+    edges do not move: a consumer honouring edges rather than waves sees no
+    difference at all."""
     projection = project(
-        _manifest({"a.py": "S·01", "test_a.py": "T·01"}),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _manifest(
+            {
+                "a.py": "S·01",
+                "b.py": "S·02",
+                "c.py": "S·03",
+                "test_c.py": "T·01",
+            }
+        ),
+        _graph(
+            _spec("S·01"),
+            _spec("S·02", depends_on="S·01"),
+            _spec("S·03", depends_on="S·02"),
+            _test("T·01", "S·03"),
+        ),
     )
-    tests = next(u for u in projection.units if u.tests)
-    assert tests.key in projection.schedule.waves[0]
+
+    assert projection.schedule.waves == (
+        ("S·01",),
+        ("S·02", "S·03:T"),
+        ("S·03",),
+    )
+    # The contract is unchanged: it still waits on nothing.
+    assert projection.edges["S·03:T"] == ()
+    assert projection.edges["S·03"] == ("S·02", "S·03:T")
     assert projection.schedule.unschedulable == ()
 
 
@@ -240,12 +267,16 @@ def test_a_shared_fixture_fans_out_and_merges_nothing():
     by_entry = projection.unit_of()
     a = by_entry[parse("S·01")]
     b = by_entry[parse("S·02")]
-    shared = by_entry[parse("T·01")]
 
     assert a != b, "one test module must not merge two implementation units"
-    assert by_entry[parse("T·02")] == shared
-    assert projection.edges[a] == (shared,)
-    assert projection.edges[b] == (shared,)
+    # The fixture lands in BOTH test units, anchored to the spec entry each
+    # scenario judges. It is a member of two write sets rather than a bridge
+    # between them, which is what stops it gluing anything together.
+    assert by_entry[parse("T·01")] == "S·01:T"
+    assert by_entry[parse("T·02")] == "S·02:T"
+    assert projection.edges[a] == ("S·01:T",)
+    assert projection.edges[b] == ("S·02:T",)
+    assert projection.overlap["S·01:T"] == ("S·02:T",)
 
 
 def test_a_test_unit_nothing_follows_is_reported():

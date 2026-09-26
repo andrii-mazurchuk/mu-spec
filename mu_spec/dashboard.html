@@ -180,7 +180,7 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .unitchip.multi{border-left-color:var(--warn)}
 .unitchip.multi em:last-child{color:var(--warn)}
 /* Files that depend on each other and so cannot be built separately. */
-.unitchip.cyc{border-style:dashed}
+
 .wwidth{align-self:center;background:var(--panel-3);border-radius:99px;padding:0 7px;
   font-size:10.5px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
 .earlynote{border-left:3px solid var(--warn);background:var(--warn-bg);border-radius:0 6px 6px 0;
@@ -1816,8 +1816,7 @@ function unitPanel(e){
   const label=k=>((byKey[k]||{}).tests?"tests: ":"")+(((byKey[k]||{}).modules||[])[0]||k);
   const nMod=(u.modules||[]).length, nEnt=(u.entries||[]).length;
   return `<h3>Work unit</h3>
-    <p><code>${esc(key)}</code>${u.tests?` \u00b7 <b class="tstag">tests</b>`:""}${
-      u.cycle?` \u00b7 <span class="warnish">contracted</span>`:""}</p>
+    <p><code>${esc(key)}</code>${u.tests?` \u00b7 <b class="tstag">tests</b>`:""}</p>
     <p class="muted">${nMod} file${nMod===1?"":"s"} \u00b7 ${nEnt} entr${
       nEnt===1?"y":"ies"} \u00b7 ${
       follows.length?`follows ${follows.length}`:"waits on nothing"}${
@@ -1970,15 +1969,18 @@ function showUnit(key){
   const x = ((src && src.units) || []).find(v => v.key === key);
   if(!x){ resetInspector(); return; }
   const follows = ((src.edges || {})[key] || []);
+  const over = (src.overlap || {});
   const byKey = Object.fromEntries((src.units || []).map(v => [v.key, v]));
   const label = k => (byKey[k] && byKey[k].modules[0]) || k;
   $("detail").innerHTML =
     `<h3>Work unit</h3>
-     <p><code>${esc(key)}</code>${x.cycle ? ` · <span class="warnish">contracted</span>` : ""}</p>
-     <div class="body">One unit is one branch. These files are disjoint from every other unit's, so nothing else can be editing them while this is built — a property of how the grouping is computed, not a rule anyone has to follow.${
-       x.cycle ? `
+     <p><code>${esc(key)}</code></p>
+     <div class="body">One unit is one branch: a single spec entry and the files that implement it.${
+       (over[key]||[]).length ? `
 
-This one is a contraction: its files depend on each other, so they cannot be built separately. That is a fact about the module map, not a defect.` : ""}</div>
+Its files are shared with ${over[key].length} other unit${over[key].length===1?"":"s"}, so those must not be worked at the same time as this one. That is a constraint on when they are handed out, not an order between them — neither waits for the other.` : `
+
+No other unit writes these files, so nothing else can be editing them while this is built.`}</div>
      <div class="edgelist"><span>write set — ${x.modules.length} ${
        x.modules.length === 1 ? "file" : "files"}</span>
        ${x.modules.map(m => `<span class="pill">${esc(m)}</span>`).join("")}</div>
@@ -2083,6 +2085,7 @@ function unitWaves(){
     return w >= 0 && latest > w;
   });
 
+  const over = (source.overlap||{});
   const rows = (source.waves||[]).map(w=>
     `<div class="wave"><div class="lbl">wave ${w.wave}</div><div class="unitbody">`+
     (w.units||[]).map(k=>{
@@ -2092,7 +2095,7 @@ function unitWaves(){
       const follows = ((source.edges||{})[k]||[]).length;
       const waiting = Object.values(source.edges||{})
         .filter(v=>(v||[]).includes(k)).length;
-      return `<button class="unitchip${x.cycle?" cyc":""}${sls.length>1?" multi":""}${
+      return `<button class="unitchip${sls.length>1?" multi":""}${
           x.tests?" tst":""}"
           style="--sl:${hueOf(only||"unsliced")}" data-unit="${esc(k)}"
           aria-pressed="${SEL_UNIT===k}">
@@ -2104,7 +2107,8 @@ function unitWaves(){
           <em>${mods.length} ${mods.length===1?"file":"files"}</em>
           ${follows?`<em>follows ${follows}</em>`:`<em>waits on nothing</em>`}
           ${waiting?`<em>${waiting} waiting on it</em>`:""}
-          ${x.cycle?`<em>cycle</em>`:""}
+          ${(over[k]||[]).length?`<em>shares ${over[k].length} file-set${
+            over[k].length===1?"":"s"}</em>`:""}
           ${sls.length>1?`<em>${sls.length} slices</em>`:""}
         </span></button>`;
     }).join("")+
