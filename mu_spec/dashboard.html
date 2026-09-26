@@ -1228,10 +1228,120 @@ let view={x:40,y:30,k:1};
 let MODE="spine";
 let RD_LAYER="*", RD_FIND="";       // the read view: all layers, no filter
 
+/* =============================================================
+   VIEWPORT CULLING
+
+   `dark` is 783 nodes and 1,204 edges in a scene 39,406 px tall, and 24
+   of those nodes are on screen. Drawing all of it cost a full re-raster
+   of 105 megapixels on every pan frame, and promoting that to a
+   compositor layer is not an option at roughly 1.7 GB.
+
+   So the DOM holds only what is near the viewport. The scene model --
+   positions, edges, bands -- is built whole and stays whole; culling
+   decides what exists as elements, never what exists at all. Two
+   consequences worth stating, because both were bugs waiting to happen:
+
+   - `fit` and `jumpTo` read the scene's extent from SCENE.bbox, not from
+     the DOM, which now describes one screenful.
+   - an edge is kept by the span it COVERS, not by where its ends are. A
+     depends_on arc on `dark` runs twenty thousand pixels and bulges left
+     of its own column; culling on endpoints would make lines vanish
+     across the middle of the screen.
+   ============================================================= */
+const CULL_PAD = 0.6;        // render this much beyond the viewport, each side
+let RENDERED = null;         // the scene-space rect currently in the DOM
+
+function visibleRect(pad){
+  const c=$("canvas").getBoundingClientRect();
+  const w=c.width/view.k, h=c.height/view.k;
+  const x0=-view.x/view.k, y0=-view.y/view.k;
+  return {x0:x0-w*pad, y0:y0-h*pad, x1:x0+w+w*pad, y1:y0+h+h*pad};
+}
+const inside=(r,o)=>o && r.x0>=o.x0 && r.x1<=o.x1 && r.y0>=o.y0 && r.y1<=o.y1;
+const hits=(box,x0,y0,x1,y1)=>x1>=box.x0 && x0<=box.x1 && y1>=box.y0 && y0<=box.y1;
+
+function renderLive(force){
+  const gl=$("live");
+  if(!SCENE || !gl) return;
+  // Nothing to do until the reader pans past what was drawn for them.
+  if(!force && inside(visibleRect(0), RENDERED)) return;
+  const box=visibleRect(CULL_PAD);
+  const frag=document.createDocumentFragment();
+
+  for(const e of SCENE.vEdges){
+    const a=SCENE.pos.get(e.from), b=SCENE.pos.get(e.to);
+    if(!a||!b) continue;
+    if(!hits(box, Math.min(a.x+NODE_W,b.x), Math.min(a.y,b.y),
+                  Math.max(a.x+NODE_W,b.x), Math.max(a.y,b.y))) continue;
+    frag.appendChild(svgEl("path",{class:"edge",d:vPath(a,b),
+      "data-from":e.from,"data-to":e.to,"data-kind":"v"}));
+  }
+  for(const e of SCENE.hEdges){
+    const a=SCENE.pos.get(e.from), b=SCENE.pos.get(e.to);
+    if(!a||!b) continue;
+    // The control points sit left of the source column by the lane offset,
+    // so the drawn curve is wider than the two endpoints suggest.
+    const gx=a.x-30-e.lane*17;
+    if(!hits(box, Math.min(gx,a.x,b.x), Math.min(a.y,b.y),
+                  Math.max(a.x,b.x), Math.max(a.y,b.y))) continue;
+    frag.appendChild(svgEl("path",{class:"edge "+e.kind,d:hPath(a,b,e.lane),
+      "data-from":e.from,"data-to":e.to,"data-kind":e.kind}));
+  }
+
+  for(const [id,p] of SCENE.pos){
+    if(!hits(box, p.x, p.y-NODE_H/2, p.x+NODE_W, p.y+NODE_H/2)) continue;
+    frag.appendChild(nodeEl(id,p));
+  }
+
+  gl.replaceChildren(frag);
+  RENDERED=box;
+  // Every node is new, so the classes carrying selection and slice focus
+  // have to go back on. Same reason a structural redraw repaints.
+  repaint();
+}
+
+function nodeEl(id,p){
+  const e=SCENE.node.get(id), hue=hueOf(e.slice);
+  const cls=["node"];
+  if(e.module) cls.push("mod");
+  if(e.ghost) cls.push("ghost");
+  if(e.test) cls.push("tst");
+  if(isUnbuilt(e)) cls.push("unbuilt");
+  if(!e.module && !e.ghost && e.layer===LIX.S && isUntested(e.id)) cls.push("untested");
+  const n=svgEl("g",{class:cls.join(" "),
+    transform:`translate(${p.x} ${p.y-NODE_H/2})`,
+    "data-id":id,"data-real":realOf(id),"data-slice":e.slice,
+    "data-unit":unitOf(id)||"",style:`--sl:${hue}`,tabindex:"0"});
+  n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
+  n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
+  const label = e.module ? short(e.id) : realOf(e.id);
+  const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=clip(label,24);
+  const s=svgEl("text",{class:"sl",x:12+Math.min(label.length,24)*7.2+8,y:17});
+  s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14)+(isXC(e.slice)?" ✳":"");
+  const t=svgEl("text",{class:"t",x:12,y:34});
+  const note = e.ghost ? "judged below"
+    : e.module ? "implements "+e.derives.join(", ")
+    : e.title;
+  t.textContent=clip(note,30);
+  const tip=svgEl("title");
+  tip.textContent = e.ghost ? realOf(e.id)+" — "+e.title
+    : e.module ? e.id : e.title;
+  n.append(i,s,t,tip);
+  return n;
+}
+
 function drawSpine(){
   UNITX=unitIndex();
   SCENE=buildScene();
   const g=$("scene"); g.innerHTML="";
+  /* Chrome is the handful of elements that span the whole scene -- column
+     heads, the band rule, the slice bands. They are few and they are the
+     backdrop, so they are drawn once and never culled. Everything that
+     scales with the corpus lives in `live` and is rebuilt as the viewport
+     moves. */
+  const gc=svgEl("g",{id:"chrome"}), gl=svgEl("g",{id:"live"});
+  g.append(gc,gl);
+  RENDERED=null;
 
   $("empty").classList.toggle("hide", STATE.entries.length>0);
   if(!STATE.entries.length){
@@ -1250,8 +1360,8 @@ function drawSpine(){
   // until scenarios exist.
   const head=(i,label,top)=>{
     const t=svgEl("text",{class:"colhead",x:COL_X(i),y:top-26}); t.textContent=label;
-    g.appendChild(t);
-    g.appendChild(svgEl("line",{class:"colrule",
+    gc.appendChild(t);
+    gc.appendChild(svgEl("line",{class:"colrule",
       x1:COL_X(i),y1:top-18,x2:COL_X(i)+NODE_W,y2:top-18}));
   };
   const inBand=(i,band)=>[...SCENE.pos].some(([id,q])=>q.col===i&&q.band===band);
@@ -1262,11 +1372,11 @@ function drawSpine(){
     /* The band is a second ROW, not a continuation of the columns above.
        A rule across the full width says so before any label does. */
     const left=COL_X(LIX.S)-40;
-    g.appendChild(svgEl("line",{class:"bandrule",
+    gc.appendChild(svgEl("line",{class:"bandrule",
       x1:left, y1:top-70, x2:SCENE.width+40, y2:top-70}));
     const cap=svgEl("text",{class:"bandcap",x:left,y:top-80});
     cap.textContent="VERIFICATION — how these contracts can be caught failing";
-    g.appendChild(cap);
+    gc.appendChild(cap);
     const NAMES={[LIX.S]:"Spec (the entries judged)",[LIX.T]:"Tests",
                  [MODULE_LAYER]:"Test files"};
     LAYERS.forEach((L,i)=>{ if(inBand(i,VERIFY)) head(i,NAMES[i]||L[1],top); });
@@ -1274,57 +1384,28 @@ function drawSpine(){
 
   // Bands first, so every edge and node draws over them.
   (SCENE.bands||[]).forEach((b,i)=>{
-    g.appendChild(svgEl("rect",{class:"sliceband"+(i%2?" alt":""),
+    gc.appendChild(svgEl("rect",{class:"sliceband"+(i%2?" alt":""),
       x:COL_X(b.col)-10, y:b.top, width:NODE_W+20, height:b.height, rx:6,
       style:`--sl:${hueOf(b.slice)}`}));
     if(b.slice!=="unsliced"){
       const t=svgEl("text",{class:"slicetag",x:COL_X(b.col)-8,y:b.top-4,
         style:`--sl:${hueOf(b.slice)}`});
       t.textContent=b.slice.toUpperCase();
-      g.appendChild(t);
+      gc.appendChild(t);
     }
   });
 
-  for(const e of SCENE.vEdges){
-    const a=SCENE.pos.get(e.from),b=SCENE.pos.get(e.to);
-    g.appendChild(svgEl("path",{class:"edge",d:vPath(a,b),
-      "data-from":e.from,"data-to":e.to,"data-kind":"v"}));
+  /* The scene's true extent, kept because `fit` and `jumpTo` used to read
+     it off the DOM -- which now holds only what is on screen. */
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  for(const [,p] of SCENE.pos){
+    x0=Math.min(x0,p.x); x1=Math.max(x1,p.x+NODE_W);
+    y0=Math.min(y0,p.y-NODE_H/2); y1=Math.max(y1,p.y+NODE_H/2);
   }
-  for(const e of SCENE.hEdges){
-    const a=SCENE.pos.get(e.from),b=SCENE.pos.get(e.to);
-    g.appendChild(svgEl("path",{class:"edge "+e.kind,d:hPath(a,b,e.lane),
-      "data-from":e.from,"data-to":e.to,"data-kind":e.kind}));
-  }
+  SCENE.bbox = x0===Infinity ? {x:0,y:0,width:0,height:0}
+    : {x:x0-40, y:y0-100, width:(x1-x0)+80, height:(y1-y0)+140};
 
-  for(const [id,p] of SCENE.pos){
-    const e=SCENE.node.get(id), hue=hueOf(e.slice);
-    const cls=["node"];
-    if(e.module) cls.push("mod");
-    if(e.ghost) cls.push("ghost");
-    if(e.test) cls.push("tst");
-    if(isUnbuilt(e)) cls.push("unbuilt");
-    if(!e.module && !e.ghost && e.layer===LIX.S && isUntested(e.id)) cls.push("untested");
-    const n=svgEl("g",{class:cls.join(" "),
-      transform:`translate(${p.x} ${p.y-NODE_H/2})`,
-      "data-id":id,"data-real":realOf(id),"data-slice":e.slice,
-      "data-unit":unitOf(id)||"",style:`--sl:${hue}`,tabindex:"0"});
-    n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
-    n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
-    const label = e.module ? short(e.id) : realOf(e.id);
-    const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=clip(label,24);
-    const s=svgEl("text",{class:"sl",x:12+Math.min(label.length,24)*7.2+8,y:17});
-    s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14)+(isXC(e.slice)?" ✳":"");
-    const t=svgEl("text",{class:"t",x:12,y:34});
-    const note = e.ghost ? "judged below"
-      : e.module ? "implements "+e.derives.join(", ")
-      : e.title;
-    t.textContent=clip(note,30);
-    const tip=svgEl("title");
-    tip.textContent = e.ghost ? realOf(e.id)+" — "+e.title
-      : e.module ? e.id : e.title;
-    n.append(i,s,t,tip);
-    g.appendChild(n);
-  }
+  renderLive(true);
 
   $("k-xing").textContent=SCENE.crossings;
   $("n-h").textContent=SCENE.hEdges.filter(e=>e.kind==="h").length;
@@ -1725,6 +1806,9 @@ function markRead(){
 function applyView(){
   $("scene").setAttribute("transform",`translate(${view.x} ${view.y}) scale(${view.k})`);
   $("svg").classList.toggle("far",view.k<0.72);   // level of detail
+  // Cheap when the reader is still inside what was drawn, which is most
+  // frames: one rect comparison and nothing else.
+  renderLive(false);
 }
 function fitTo(box){
   const c=$("canvas").getBoundingClientRect();
@@ -1735,12 +1819,21 @@ function fitTo(box){
   const k=Math.max(0.55,Math.min(1.3,
     Math.min((c.width-90)/box.width,(c.height-110)/box.height)));
   view.k=k;
-  view.x=(c.width-box.width*k)/2-box.x*k;
-  const drawn=box.height*k;
-  view.y = drawn>c.height-140 ? (c.height-drawn)/2-box.y*k : 64-box.y*k;
+  const drawnW=box.width*k, drawnH=box.height*k;
+  /* Centre what fits; anchor what does not to its own start.
+     Centring a scene taller than the pane opens the reader halfway down
+     it, which on `dark` is the middle of a 39,000 px column of scenarios
+     with the entire corpus off screen -- a first frame that says the
+     project is a wall of tests. The top of the graph is where reading
+     starts, so that is where an over-tall scene opens. */
+  view.x = drawnW > c.width-90   ? 40-box.x*k : (c.width-drawnW)/2-box.x*k;
+  view.y = drawnH > c.height-140 ? 64-box.y*k : (c.height-drawnH)/2-box.y*k;
   applyView();
 }
-const fit=()=>{ try{ fitTo($("scene").getBBox()); }catch(_){} };
+/* From the scene model rather than the DOM: the DOM now holds one
+   screenful, and fitting to that would zoom into whatever happened to be
+   rendered and then cull to it -- a loop that converges on a corner. */
+const fit=()=>{ if(SCENE&&SCENE.bbox&&SCENE.bbox.width) fitTo(SCENE.bbox); };
 
 /* The bands are deliberately far apart -- far enough that fit() hits its
    legibility floor before both are on screen, which is correct and is also
@@ -2699,8 +2792,18 @@ addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
     const k=Math.min(2.4,Math.max(0.22,view.k*(e.deltaY<0?1.12:0.89)));
     view.x=mx-(mx-view.x)*(k/view.k); view.y=my-(my-view.y)*(k/view.k);
     view.k=k; applyView();},{passive:false});
-  $("zin").onclick=()=>{view.k=Math.min(2.4,view.k*1.2);applyView()};
-  $("zout").onclick=()=>{view.k=Math.max(0.22,view.k/1.2);applyView()};
+  /* Anchored on the middle of the pane, the way the wheel already is.
+     Scaling `k` alone moves the focal point, so zooming out repeatedly
+     used to walk the camera off the graph entirely -- survivable when
+     every node was drawn anyway, and an empty screen now. */
+  const zoomTo=k=>{
+    const r=c.getBoundingClientRect(), mx=r.width/2, my=r.height/2;
+    view.x=mx-(mx-view.x)*(k/view.k);
+    view.y=my-(my-view.y)*(k/view.k);
+    view.k=k; applyView();
+  };
+  $("zin").onclick=()=>zoomTo(Math.min(2.4,view.k*1.2));
+  $("zout").onclick=()=>zoomTo(Math.max(0.22,view.k/1.2));
   $("zfit").onclick=()=>{fit()};
 })();
 

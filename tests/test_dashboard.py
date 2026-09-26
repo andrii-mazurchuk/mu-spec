@@ -543,6 +543,47 @@ def test_an_unbuilt_scenario_is_not_styled_as_a_failure():
     assert "stroke-dasharray" in rule
 
 
+def test_the_spine_renders_only_what_is_near_the_viewport():
+    """`dark` is 783 nodes and 1,204 edges in a scene 39,406 px tall, of
+    which 24 nodes are on screen. Drawing all of it re-rasterised 105
+    megapixels per pan frame, and a compositor layer is not available at
+    that size -- so the DOM holds a viewport's worth and the scene model
+    stays whole."""
+    text = page()
+    for marker in ("function renderLive(", "function visibleRect(", "CULL_PAD",
+                   "RENDERED", 'svgEl("g",{id:"live"})'):
+        assert marker in text, f"culling lost {marker!r}"
+    # Moving the view has to be able to pull more in, or panning reaches
+    # the edge of what was drawn and stops showing anything.
+    i = text.index("function applyView(")
+    assert "renderLive(false)" in text[i:i + 400], "the view can move past what is drawn"
+
+
+def test_an_edge_is_culled_by_the_span_it_covers():
+    """The failure this is guarding: a depends_on arc on `dark` runs twenty
+    thousand pixels and its control points sit left of its own column, so
+    the drawn curve is wider than its endpoints. Culled on endpoints alone,
+    lines vanish across the middle of the screen while both ends are off
+    it."""
+    text = page()
+    i = text.index("function renderLive(")
+    body = text[i:i + 2600]
+    # the lane offset that hPath bulges by must be part of the test
+    assert "a.x-30-e.lane*17" in body, "horizontal edges ignore their own bulge"
+    assert "Math.min(gx,a.x,b.x)" in body, "the bulge is not in the culled span"
+
+
+def test_fitting_reads_the_scene_model_not_the_dom():
+    """With culling the DOM describes one screenful. Fitting to its bounding
+    box would zoom to whatever happened to be rendered and then cull to
+    that -- a loop that converges on a corner of the graph."""
+    text = page()
+    i = text.index("const fit=()=>")
+    body = text[i:i + 200]
+    assert "SCENE.bbox" in body
+    assert "getBBox" not in body, "fit still measures the rendered subset"
+
+
 def test_the_spine_does_not_render_work_units():
     """Two renderings of one fact drift apart, which is the failure this
     design refuses everywhere else. A work unit is what gets handed out, in
