@@ -22,12 +22,15 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mu_spec import dashboard, docs, service
+from mu_spec import dashboard, docs, lifecycle as lc, service
 from mu_spec.service import ServiceError
-from mu_spec.inbox import Inbox, InboxError
+from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES
+from mu_spec.inbox import Inbox, InboxError, TYPES
+from mu_spec.issues import KINDS as ISSUE_KINDS, STATUSES as ISSUE_STATUSES
 from mu_spec.issues import IssueError, IssueLog
 from mu_spec.lifecycle import Lifecycle
 from mu_spec.shipping import ship
+from mu_spec.storage import SLICE_TYPES
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 
 UNIT_NAME = "mu-spec"
@@ -47,10 +50,40 @@ def _tools() -> list[dict[str, Any]]:
     every entry needs a description written for a model to read, and /health
     and /tools are deliberately never declared.
 
-    Note what is NOT here: any way to write an entry directly. Everything
-    from outside goes through post_request, and the request's *type* is what
-    decides how deep a change may reach.
+    Note what is NOT here, all of it on purpose:
+
+    - **Any way to write an entry directly.** Everything from outside goes
+      through post_request, and the request's *type* is what decides how deep
+      a change may reach.
+    - **`ratify` and `reject_proposal`.** A partition is not a partition
+      until a human rules on one. Both routes exist and the dashboard calls
+      them; declaring them here would offer a model the ruling itself.
+    - **`cut_units`.** Same reason, and sharper: every gate can be green
+      while the author is still revising, so a session that could cut would
+      be deciding on someone's behalf that they had finished. Re-cutting is
+      free precisely because a person triggers it.
+
+    The routes are not hidden -- a human surface reaches them, and enclosure
+    is a process boundary, not a secret. What is withheld is the *offer*.
+
+    **Closed vocabularies are read from the modules that define them**, never
+    retyped here. A `verification` request type was added and this manifest
+    went on listing five types, so the one tool a caller uses to ask for
+    anything could not tell them scenarios were askable. A second copy of a
+    fact drifts; that is the whole argument this unit makes about its own
+    graph, and the manifest is not exempt from it.
     """
+
+    # Sourced, never retyped. Adding a request type, an issue kind or a
+    # layer now updates this manifest by construction.
+    request_types = tuple(TYPES)
+    layers = list(ALL_LAYERS)
+
+    def enum(values, **extra):
+        """A string property with its permitted values attached. Prose alone
+        is not enough: a caller building a call from the schema has nothing
+        to constrain it, and the value it invents fails at the door."""
+        return {"type": "string", "enum": list(values), **extra}
 
     def tool(name, desc, method, path, props, required=()):
         return {
@@ -71,18 +104,19 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "post_request",
             "The only way to ask this unit for a change. `type` is one of: "
-            "initiate (start a project from a raw idea), feature (something "
-            "the product does not do yet), correction (something is wrong), "
-            "comment (an observation attached to part of the design), "
-            "question (needs an answer, not a change). You never name a layer "
+            + "; ".join(f"{t.name} ({t.description.split('.')[0].lower()})"
+                        for t in TYPES.values())
+            + ". You never name a layer "
             "or write an entry -- the type decides how deep the change may "
             "reach, and an agent decides what actually changes. `targets` is "
             "optional and usually omitted: you are not expected to know how "
-            "the design is laid out.",
+            "the design is laid out. `title` is the ask in one line and is "
+            "required; `body` carries the detail; `origin` names who is "
+            "asking, and is recorded as worded.",
             "POST",
             "/inbox",
             {
-                "type": s,
+                "type": enum(request_types),
                 "project": s,
                 "title": s,
                 "body": s,
@@ -93,12 +127,12 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "list_requests",
-            "The request queue. Filter by status (pending/accepted/rejected), "
-            "project, type, or target. This is what the processing agent "
-            "reads to find work.",
+            "The request queue. Filter by status, project, type, or "
+            "target. This is what the processing agent reads to find work.",
             "GET",
             "/inbox",
-            {"status": s, "project": s, "type": s, "target": s},
+            {"status": enum(("pending", "accepted", "rejected")),
+             "project": s, "type": enum(request_types), "target": s},
         ),
         tool(
             "get_request",
@@ -111,15 +145,21 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "resolve_request",
             "Close a request: accepted (with what it produced) or rejected "
-            "(with why). Leaving it pending is what keeps the queue honest.",
+            "(with why, in `note`). Leaving it pending keeps the queue "
+            "honest. "
+            "`produced` is the identifiers this request created, which is "
+            "what later lets a correction be traced to the request it "
+            "served.",
             "POST",
             "/inbox/{mid}/resolve",
-            {"mid": s, "status": s, "note": s, "produced": strings},
+            {"mid": s, "status": enum(("accepted", "rejected")),
+             "note": s, "produced": strings},
             ("mid",),
         ),
         tool(
             "create_project",
-            "Create an empty project. Requires an `initiate` request to cite. "
+            "Create an empty project. Cite the `initiate` request that "
+            "authorised it in `in_response_to`. "
             "The intent entries themselves arrive as a normal amendment, so "
             "they are derived and interviewed for rather than lifted verbatim "
             "from whatever the requester typed.",
@@ -131,7 +171,8 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
-            "path. Must cite the request it serves. Each entry needs a "
+            "path. Cite the request it serves in `in_response_to`. Each "
+            "entry needs a "
             "'layer' and a 'title', and may carry 'body', 'purpose', "
             "'supersedes', and "
             "three kinds of edge: 'derives_from' (identifiers exactly one "
@@ -185,7 +226,7 @@ def _tools() -> list[dict[str, Any]]:
             "cross-cutting after the fact.",
             "POST",
             "/projects/{project}/slices/{slice}/type",
-            {"project": s, "slice": s, "type": s},
+            {"project": s, "slice": s, "type": enum(SLICE_TYPES)},
             ("project", "slice", "type"),
         ),
         tool(
@@ -201,7 +242,10 @@ def _tools() -> list[dict[str, Any]]:
             "reference still resolves. Refused if the split would break the "
             "slice structure, which it can: two halves that referred to each "
             "other inside one slice become two slices referring to each "
-            "other, and that may be a cycle.",
+            "other, and that may be a cycle. `into` names the new slice and "
+            "`members` the identifiers moving to it; put the reason in "
+            "`note`, which is the only record of why a permanent cut was "
+            "made where it was.",
             "POST",
             "/projects/{project}/slices/{slice}/split",
             {
@@ -225,13 +269,15 @@ def _tools() -> list[dict[str, Any]]:
             "consumers are invalidated). That call is a judgement about "
             "meaning, so you make it and this unit records it. Put the "
             "claim on one line -- the router reads headers only -- and put "
-            "what you assumed in `assumption`.",
+            "what you assumed in `assumption`. `raised_by` names the slice "
+            "or session raising it; `round` is the reconciliation round, "
+            "omitted unless you are re-raising inside one.",
             "POST",
             "/projects/{project}/issues",
             {
                 "project": s,
                 "target": s,
-                "kind": s,
+                "kind": enum(ISSUE_KINDS),
                 "claim": s,
                 "assumption": s,
                 "raised_by": s,
@@ -245,16 +291,19 @@ def _tools() -> list[dict[str, Any]]:
             "(open/resolved/escalated) or by the slice an issue targets.",
             "GET",
             "/projects/{project}/issues",
-            {"project": s, "status": s, "slice": s},
+            {"project": s, "status": enum(ISSUE_STATUSES), "slice": s},
             ("project",),
         ),
         tool(
             "close_issue",
             "Close an issue: resolved (with what it produced) or escalated "
-            "(it needs a human).",
+            "(it needs a human). `note` is what the person reading an "
+            "escalation has to go on.",
             "POST",
             "/projects/{project}/issues/{iid}/close",
-            {"project": s, "iid": s, "status": s, "note": s, "produced": strings},
+            {"project": s, "iid": s,
+             "status": enum(("resolved", "escalated")),
+             "note": s, "produced": strings},
             ("project", "iid"),
         ),
         tool(
@@ -348,7 +397,8 @@ def _tools() -> list[dict[str, Any]]:
             "Analysis, not operation -- never load this during ordinary work.",
             "GET",
             "/projects/{project}/events",
-            {"project": s, "kind": s, "since": {"type": "integer"}},
+            {"project": s, "kind": enum(lc.KINDS),
+             "since": {"type": "integer"}},
             ("project",),
         ),
         tool(
@@ -360,8 +410,13 @@ def _tools() -> list[dict[str, Any]]:
             "cross-cutting entries. For reviewing or authoring a column, "
             "not for building it -- a slice's files are not disjoint from "
             "other slices' files, so a slice is not a safe branch scope. "
-            "Execution scope is a work unit: see get_work_unit. Refused if "
-            "the graph is unsound.",
+            "Execution scope is a work unit: see get_work_unit. Also "
+            "carries `scenarios` -- the test entries already written against "
+            "this column's contracts, spine only, each naming what it judges "
+            "and whether a file implements it yet -- and `untested`, the "
+            "contracts with no scenario at all. Read both before writing "
+            "scenarios: the first is what not to repeat, the second is the "
+            "work list. Refused if the graph is unsound.",
             "GET",
             "/projects/{project}/slice-context",
             {"project": s, "slice": s},
@@ -430,7 +485,9 @@ def _tools() -> list[dict[str, Any]]:
             "is what puts them in different work units and so on different "
             "branches, and a file claiming both collapses that separation. "
             "A module claiming an architecture entry is refused outright -- "
-            "it has skipped the layer that says how.",
+            "it has skipped the layer that says how. `path` is the file, "
+            "repository-relative, and is what a work unit hands out as its "
+            "write set.",
             "POST",
             "/projects/{project}/modules",
             {"project": s, "path": s, "implements": strings},
@@ -487,23 +544,27 @@ def _tools() -> list[dict[str, Any]]:
             "review_layer",
             "Read one layer with each entry's justification chain, what "
             "serves it, and the comments attached to it -- so a reviewer sees "
-            "the decision and what it claims to serve in one place. 'T' reads "
-            "the scenarios, which is where the second source of truth gets "
-            "reviewed.",
+            "the decision and what it claims to serve in one place. `layer` "
+            "is one of " + ", ".join(f"{l} ({LAYER_NAMES[l]})" for l in layers)
+            + ". T reads the scenarios, which is where the second source of "
+            "truth gets reviewed.",
             "GET",
             "/projects/{project}/review",
-            {"project": s, "layer": s, "slice": s},
+            {"project": s, "layer": enum(layers), "slice": s},
             ("project", "layer"),
         ),
         tool(
             "get_spine",
             "Every entry's identifier, one-line title and all three edge "
-            "lists, with "
-            "no bodies. Load this first, decide from the structure what you "
-            "need, then fetch those bodies by identifier.",
+            "lists, with no bodies. Load this first, decide from the "
+            "structure what you need, then fetch those bodies by identifier. "
+            "`layer` is one of " + ", ".join(
+                f"{l} ({LAYER_NAMES[l]})" for l in layers)
+            + "; omit it for the whole graph. Filtering to T is how you see "
+            "which scenarios already exist before writing more.",
             "GET",
             "/projects/{project}/spine",
-            {"project": s, "layer": s},
+            {"project": s, "layer": enum(layers)},
             ("project",),
         ),
         tool(

@@ -55,6 +55,7 @@ deep the change it authorises may reach:
 | `initiate` | intent, and creates the project |
 | `feature` | intent |
 | `correction` | intent or behaviour |
+| `verification` | test |
 | `comment` | nothing |
 | `question` | nothing |
 
@@ -126,6 +127,124 @@ holding place until a partition is ratified.
 **An entry deeper than the citing request may originate at.** Fixing
 something low while the layers above still say the old thing is exactly how
 the artifacts start lying.
+
+
+---
+
+## Writing a scenario
+
+A **scenario** is one test entry: one way a contract can be caught failing.
+It derives from exactly one spec entry and from nothing else, carries a
+free-text `purpose`, and says in its body what must be observed.
+
+Ask for them with a `verification` request. One request covers a whole
+drawdown — batch as many scenarios as you like into each amendment, and keep
+citing the same request.
+
+### One scenario, one failure
+
+Not one per contract, and not one per function. As many as there are distinct
+ways the contract can be broken, which is usually several and occasionally
+one.
+
+The test is whether the scenarios could fail *independently*. If two would
+always fail together, they are one scenario written twice. If one could pass
+while the other fails, they are two.
+
+### Write the title as the observation, not the subject
+
+The title is what everyone reads forever, and it should state what must be
+true — so a reader knows what broke from the failure line alone.
+
+> ✅ `An empty query returns everything, not nothing`
+> ✅ `A second capture on the same day does not advance the streak`
+> ❌ `Test the empty query case`
+> ❌ `Streak edge cases`
+
+A title naming a *subject* rather than a *claim* tells you which area broke
+and nothing more, which is the position you were already in.
+
+### The body says what is observed, never how
+
+Enough to write the test from without reading the code, and no more:
+
+> Advance the streak, then advance it again within the same day. The streak
+> is unchanged and no announcement is emitted.
+
+Do not name private functions, module layout, or call order. A scenario that
+breaks when the module is reorganised was testing the implementation, and the
+implementation is not the contract. The scenario must survive a rewrite that
+keeps the behaviour.
+
+### `purpose` is for the human who writes the test
+
+Free text, and nothing mechanical reads it. Use it for the thing a careful
+implementer would still get wrong — the reason this scenario is worth its
+line:
+
+> `the boundary the spec is silent about`
+> `the day rule, which is the entire reason the cache exists`
+> `the failure path is the one nobody instruments`
+
+Not a restatement of the title. If `purpose` and the title say the same
+thing, delete `purpose`.
+
+### One parent, and choosing it
+
+`derives_from` takes exactly one spec entry. That is not a limitation to work
+around — it is what lets a failure name the contract it falsifies, and what
+keeps the ordering rule from dragging unrelated work behind a scenario that
+never judged it.
+
+When a scenario seems to need two, it is testing an interaction. **Anchor it
+to the provider** — the entry that owns the interface — the same way a
+contract test does. If that still feels wrong, the interaction itself is
+probably undocumented, and that is an issue against the spec, not a scenario.
+
+### A scenario carries no horizontal edges
+
+No `depends_on`, no `emits_into`, and both are refused. One scenario needs
+nothing from another. This is also what makes a work unit holding test files
+a root: with no outbound edge to have, it cannot sit in a cycle, and the
+ordering that puts implementation after tests can never deadlock.
+
+### What is not a scenario
+
+Acceptance, performance and system-level tests are out of scope, and the
+reason matters more than the rule: **code derives from the documentation, so
+a test derived from that same documentation is wrong in exactly the way the
+documentation is wrong.** What such a test actually catches is something the
+spec was *silent* about — and a silence is a gap in the documentation. Raise
+an issue against the entry. Do not encode it as a scenario that will fail
+forever and teach everyone to ignore a red suite.
+
+Those tests remain real files that real projects need. They simply live
+outside this graph, like a README does.
+
+### Then declare the file
+
+```
+POST /projects/{project}/modules
+{"path": "tests/test_rates.py", "implements": ["T·04", "T·05"]}
+```
+
+**A module implements spec entries or test entries, never both.** Refused
+otherwise, and the refusal is load-bearing: a test file and the file it
+judges share no entry, which is what puts them in different work units and so
+on different branches. One mixed file collapses that, and "the implementer
+may read the tests and never write them" stops being structural.
+
+A scenario with no file yet is fine and expected. It is in no work unit, so
+it orders nothing and is **not yet expected to pass**.
+
+### What writing them first buys
+
+The unit implementing a contract **follows** the unit holding the scenarios
+that judge it. Documentation first, tests second, code last — ordered by the
+graph rather than asked for in a prompt.
+
+Read `GET /projects/{project}/slice-context?slice=…` before writing: its
+`scenarios` is what is already covered, and its `untested` is the work list.
 
 ---
 

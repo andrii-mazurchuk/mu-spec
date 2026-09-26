@@ -2875,3 +2875,88 @@ def test_an_observation_still_creates_nothing(store, prompts):
     status, payload = _scenario(store, prompts, msg["message_id"])
     assert status == 400
     assert "never creates entries" in payload["error"]
+
+
+# -- the tool manifest -------------------------------------------------------
+
+
+def _tools(store, prompts):
+    _, payload = call(store, prompts, "GET", "/tools")
+    return {t["name"]: t for t in payload["tools"]}
+
+
+def _props(tool):
+    return (tool.get("input_schema") or {}).get("properties", {})
+
+
+def test_every_closed_vocabulary_reaches_the_manifest(store, prompts):
+    """The bug this exists for: a `verification` request type was added and
+    the manifest went on listing five types, so the one tool a caller uses to
+    ask for anything could not tell them scenarios were askable. A retyped
+    vocabulary drifts from the one that decides -- which is the argument this
+    unit makes about its own graph, and the manifest is not exempt.
+
+    Sourced from the defining module, so adding a value updates the manifest
+    by construction and this test only fails if someone re-hardcodes one.
+    """
+    from mu_spec.identifiers import ALL_LAYERS
+    from mu_spec.inbox import TYPES
+    from mu_spec.issues import KINDS, STATUSES
+    from mu_spec.lifecycle import KINDS as EVENT_KINDS
+    from mu_spec.storage import SLICE_TYPES
+
+    t = _tools(store, prompts)
+    expected = {
+        ("post_request", "type"): sorted(TYPES),
+        ("list_requests", "type"): sorted(TYPES),
+        ("classify_slice", "type"): sorted(SLICE_TYPES),
+        ("raise_issue", "kind"): sorted(KINDS),
+        ("list_issues", "status"): sorted(STATUSES),
+        ("list_events", "kind"): sorted(EVENT_KINDS),
+        ("get_spine", "layer"): sorted(ALL_LAYERS),
+        ("review_layer", "layer"): sorted(ALL_LAYERS),
+    }
+    for (name, prop), values in expected.items():
+        schema = _props(t[name]).get(prop, {})
+        assert sorted(schema.get("enum", [])) == values, f"{name}.{prop}"
+
+
+def test_the_request_types_are_described_not_just_enumerated(store, prompts):
+    """An enum constrains the call; it does not say which value to pick. The
+    prose is generated from the same source, so a new type arrives in both."""
+    from mu_spec.inbox import TYPES
+
+    desc = _tools(store, prompts)["post_request"]["description"]
+    for name in TYPES:
+        assert name in desc, name
+
+
+def test_a_human_ruling_is_never_offered_as_a_tool(store, prompts):
+    """Ratifying a slicing, rejecting one, and cutting work units are all
+    decisions a person makes. The routes exist and a human surface calls
+    them; declaring them here would offer a model the ruling itself. Every
+    gate can be green while the author is still revising, so a session that
+    could cut would be deciding on someone's behalf that they had finished.
+    """
+    names = set(_tools(store, prompts))
+    for withheld in ("ratify", "reject_proposal", "cut_units"):
+        assert withheld not in names
+
+    # ...and they are still reachable, because enclosure is a process
+    # boundary rather than a secret.
+    mid = seed(store, prompts)
+    status, _ = call(store, prompts, "POST", "/projects/m/units/cut", {})
+    assert status in (200, 409), "the route must exist"
+    assert mid
+
+
+def test_no_tool_leaves_a_writing_parameter_undescribed(store, prompts):
+    """A caller builds the call from the description plus the schema. A
+    parameter that appears in neither is one it has to invent."""
+    for tool in _tools(store, prompts).values():
+        desc = tool["description"]
+        for prop, schema in _props(tool).items():
+            if prop in ("project", "slice", "mid", "iid", "id", "entry", "name"):
+                continue            # path substitutions, named by the path
+            documented = prop in desc or "enum" in schema
+            assert documented, f"{tool['name']}.{prop} is undocumented"

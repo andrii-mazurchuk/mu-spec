@@ -921,6 +921,19 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
       only, whether or not this slice depends on one. Their behaviour ranges
       over other slices rather than naming a subject of its own, so the
       dependency is real, universal, and never worth declaring n times.
+    - **scenarios** -- the test entries already written against this slice's
+      contracts, spine only, with what each judges. Spine only because this
+      answers "what is already covered", not "what does that test say" --
+      a body per scenario would double the payload to tell the reader
+      something they can fetch by identifier when they need it.
+
+      Added because without it this tool was actively misleading for the job
+      it is named after. A session authoring scenarios for a column read the
+      contracts, saw no sign that half of them were already covered, and
+      wrote a second set. The gap was invisible: nothing in the response
+      said scenarios existed, so there was no prompt to go and look. Entries
+      it holds are the ones a scenario derives FROM, so the coverage of that
+      column is exactly the fact this response was silent about.
 
     Refused when the graph is *unsound* -- when it contains an orphan.
     Reading a column assembled from a broken chain produces a reviewer who
@@ -972,6 +985,26 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
                 view["slice"] = dep
                 read_set.append(view)
 
+    # Which contracts in this column already have a scenario, and which do
+    # not. Both halves matter to an author: one says do not repeat, the
+    # other is the work list.
+    scenarios = []
+    untested = []
+    for entry in write_set:
+        judged = [
+            c for c in graph.children(entry.id) if c.layer == TEST
+        ]
+        if not judged:
+            untested.append(str(entry.id))
+        for ident in judged:
+            found = graph.get(ident)
+            if found is None:
+                continue
+            view = _entry_view(found, full=False)
+            view["judges"] = str(entry.id)
+            view["implemented"] = bool(manifest.implementers(ident))
+            scenarios.append(view)
+
     cross = []
     for name in manifest.cross_cutting():
         if name == slice_name:
@@ -991,6 +1024,8 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
         "justification": justification,
         "read_set": read_set,
         "cross_cutting": cross,
+        "scenarios": sorted(scenarios, key=lambda v: v["id"]),
+        "untested": untested,
     }
 
 
