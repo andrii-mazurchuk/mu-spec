@@ -311,8 +311,16 @@ def test_the_fork_can_be_drawn_two_ways():
     text = page()
     assert 'let LAYOUT="band";' in text
     assert 'const inline = LAYOUT === "inline";' in text
-    # the data is identical in both -- this is a drawing decision only
-    assert "const corpus = inline ? STATE.entries" in text
+    # The data is identical in both -- this is a drawing decision only, so
+    # both branches read the same STATE and neither filters by layer.
+    i = text.index("function buildScene(")
+    body = text[i:i + 900]
+    assert "? (withVerify ? STATE.entries" in body
+    assert "STATE.entries.filter(e => e.band !== VERIFY)" in body
+    # Whether the verification band is shown is a separate axis from which
+    # of the two layouts is drawn; conflating them would make the toggle a
+    # third layout mode.
+    assert "const withVerify" in body
 
 
 def test_only_the_spine_writes_the_crossings_kpi():
