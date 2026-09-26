@@ -495,11 +495,22 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "list_modules",
-            "Every module backlink, plus three reports: `unimplemented`, the "
-            "spec entries no module claims; `unimplemented_tests`, the "
-            "scenarios written but not yet built, which are not yet expected "
-            "to pass and order nothing; and `untested`, the spec entries no "
-            "scenario judges at all.",
+            "Every module backlink, and every relation computable from "
+            "it. Each row carries `slices` -- which slices the file reaches, "
+            "most-represented first, because a file may serve more than one "
+            "and a single value would be an assertion rather than a fact -- "
+            "and one link direction: `covers` on a test file (the "
+            "implementation files holding the contracts its tests judge) or "
+            "`covered_by` on an implementation file (the test files judging "
+            "its contracts). Both are computed from the graph and stored "
+            "nowhere, so they cannot fall out of step with `implements`. "
+            "Three reports: `untested`, contracts nothing says how to "
+            "falsify; `unimplemented_tests`, tests written but not yet "
+            "built, which order nothing and are not yet expected to pass; "
+            "and `uncovered_tests`, test files judging a contract nobody has "
+            "built. For spec entries no module implements, read "
+            "`unimplemented` from get_units -- an entry nothing implements "
+            "is exactly an entry in no work unit.",
             "GET",
             "/projects/{project}/modules",
             {"project": s},

@@ -201,6 +201,110 @@ class _Find:
         return out
 
 
+def entry_slices(manifest: Manifest, graph: Graph) -> dict[Identifier, str]:
+    """Which slice each live entry belongs to.
+
+    A test entry has no membership of its own and never will -- its column is
+    the column of the spec entry it judges, resolved here rather than stored.
+    A written copy would be the one that goes stale the first time a slice
+    splits, which is the argument this unit makes about every other projected
+    fact.
+    """
+    out: dict[Identifier, str] = {}
+    for name, sl in manifest.slices.items():
+        for identifier in sl.members:
+            out[identifier] = name
+    for entry in graph.entries():
+        if entry.id.layer != TEST:
+            continue
+        for parent in entry.derives_from:
+            if parent in out:
+                out[entry.id] = out[parent]
+                break
+    return out
+
+
+# =====================================================================
+# THE MODULE MAP'S OWN PROJECTIONS
+#
+# Every one of these is computed from the module map and the graph, and
+# none of them is stored. That is the whole point: a relation written down
+# twice has to be kept in step by hand, and the copy someone maintains is
+# the one that goes stale. Compute both directions and there is nothing to
+# keep in step -- change a module's `implements` and every view of it moves
+# with it, because there was never a second thing to update.
+# =====================================================================
+
+
+def module_slices(
+    manifest: Manifest, graph: Graph, path: str, slices: dict | None = None
+) -> tuple[str, ...]:
+    """Which slices a module reaches, **most-represented first**.
+
+    A module may serve more than one, and on real data it does: one file
+    here implements four capture entries and four observability ones. That
+    is not a defect to refuse -- a slice is a partition of ENTRIES, and a
+    file is a many-to-many pointer that was never promised to respect it.
+
+    Ordered by how many of the module's entries come from each slice so a
+    caller needing a single value can take the first without this unit
+    having to assert one slice as fact. Ties break by name and stay ties:
+    the worst straddler in the sample data is a dead four-four, so a
+    plurality rule would not have decided the case it exists to decide.
+    """
+    resolved = slices if slices is not None else entry_slices(manifest, graph)
+    counted: dict[str, int] = {}
+    for identifier in manifest.modules.get(path, ()):  # live-ness is the
+        name = resolved.get(identifier)                # caller's problem
+        if name:
+            counted[name] = counted.get(name, 0) + 1
+    return tuple(
+        name for name, _ in sorted(counted.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+
+
+def _relatives(manifest: Manifest, graph: Graph, path: str, want_tests: bool):
+    """One traversal, walked in either direction.
+
+    A test module's entries are test entries; step up to the contract each
+    judges, then out to the files implementing it. An implementation
+    module's entries are spec entries; step down to the tests judging them,
+    then out to the files implementing those. Same three hops, mirrored.
+    """
+    hop = graph.parents if want_tests else graph.children
+    out: set[str] = set()
+    for identifier in manifest.modules.get(path, ()):
+        for other in hop(identifier):
+            if want_tests and other.layer != SPEC:
+                continue
+            if not want_tests and other.layer != TEST:
+                continue
+            out.update(manifest.implementers(other))
+    out.discard(path)
+    return tuple(sorted(out))
+
+
+def covers(manifest: Manifest, graph: Graph, path: str) -> tuple[str, ...]:
+    """For a TEST module: the implementation files holding the contracts its
+    tests judge.
+
+    A test module covering nothing is judging a contract nobody built. That
+    is worth seeing and is never an error -- tests are written before the
+    code, so it is the ordinary state for as long as that gap lasts.
+    """
+    return _relatives(manifest, graph, path, want_tests=True)
+
+
+def covered_by(manifest: Manifest, graph: Graph, path: str) -> tuple[str, ...]:
+    """For an IMPLEMENTATION module: the test files judging its contracts.
+
+    The direction you actually read before changing a file, and the reason
+    both directions are computed rather than one being stored and inverted
+    by hand.
+    """
+    return _relatives(manifest, graph, path, want_tests=False)
+
+
 def _invert(
     manifest: Manifest, graph: Graph
 ) -> tuple[dict[Identifier, list[str]], dict[Identifier, str], list[str]]:
@@ -226,22 +330,7 @@ def _invert(
         for identifier in live:
             entry_modules.setdefault(identifier, []).append(path)
 
-    entry_slice: dict[Identifier, str] = {}
-    for name, sl in manifest.slices.items():
-        for identifier in sl.members:
-            entry_slice[identifier] = name
-
-    # A test entry has no slice membership and never will -- its column is
-    # its parent spec entry's, so it is resolved here rather than written
-    # down. Stored, it would be the second copy that drifts the first time a
-    # slice splits.
-    for identifier in entry_modules:
-        if identifier.layer != TEST:
-            continue
-        for parent in graph.parents(identifier):
-            if parent in entry_slice:
-                entry_slice[identifier] = entry_slice[parent]
-                break
+    entry_slice = entry_slices(manifest, graph)
 
     for paths in entry_modules.values():
         paths.sort()
@@ -491,6 +580,17 @@ class Cut:
     edges: dict[str, tuple[str, ...]]
     unimplemented: tuple[Identifier, ...] = ()
     stale_modules: tuple[str, ...] = ()
+    # What verification looked like at the moment work went out.
+    #
+    # A cut recorded `unimplemented` and dropped these, so "which contracts
+    # could nothing catch failing when this was handed out" was answerable
+    # only from the live graph -- which has moved on by the time anyone
+    # asks. That is the one question a stored cut exists to answer, and on
+    # the half of it that concerns tests it was silent. Defaulted empty, so
+    # cuts written before this reload as what they were: unsaid, not zero.
+    untested: tuple[Identifier, ...] = ()
+    unimplemented_tests: tuple[Identifier, ...] = ()
+    unfollowed_tests: tuple[str, ...] = ()
 
     def by_key(self) -> dict[str, Unit]:
         return {u.key: u for u in self.units}
@@ -510,6 +610,9 @@ class Cut:
             "unschedulable": list(schedule.unschedulable),
             "unimplemented": [str(i) for i in self.unimplemented],
             "stale_modules": list(self.stale_modules),
+            "untested": [str(i) for i in self.untested],
+            "unimplemented_tests": [str(i) for i in self.unimplemented_tests],
+            "unfollowed_tests": list(self.unfollowed_tests),
         }
 
 
@@ -582,6 +685,11 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
                 },
                 unimplemented=tuple(parse(i) for i in raw.get("unimplemented", ())),
                 stale_modules=tuple(raw.get("stale_modules", ())),
+                untested=tuple(parse(i) for i in raw.get("untested", ())),
+                unimplemented_tests=tuple(
+                    parse(i) for i in raw.get("unimplemented_tests", ())
+                ),
+                unfollowed_tests=tuple(raw.get("unfollowed_tests", ())),
             )
         )
     return tuple(out)
@@ -627,6 +735,11 @@ def append_cut(
         "edges": {k: list(v) for k, v in sorted(projection.edges.items())},
         "unimplemented": [str(i) for i in projection.unimplemented],
         "stale_modules": list(projection.stale_modules),
+        "untested": [str(i) for i in projection.untested],
+        "unimplemented_tests": [
+            str(i) for i in projection.unimplemented_tests
+        ],
+        "unfollowed_tests": list(projection.unfollowed_tests),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -639,6 +752,9 @@ def append_cut(
         edges=projection.edges,
         unimplemented=projection.unimplemented,
         stale_modules=projection.stale_modules,
+        untested=projection.untested,
+        unimplemented_tests=projection.unimplemented_tests,
+        unfollowed_tests=projection.unfollowed_tests,
     )
 
 

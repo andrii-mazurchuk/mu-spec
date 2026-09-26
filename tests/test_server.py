@@ -1491,12 +1491,20 @@ def test_a_module_declares_what_it_implements(store, prompts):
 
 
 def test_spec_entries_nothing_implements_are_listed(store, prompts):
-    """The bottom layer's version of unserved: stated, nothing built."""
+    """The bottom layer's version of unserved: stated, nothing built.
+
+    Asked of the projection rather than the module list. An entry no module
+    implements is exactly an entry in no work unit, so the module list
+    carried a second copy of it under a name -- `unimplemented` -- that had
+    come to mean one of three different things depending on who was reading.
+    """
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "search/index.py", "implements": ["S·01"]})
     _, payload = call(store, prompts, "GET", "/projects/m/modules")
-    assert payload["unimplemented"] == ["S·02"]
+    assert "unimplemented" not in payload
+    _, live = call(store, prompts, "GET", "/projects/m/units")
+    assert live["live"]["unimplemented"] == ["S·02"]
 
 
 def test_a_module_claiming_a_layer_above_spec_is_refused(store, prompts):
@@ -2842,7 +2850,6 @@ def test_the_module_list_reports_both_halves_of_coverage(store, prompts):
     _, payload = call(store, prompts, "GET", "/projects/m/modules")
     assert payload["untested"] == ["S·02", "S·03"]
     assert payload["unimplemented_tests"] == ["T·01"]
-    assert payload["unimplemented"] == ["S·02"]
 
 
 def test_scenarios_can_be_asked_for_on_their_own(store, prompts):

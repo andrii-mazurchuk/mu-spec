@@ -578,7 +578,7 @@ const STATE = {
   project:null, projects:[], entries:[], byId:{},
   slices:{},          // name -> {type, hue, wave, deps, size, cohesion}
   waves:[], gates:null, issues:[], requests:[], modules:[],
-  unimplemented:[], unimplementedTests:[], untested:[],
+  unimplementedTests:[], untested:[], uncoveredTests:[],
   units:null,        // the stored cut, its drift, and the live projection
   locality:null, bodies:{}, live:false,
   proposal:null,        // the pending slicing decision, if any
@@ -675,8 +675,8 @@ async function fetchProject(project){
     /* Three reports that are easy to conflate and have different
        remedies: a contract nobody built, a scenario nobody built, and a
        contract nobody said how to falsify. */
-    unimplemented: modules.unimplemented || [],
     unimplementedTests: modules.unimplemented_tests || [],
+    uncoveredTests: modules.uncovered_tests || [],
     untested: modules.untested || [],
     locality: (insights.change_locality || {}).mean,
     proposal: proposal && proposal.status === "pending" ? proposal : null,
@@ -2316,6 +2316,27 @@ const shortPath = p => {
 
 /* The inspector is the same column the spine uses, so a module opened from
    here reads like an entry opened from there. */
+/* The relation between a test file and the file it judges, in whichever
+   direction this module has one. Computed by the unit from the graph and
+   stored nowhere -- which is why it cannot disagree with `implements`, and
+   why there is no second edge for anyone to forget to update. */
+function link(m){
+  const covers = m.covers, by = m.covered_by;
+  const pills = xs => xs.map(x=>
+    `<button class="pill" data-path="${esc(x)}">${esc(short(x))}</button>`).join("");
+  if(Array.isArray(covers))
+    return covers.length
+      ? `<div class="edgelist"><span>covers — the code these tests judge</span>
+         ${pills(covers)}</div>`
+      : `<p class="muted">Covers nothing: every contract these tests judge is
+         unimplemented. Ordinary while tests run ahead of the code — that is
+         the intended order — and worth a look if it stays that way.</p>`;
+  if(Array.isArray(by) && by.length)
+    return `<div class="edgelist"><span>covered by — tests that judge this</span>
+      ${pills(by)}</div>`;
+  return `<p class="muted">No test file judges this one yet.</p>`;
+}
+
 function showModule(path){
   const m = STATE.modules.find(x => x.path === path);
   if(!m) return;
@@ -2332,9 +2353,12 @@ declares which spec entries it implements, and nothing else about it is stored h
        ${impl.length===1?"entry":"entries"}</span>
        ${impl.map(i=>`<button class="pill" data-go="${esc(i)}">${esc(i)}</button>`).join("")}</div>
      <div class="edgelist"><span>slice${slices.length===1?"":"s"} reached</span>
-       ${slices.map(s=>`<span class="pill">${esc(s)}</span>`).join("") || `<span class="muted">none</span>`}</div>`;
+       ${slices.map(s=>`<span class="pill">${esc(s)}</span>`).join("") || `<span class="muted">none</span>`}</div>
+     ${link(m)}`;
   for(const b of $("detail").querySelectorAll("[data-go]"))
     b.onclick = () => { sel = b.dataset.go; show("spine"); repaint(); inspect(); };
+  for(const b of $("detail").querySelectorAll("[data-path]"))
+    b.onclick = () => showModule(b.dataset.path);
 }
 
 /* =============================================================

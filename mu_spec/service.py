@@ -1434,43 +1434,77 @@ def declare_module(store: ProjectStore, project: str, body: dict) -> dict:
 
 
 def list_modules(store: ProjectStore, project: str) -> dict:
+    """Every module backlink, and every relation that can be computed from
+    it. Nothing here is stored beyond `path -> implements`.
+
+    **`slices` is a list, most-represented first.** It used to be one value,
+    picked as the slice of whichever identifier sorted first, and it was
+    wrong twice over: null on every test module, because a test entry has no
+    membership of its own; and an assertion on any module serving two
+    slices, which real projects have. Ordering by weight lets a caller that
+    needs a single value take the first without this unit having to claim
+    one slice as fact -- and a tie stays a tie, which matters, because the
+    worst straddler in the sample data is a dead four-four.
+
+    **`covers` and `covered_by` are computed in both directions and stored in
+    neither.** The relation already exists in the graph -- a test module's
+    entries name the contracts they judge, and those contracts name the
+    files implementing them -- so writing it down would be a second and a
+    third copy of one fact. The integrity problem that then needs solving
+    (no one-way links, no stale links, update both ends on every change) is
+    not a hazard that storing the relation guards against; it is the cost of
+    having stored it. Computed, a module's `implements` changing moves every
+    view of it at once, because there is no second thing to update.
+
+    **`unimplemented` is gone.** A spec entry with no module is exactly an
+    entry in no work unit, which the projection already reports, and the
+    name had stopped saying which of three different things it meant.
+    """
     manifest = store.load_manifest(project)
     graph = store.load_graph(project)
+    resolved = units.entry_slices(manifest, graph)
+
+    rows = []
+    for path, ids in sorted(manifest.modules.items()):
+        ordered = sorted(ids, key=sort_key)
+        row = {
+            "path": path,
+            "implements": [str(i) for i in ordered],
+            "slices": list(units.module_slices(manifest, graph, path, resolved)),
+        }
+        # Only the direction that means something for this kind of module.
+        # A module implements spec entries or test entries and never both,
+        # so the kind is already readable from `implements` and a `kind`
+        # field would restate it.
+        if ordered and ordered[0].layer == TEST:
+            row["covers"] = list(units.covers(manifest, graph, path))
+        else:
+            row["covered_by"] = list(units.covered_by(manifest, graph, path))
+        rows.append(row)
+
     return {
         "project": project,
-        "modules": [
-            {
-                "path": path,
-                "implements": sorted(str(i) for i in ids),
-                "slice": manifest.slice_of(sorted(ids, key=sort_key)[0]),
-            }
-            for path, ids in sorted(manifest.modules.items())
-        ],
-        # Spec entries no module claims. The bottom layer's version of
-        # "unserved": stated, nothing built.
-        "unimplemented": [
-            str(e.id)
-            for e in graph.entries()
-            if e.id.layer == "S" and not manifest.implementers(e.id)
-        ],
-        # The same question asked of tests: the scenario is written and no
-        # file implements it. Reported separately because the consequence is
-        # different -- an unimplemented spec entry is work not started, an
-        # unimplemented test is a scenario that orders nothing and is not
-        # yet expected to pass.
+        "modules": rows,
+        # A scenario is written and no file implements it. It is in no work
+        # unit, so it orders nothing and is not yet expected to pass.
         "unimplemented_tests": [
             str(e.id)
             for e in graph.entries()
             if e.id.layer == TEST and not manifest.implementers(e.id)
         ],
-        # Spec entries with no scenario at all. Not the same as having no
-        # module: this one says nothing can falsify the contract, whoever
-        # builds it.
+        # A contract nothing says how to falsify. The drawdown work list,
+        # and the one report here with no other home.
         "untested": [
             str(e.id)
             for e in graph.entries()
             if e.id.layer == "S"
             and not any(c.layer == TEST for c in graph.children(e.id))
+        ],
+        # A test file judging a contract nobody built. Ordinary while tests
+        # run ahead of the code -- which is the intended order -- and worth
+        # seeing when it stops being temporary.
+        "uncovered_tests": [
+            r["path"] for r in rows if r.get("covers") == []
         ],
     }
 

@@ -320,3 +320,131 @@ def test_a_project_without_tests_loads_unchanged(tmp_path):
     store.append("p", [Entry(id=ARCH, title="arch")], slice_name="billing")
 
     assert [str(e.id) for e in store.load_graph("p").entries()] == ["A·01"]
+
+
+# -- the module map's projections --------------------------------------------
+
+
+def test_a_module_reaches_its_slices_most_represented_first(tmp_path):
+    """A file may serve more than one slice and real ones do. Ordering by
+    how many of its entries come from each lets a caller needing a single
+    value take the first, without this unit asserting one slice as fact."""
+    from mu_spec.units import module_slices
+
+    manifest = _manifest(
+        {"wide.py": "S·01 S·02 S·03"},
+        slices={"capture": "S·01", "platform": "S·02 S·03"},
+    )
+    graph = _graph(_spec("S·01"), _spec("S·02"), _spec("S·03"))
+    assert module_slices(manifest, graph, "wide.py") == ("platform", "capture")
+
+
+def test_a_tie_between_slices_stays_a_tie(tmp_path):
+    """Breaking by name keeps it deterministic. It does not pretend the
+    plurality decided anything -- the worst straddler in the sample data is
+    a dead four-four, so a winner-takes-all rule would decide nothing in
+    exactly the case it exists for."""
+    from mu_spec.units import module_slices
+
+    manifest = _manifest(
+        {"even.py": "S·01 S·02"},
+        slices={"capture": "S·01", "platform": "S·02"},
+    )
+    graph = _graph(_spec("S·01"), _spec("S·02"))
+    assert module_slices(manifest, graph, "even.py") == ("capture", "platform")
+
+
+def test_a_test_module_reaches_the_slice_of_what_it_judges(tmp_path):
+    """It has no membership of its own, and asking the manifest directly
+    used to answer null -- which is what made the same unit give two
+    different answers to one question."""
+    from mu_spec.units import module_slices
+
+    manifest = _manifest(
+        {"tests/t.py": "T·01"}, slices={"capture": "S·01"}
+    )
+    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    assert module_slices(manifest, graph, "tests/t.py") == ("capture",)
+
+
+def test_the_link_between_test_and_code_is_computed_both_ways():
+    """Stored once it needs an inverse; stored twice it needs integrity
+    enforcement, and the enforcement is the cost of having made the copies
+    rather than a guard against anything. Computed, changing `implements`
+    moves both directions at once because there is no second thing."""
+    from mu_spec.units import covers, covered_by
+
+    manifest = _manifest({"db.py": "S·01", "tests/test_db.py": "T·01"})
+    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+
+    assert covers(manifest, graph, "tests/test_db.py") == ("db.py",)
+    assert covered_by(manifest, graph, "db.py") == ("tests/test_db.py",)
+
+
+def test_a_test_module_covering_nothing_is_visible_not_an_error():
+    """Judging a contract nobody built. Ordinary while tests run ahead of
+    the code -- which is the order this design asks for -- so it is reported
+    and never refused."""
+    from mu_spec.units import covers
+
+    manifest = _manifest({"tests/test_db.py": "T·01"})
+    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    assert covers(manifest, graph, "tests/test_db.py") == ()
+
+
+def test_a_shared_fixture_covers_every_file_it_judges():
+    """The pairing is not one-to-one in this direction either."""
+    from mu_spec.units import covers
+
+    manifest = _manifest(
+        {"a.py": "S·01", "b.py": "S·02",
+         "tests/shared.py": "T·01 T·02"}
+    )
+    graph = _graph(
+        _spec("S·01"), _spec("S·02"),
+        _test("T·01", "S·01"), _test("T·02", "S·02"),
+    )
+    assert covers(manifest, graph, "tests/shared.py") == ("a.py", "b.py")
+
+
+# -- what a cut records ------------------------------------------------------
+
+
+def test_a_cut_records_what_verification_looked_like(tmp_path):
+    """The one question a stored cut exists to answer is what was true when
+    work went out, and on the half concerning tests it was silent: the live
+    graph has moved on by the time anyone asks."""
+    from mu_spec.units import append_cut, current_cut, project
+
+    manifest = _manifest({"a.py": "S·01", "tests/t.py": "T·02"})
+    graph = _graph(
+        _spec("S·01"), _spec("S·02"),
+        _test("T·01", "S·01"), _test("T·02", "S·02"),
+    )
+    path = tmp_path / "units.jsonl"
+    proj = project(manifest, graph)
+    append_cut(path, proj, now_fn=lambda: 1.0, note="n")
+
+    back = current_cut(path)
+    assert back.untested == proj.untested
+    assert back.unimplemented_tests == proj.unimplemented_tests
+    assert back.unfollowed_tests == proj.unfollowed_tests
+    assert "untested" in back.to_json()
+
+
+def test_a_cut_written_before_this_reloads_as_unsaid(tmp_path):
+    """Not as zero. A log line that never carried the field is silent about
+    it, and reading silence as "nothing was untested" would invent a fact
+    about a cut nobody recorded one for."""
+    from mu_spec.units import read_cuts
+
+    path = tmp_path / "units.jsonl"
+    path.write_text(
+        '{"seq": 1, "at": 0.0, "note": "", "members": [], "units": {}, '
+        '"edges": {}, "unimplemented": [], "stale_modules": []}\n',
+        encoding="utf-8",
+    )
+    cut = read_cuts(path)[0]
+    assert cut.untested == ()
+    assert cut.unimplemented_tests == ()
+    assert cut.unfollowed_tests == ()

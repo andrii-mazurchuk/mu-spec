@@ -590,7 +590,12 @@ def main(argv=None) -> int:
         print(f"  declare_module -> {status} {path} implements {m['implements']}")
 
     _, mods = call("GET", f"/projects/{P}/modules")
-    show("spec entries no module claims", mods["unimplemented"])
+    _, live = call("GET", f"/projects/{P}/units")
+    # Asked of the projection, not of the module list. An entry no module
+    # implements is exactly an entry in no work unit, and stating it twice
+    # was how one of the two came to mean something vaguer than it said.
+    show("spec entries no module claims",
+         (live.get("live") or {}).get("unimplemented", []))
 
     status, pl = call("GET", f"/projects/{P}/plan")
     print(f"\n  get_plan (first iteration) -> {status} issued={pl['issued']}")
