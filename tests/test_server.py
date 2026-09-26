@@ -2641,6 +2641,48 @@ def test_two_entries_in_one_file_are_two_units_over_one_write_set(store, prompts
     assert by_first["follows"] == [] and by_second["follows"] == []
 
 
+def test_no_tool_promises_that_units_never_share_a_file(store, prompts):
+    """The grain changed and this sentence did not, for one commit: a caller
+    reading `get_work_unit` was told its write set was disjoint from every
+    other unit's by construction. That is now the opposite of true, and an
+    agent trusting it runs two overlapping units at once and collides.
+
+    A stale description is worse than a missing one, because a caller acts on
+    it. The units tools are the ones that make claims about the grain, so
+    they are the ones held to it -- `get_slice_context` still says a SLICE's
+    files are not disjoint, which remains true and is the reason a slice is
+    not a branch scope."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    claims = [
+        "disjoint from every other",
+        "maximal connected",
+        "cannot touch the same file",
+        "no two units share",
+    ]
+    for entry in payload["tools"]:
+        if not entry["name"].endswith(("work_unit", "units")):
+            continue
+        low = entry["description"].lower()
+        for claim in claims:
+            assert claim not in low, f"{entry['name']} still promises: {claim}"
+
+
+def test_the_unit_tool_names_what_it_actually_returns(store, prompts):
+    """A model picks its next call from these descriptions and nothing else.
+    Three fields carry the whole of the new model -- what may not run beside
+    this, what else its files must hold, and how big it is -- and a field
+    nobody is told about is a field nobody reads."""
+    _implemented(store, prompts)
+    _, payload = call(store, prompts, "GET", "/tools")
+    entry = next(t for t in payload["tools"] if t["name"] == "get_work_unit")
+    for field in ("overlap", "file_scope", "follows", "write_set", "size"):
+        assert field in entry["description"], f"get_work_unit never mentions {field}"
+
+    _, unit = call(store, prompts, "GET", "/projects/m/units/S\u00b701")
+    for field in ("overlap", "file_scope", "follows", "write_set"):
+        assert field in unit, f"the response lost {field}"
+
+
 def test_a_unit_is_handed_the_other_contracts_its_files_must_serve(store, prompts):
     """A unit is one contract; a file is not. Whichever unit reaches a file
     while it is still empty decides its shape -- a class or loose functions,

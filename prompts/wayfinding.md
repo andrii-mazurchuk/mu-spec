@@ -152,7 +152,9 @@ of predictable size. Files are **not** exclusive to a unit -- a file
 implementing several spec entries is written by several units -- so each unit
 also carries an `overlap` list naming the units it shares files with. Those
 must not be worked at the same time. Overlap is not an order: neither waits for
-the other, and a consumer decides which goes first. `POST /projects/{project}/units/cut` records the cut work is handed
+the other, and a consumer decides which goes first.
+
+`POST /projects/{project}/units/cut` records the cut work is handed
 out from -- a person's decision, never automatic, because every gate can be
 green while the author is still revising. `GET /projects/{project}/units/{entry}`
 then returns one unit by any spec entry in it: its write set, its bodies, and
