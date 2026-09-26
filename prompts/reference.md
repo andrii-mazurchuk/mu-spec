@@ -240,6 +240,24 @@ write them" stops being structural the moment one file claims both.
 A scenario with no file yet is fine and expected. It is in no work unit, so
 it orders nothing and is **not yet expected to pass**.
 
+### A file usually serves more than one contract
+
+A work unit is one spec entry. A **file is not**: `server.py` may implement
+eight of them, so eight units write it, one at a time. Whichever reaches it
+while it is still empty decides its shape — a class or loose functions, what
+it is called, what it takes — and that decision is in none of their entries.
+
+So the unit view carries **`file_scope`**: for each file in the write set, the
+other contracts that file must eventually serve, with their bodies. Read it
+before designing anything, and design for all of them rather than only for the
+entry in hand. The code for those contracts may not exist yet; the contracts
+do, and they are what the shape has to hold.
+
+The same applies when writing a scenario. Pin the **behaviour the entry
+states**, never a structure the spec is silent about — a test is append-only
+and absolute, so a scenario naming an invented class name freezes an
+accident that the entry never asked for.
+
 ### What writing them first buys
 
 The unit implementing a contract **follows** the unit holding the scenarios

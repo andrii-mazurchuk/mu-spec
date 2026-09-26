@@ -2641,6 +2641,50 @@ def test_two_entries_in_one_file_are_two_units_over_one_write_set(store, prompts
     assert by_first["follows"] == [] and by_second["follows"] == []
 
 
+def test_a_unit_is_handed_the_other_contracts_its_files_must_serve(store, prompts):
+    """A unit is one contract; a file is not. Whichever unit reaches a file
+    while it is still empty decides its shape -- a class or loose functions,
+    what it is called, what the constructor takes -- and none of that is in
+    the one entry it holds. Without this the other claimants inherit an
+    invention made from a fraction of the information, and their scenarios
+    then pin it permanently."""
+    _two_columns(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "core.py", "implements": ["S·01", "S·02"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+
+    scope = payload["file_scope"]
+    assert list(scope) == ["core.py"]
+    (other,) = scope["core.py"]
+    assert other["id"] == "S·02"
+    assert other["unit"] == "S·02"
+    # The body, not a stub: the shape has to serve this contract, so whoever
+    # designs the file has to be able to read it.
+    assert "body" in other
+
+
+def test_a_file_this_unit_alone_claims_contributes_no_scope(store, prompts):
+    """Empty rather than absent-or-noisy. A unit owning every file it holds
+    has nothing to design around, and saying so with an empty map keeps the
+    caller from having to tell "no co-claimants" from "not computed"."""
+    _implemented(store, prompts)
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    assert payload["file_scope"] == {}
+
+
+def test_file_scope_never_includes_the_units_own_entries(store, prompts):
+    """It answers "what else must this file serve", so the entries already in
+    hand are not part of the answer. Including them would read as a second,
+    disagreeing copy of the unit's own entry list."""
+    _two_columns(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "core.py", "implements": ["S·01", "S·02"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S·02")
+    ids = [v["id"] for v in payload["file_scope"]["core.py"]]
+    assert ids == ["S·01"]
+    assert "S·02" not in ids
+
+
 def test_a_work_units_write_set_is_module_paths_not_entry_ids(store, prompts):
     """The write set is what a branch may edit, so it has to be files. An
     entry identifier is not something a diff can be audited against."""

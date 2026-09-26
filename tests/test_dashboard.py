@@ -239,21 +239,30 @@ def test_preview_does_not_overwrite_real_slice_membership():
     assert "previewflag" in text
 
 
-def test_page_carries_both_graph_views():
-    """Spine answers what derives from what. Order answers what waits on
-    what -- the question the spine answers badly, because depends_on is
-    same-layer and lands as one arc among a hundred."""
+def test_the_page_carries_a_spine_and_a_build_order():
+    """Two questions, two views. The spine answers what derives from what
+    and is a graph. Order answers what gets handed out and in what order,
+    and is a timeline of cards -- it left the canvas because a list of
+    tickets is a document, not a diagram."""
     text = page()
-    for marker in ('data-v="order"', "drawOrder", "buildOrderScene", "stepDepth",
-                   "drawScene"):
+    for marker in ('data-v="order"', "drawOrder", "drawScene", 'id="order"',
+                   "clustersIn", "unitChain"):
         assert marker in text, f"the order view lost {marker!r}"
+    # The entry-level dependency drawing it replaced is gone, not hidden.
+    for dead in ("buildOrderScene", "stepDepth", "ord-layer", "drawLayerPicker"):
+        assert dead not in text, f"{dead!r} outlived the order view it belonged to"
 
 
-def test_the_order_view_cannot_hang_on_a_dependency_cycle():
-    """The gates refuse a cycle, but this view has to survive drawing a
-    graph that has not passed them yet."""
+def test_the_order_view_cannot_hang_on_a_cycle():
+    """The gates refuse a cycle and a unit graph anchored on spec entries
+    cannot express one, but this view still walks edges it did not compute.
+    Both of its walks carry a seen-set, so the worst a malformed payload can
+    do is draw a short chain."""
     text = page()
-    assert "seen.has(id)) return 0" in text.replace("  ", " ") or            "if(seen.has(id)) return 0" in text
+    i = text.index("function unitChain(")
+    assert "seen.has(k)) continue" in text[i:i + 900], "the chain walk can revisit"
+    j = text.index("function clustersIn(")
+    assert "seen.has(other)" in text[j:j + 700], "the cluster walk can revisit"
 
 
 def test_grouped_columns_share_a_midline():
@@ -306,11 +315,15 @@ def test_the_fork_can_be_drawn_two_ways():
     assert "const corpus = inline ? STATE.entries" in text
 
 
-def test_the_order_view_does_not_write_into_the_crossings_kpi():
-    """Cross-slice dependencies and edge crossings are different numbers.
-    One under the other's label is how a dashboard starts lying quietly."""
+def test_only_the_spine_writes_the_crossings_kpi():
+    """Edge crossings are a property of a drawn graph. The order view draws
+    no edges at all, so anything it wrote there would be a different number
+    under that label -- which is how a dashboard starts lying quietly."""
     text = page()
-    assert "crossSlice" in text, "the cross-slice count lost its own name"
+    i = text.index("function drawOrder(")
+    j = text.index("function drawScene(")
+    assert "k-xing" not in text[i:j], "the order view writes the crossings KPI"
+    assert text.count('$("k-xing")') == 2, "the crossings KPI has a new writer"
 
 
 def test_page_carries_a_reading_view():
@@ -375,7 +388,7 @@ def test_a_poll_never_steals_the_view():
     zoom are state the reader created."""
     text = page()
     assert "KEEP_VIEW" in text
-    assert text.count("if(!KEEP_VIEW) requestAnimationFrame(fit)") >= 2, (
+    assert text.count("if(!KEEP_VIEW) requestAnimationFrame(fit)") >= 1, (
         "a view redraw path re-fits during a poll"
     )
 
@@ -522,14 +535,24 @@ def test_an_unbuilt_scenario_is_not_styled_as_a_failure():
     assert "stroke-dasharray" in rule
 
 
-def test_work_units_on_the_spine_are_shown_on_selection_not_drawn():
-    """A unit groups entries and files across columns AND across both bands,
-    so a hull or a column around one states an adjacency the graph does not
-    have. Selection lights the peers instead."""
+def test_the_spine_does_not_render_work_units():
+    """Two renderings of one fact drift apart, which is the failure this
+    design refuses everywhere else. A work unit is what gets handed out, in
+    what order, beside what else -- the Order view's question, and it owns
+    the answer. The spine names the unit an entry belongs to and hands off.
+
+    The peer-lighting this replaces was not wrong; it was a second place the
+    same relation had to be kept true."""
     page = dashboard.read_page()
-    assert "function unitSet()" in page
-    assert '.node.peer rect{' in page
+    assert "function unitSet()" not in page, "the spine still groups by unit"
+    assert ".node.peer" not in page, "the spine still lights unit peers"
     assert "<hull" not in page
+    # What is left: the name, and a way to the view that owns it.
+    i = page.index("function unitPanel(")
+    body = page[i:i + 700]
+    assert 'id="to-order"' in body, "no way through to the Order view"
+    for gone in ("follows", "waited on by", "disjoint"):
+        assert gone not in body, f"the spine still reports {gone!r} for a unit"
 
 
 def test_the_spine_reads_the_live_projection_not_the_stored_cut():

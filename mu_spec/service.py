@@ -1258,6 +1258,42 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
             view["unit"] = projection.unit_of().get(target)
             read_set.append(view)
 
+    # Everything else this unit's files must eventually hold.
+    #
+    # A unit is one contract; a file is not. `server.py` on t-finance
+    # implements eight spec entries, so eight units write it, staggered by
+    # the overlap relation. Whichever reaches it while it is still empty has
+    # to decide its shape -- module-level functions or a class, what the
+    # class is called, what the constructor takes -- and none of that is in
+    # the single entry it was handed. The other seven inherit whatever it
+    # invented, and nothing in the spec gives them the authority to change
+    # it. Scenarios then pin the invention: a test naming a structure the
+    # spec never stated is still append-only and still absolute.
+    #
+    # So the other contracts claiming each of these files are handed over
+    # with the unit. Their contracts, not their code -- the code may not
+    # exist yet, but every contract does, and the shape has to serve all of
+    # them. That also makes "one at a time, any order" true of shape and not
+    # just of files: every unit sees the same picture whenever its turn is.
+    #
+    # Mechanical. The module map already says who claims what; this reads it
+    # in the one direction the unit view was missing.
+    file_scope: dict[str, list[dict]] = {}
+    for path in unit.modules:
+        others = []
+        for identifier_ in manifest.modules.get(path, ()):
+            if identifier_ in own or identifier_ not in graph:
+                continue
+            found = graph.get(identifier_)
+            if found is None:
+                continue
+            view = _entry_view(found, full=True)
+            view["slice"] = manifest.slice_of(identifier_)
+            view["unit"] = projection.unit_of().get(identifier_)
+            others.append((identifier_, view))
+        if others:
+            file_scope[path] = [v for _, v in sorted(others, key=lambda p: sort_key(p[0]))]
+
     cross = []
     for name in manifest.cross_cutting():
         if name in unit.slices:
@@ -1280,6 +1316,9 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         ],
         "justification": justification,
         "read_set": sorted(read_set, key=lambda v: v["id"]),
+        # Per file in the write set, the other contracts it must also serve.
+        # Empty when this unit is the only claimant of every file it holds.
+        "file_scope": file_scope,
         "cross_cutting": cross,
         "follows": list(projection.edges.get(key, ())),
         "followed_by": sorted(

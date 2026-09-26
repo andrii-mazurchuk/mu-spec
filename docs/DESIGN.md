@@ -284,6 +284,33 @@ A harness driving a frontier model may take three units in one session; one driv
 mid-size model takes one. That adjustment belongs to the consumer, and mu-spec never
 makes it — which is the same reason the grain is the atom rather than the batch.
 
+### A file serves more contracts than the unit holding it
+
+A unit is one contract. A **file is not**: `server.py` on `t-finance` implements eight
+spec entries, so eight units write it, staggered by the overlap relation above.
+
+Whichever of them reaches the file while it is still empty has to decide its shape — a
+class or loose functions, what the class is called, what the constructor takes — and
+none of that is in the single entry it was handed. The other seven inherit whatever it
+invented, and nothing in the spec gives them the authority to change it. Scenarios then
+make the invention permanent: a test naming a structure the spec never stated is still
+append-only and still absolute.
+
+Nothing is *lost* to this — every contract does eventually reach an agent, and the file
+accretes all of them. What is lost is that the shape is decided from a fraction of the
+information, by whoever happened to go first.
+
+So a unit is handed **`file_scope`**: for each file in its write set, the other contracts
+that file must eventually serve, bodies included. Their code may not exist yet; their
+contracts do, and the shape has to hold all of them. This is mechanical — the module map
+already says who claims what, and this reads it in the one direction the unit view was
+missing.
+
+It also repairs a claim the overlap relation would otherwise overstate. "One at a time,
+in any order" is true of files and of edges, but *without* `file_scope` it is not true of
+shape, because the first unit to arrive has outsized influence. With it, every unit sees
+the same picture whenever its turn comes, and the order really is free.
+
 ### Ordering
 
 Projected from spec-entry `depends_on`, never authored, for the same reason slice

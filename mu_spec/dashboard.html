@@ -139,11 +139,6 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .node.untested .accent{fill:none;stroke:var(--sl);stroke-width:1;
   stroke-dasharray:3 3}
 
-/* Work units on the spine, on demand. A unit groups entries and files
-   across columns and across both bands, so a hull or a column would
-   assert an adjacency the graph does not have. Selecting anything
-   lights the rest of the branch it would be built on instead. */
-.node.peer rect{stroke:var(--brand);stroke-width:1.5;stroke-dasharray:4 2}
 .far .t{display:none}
 .edge{fill:none;stroke:var(--rule);stroke-width:1.4;marker-end:url(#a-idle)}
 .edge.e{stroke-dasharray:3 4}
@@ -160,6 +155,58 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 .slice b{display:block}
 .slice em{font-style:normal;color:var(--dim);font-size:11px;display:block;margin-top:2px}
 .slice code{font-size:10.5px;color:var(--dim)}
+
+/* ── the order view: work units on a timeline of waves ──────────── */
+.lead{max-width:76ch;font-size:12.5px;color:var(--ink-soft);margin:0 0 20px}
+.lead b{color:var(--ink)}
+.wv{position:relative;padding:0 0 4px 74px;margin-bottom:6px}
+/* One continuous rule the wave marks sit on, so the eye reads the column
+   as a single passage of time rather than as four stacked panels. */
+.wv::before{content:"";position:absolute;left:25px;top:4px;bottom:-6px;width:2px;
+  background:var(--rule)}
+.wv:last-of-type::before{bottom:auto;height:26px}
+.wv .mark{position:absolute;left:14px;top:2px;width:24px;height:24px;border-radius:50%;
+  background:var(--panel);border:2px solid var(--brand);color:var(--brand);
+  font:600 11px var(--mono);display:grid;place-items:center;z-index:1}
+.wv.later .mark{border-color:var(--rule);color:var(--dim)}
+.wvhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:1px 0 9px}
+.wvhead h4{font:600 13px var(--sans);margin:0}
+.wvhead .count{background:var(--panel-3);border-radius:99px;padding:1px 8px;font-size:10.5px;
+  color:var(--ink-soft);font-variant-numeric:tabular-nums}
+/* Units in ONE wave that share files. Not an order -- a set from which one
+   may run at a time, which is a different thing and has to look different. */
+.cluster{border:1px dashed var(--warn);background:var(--warn-bg);border-radius:var(--radius);
+  padding:8px 9px 9px;margin:0 0 9px}
+.clabel{font:600 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;
+  color:var(--warn);margin:0 0 7px;display:flex;gap:7px;align-items:baseline}
+.clabel span{font-weight:400;text-transform:none;letter-spacing:0;
+  color:var(--ink-soft);font-size:11px}
+.free{margin:0 0 9px}
+.free .clabel{color:var(--dim)}
+.deck{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+.card{background:var(--panel);border:1px solid var(--rule);border-left:3px solid var(--sl);
+  border-radius:var(--radius);padding:8px 10px 9px;box-shadow:var(--shadow);cursor:pointer;
+  text-align:left;font:inherit;color:var(--ink);width:236px;display:block}
+.card:hover{border-color:var(--brand)}
+.card[aria-pressed=true]{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand)}
+.card.dim{opacity:.34}
+.card.blocker{border-color:var(--ok);box-shadow:0 0 0 1px var(--ok)}
+.card.dependent{border-color:var(--brand);border-style:dashed}
+.card .k{display:flex;align-items:baseline;gap:6px}
+.card .k code{font:600 11.5px var(--mono)}
+.card .ttl{display:block;font-size:12px;color:var(--ink-soft);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .facts{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.card em{font-style:normal;font-size:10.5px;color:var(--dim)}
+.card .files{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+.card .warnish{color:var(--warn)}
+.tag{font:600 9.5px var(--sans);letter-spacing:.05em;text-transform:uppercase;
+  padding:1px 5px;border-radius:99px}
+.tag.t{background:var(--brand-soft);color:var(--brand)}
+.tag.xc{background:var(--warn-bg);color:var(--warn)}
+.fchip{font:10.5px var(--mono);background:var(--panel-alt);border:1px solid var(--rule-soft);
+  border-radius:4px;padding:0 4px;color:var(--ink-soft);max-width:104px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 
 /* ── work units in the waves view ───────────────────────────────── */
 .wave .unitbody{flex:1;display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start;
@@ -438,7 +485,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   <span class="flag" id="f-complete">—</span>
   <div class="kpi"><b id="k-entries">–</b><span>entries</span></div>
   <div class="kpi"><b id="k-slices">–</b><span>slices</span></div>
-  <div class="kpi"><b id="k-tests">–</b><span>scenarios</span></div>
+  <div class="kpi"><b id="k-tests">–</b><span>tests</span></div>
   <div class="kpi" id="kpi-untested"><b id="k-untested">–</b><span>untested</span></div>
   <div class="kpi"><b id="k-waves">–</b><span>waves</span></div>
   <div class="kpi"><b id="k-xing">–</b><span>crossings</span></div>
@@ -478,9 +525,6 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
         <button id="to-verify" class="jump" hidden>↓ verification band</button>
         <button id="to-corpus" class="jump" hidden>↑ corpus</button>
       </span>
-      <span id="vb-order" hidden>
-        <label>layer <select id="ord-layer"></select></label>
-      </span>
       <span id="vb-read" hidden>
         <span id="readbar">
           <label>layer <select id="rd-layer"></select></label>
@@ -511,6 +555,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
       <div class="empty hide" id="empty"></div>
     </div>
     <div id="read" class="hide"></div>
+    <div class="pane hide" id="order"></div>
     <div class="pane hide" id="waves"></div>
     <div class="pane hide" id="modules"></div>
     <div class="pane hide" id="queues"></div>
@@ -1170,7 +1215,7 @@ const short=p=>{const b=String(p).split(/[\\/]/).pop();return b||String(p)};
 
 let SCENE=null, sel=null, focusSlice=null;
 let view={x:40,y:30,k:1};
-let MODE="spine", ORDER_LAYER=1;    // Behaviour: the first layer that has depends_on
+let MODE="spine";
 let RD_LAYER="*", RD_FIND="";       // the read view: all layers, no filter
 
 function drawSpine(){
@@ -1289,172 +1334,208 @@ function drawSpine(){
 /* =============================================================
    ORDER VIEW
 
-   The spine answers "what derives from what", which is vertical. It
-   answers "what waits on what" badly, because depends_on is same-layer
-   and lands as one arc in a gutter beside a hundred others.
+   The build order: every work unit, on a timeline of waves.
 
-   This view answers only that question, and drops everything else to do
-   it. One layer at a time -- depends_on never crosses a layer, so a
-   cross-layer dependency view would be drawing edges that cannot exist.
+   It used to draw entry-level depends_on one layer at a time. That
+   answered "which entry waits on which", which is a question about the
+   corpus -- and the corpus already has a view. What nobody could see was
+   the thing work is actually handed out in.
 
-     x = how many steps of dependency deep an entry sits
-     y = which slice owns it, lanes ordered by the slice's own wave
+   Two relations that look alike and are not, kept visibly apart because
+   conflating them is how a dispatcher gets it wrong:
 
-   So the left edge is what can be worked first, and a lane above another
-   is a slice the one below waits on. Both orderings are computed from the
-   same entry edges; neither is authored anywhere.
+     an EDGE is an order.    A follows B and cannot start first.
+     an OVERLAP is not.      A and B write one file, so they must not run
+                             AT THE SAME TIME -- but neither waits, and
+                             nothing says which goes first.
+
+   So a wave is not "do all of this at once". It is "none of this is
+   blocked", and within it the units sharing files are boxed together:
+   one at a time from each box, everything else in parallel.
    ============================================================= */
+let SEL_UNIT = null;
+// True only while jumping to Order from a spine selection, so the
+// view switch does not clear the unit that jump is about to select.
+let ARRIVING = false;
 
-/* Longest path over depends_on, cycle-guarded. Longest and not shortest
-   for the same reason waves use it: an entry blocked by both a one-step
-   and a four-step chain belongs after the four, or it draws an edge
-   leaping backwards. The guard is there because nothing structurally
-   prevents a depends_on cycle -- the gates refuse one, but this view has
-   to survive drawing a graph that has not passed them yet. */
-function stepDepth(ids, depsOf){
-  const memo=new Map();
-  const walk=(id,seen)=>{
-    if(memo.has(id)) return memo.get(id);
-    if(seen.has(id)) return 0;                 // cycle: stop, never hang
-    seen.add(id);
-    const ds=depsOf(id);
-    const v=ds.length?Math.max(...ds.map(d=>walk(d,seen)+1)):0;
-    seen.delete(id);
-    memo.set(id,v);
-    return v;
-  };
-  for(const id of ids) walk(id,new Set());
-  return memo;
-}
+let UNIT_KIND = "all";
 
-function buildOrderScene(layerIdx){
-  const ents=STATE.entries.filter(e=>e.layer===layerIdx);
-  const ids=new Set(ents.map(e=>e.id));
-  const depsOf=id=>((STATE.byId[id]||{}).deps||[]).filter(d=>ids.has(d));
-  const depth=stepDepth([...ids],depsOf);
-  const maxStep=Math.max(0,...[...depth.values()]);
-
-  const rank=sliceRank();
-  const present=[...new Set(ents.map(e=>e.slice))]
-    .sort((a,b)=>(rank[a]??99)-(rank[b]??99));
-
-  const pos=new Map(), lanes=[];
-  let cursor=0;
-  for(const name of present){
-    const mine=ents.filter(e=>e.slice===name);
-    const cells=new Map();
-    for(const e of mine){
-      const d=depth.get(e.id)||0;
-      (cells.get(d)||cells.set(d,[]).get(d)).push(e.id);
+/* Units in ONE wave connected by "shares a file". A chain a-b, b-c is one
+   box of three: only one of them can be running, whichever order is
+   picked. Singletons are not boxes -- nothing constrains them. */
+function clustersIn(keys, over){
+  const set=new Set(keys), seen=new Set(), out=[];
+  for(const k of keys){
+    if(seen.has(k)) continue;
+    const group=[], stack=[k];
+    seen.add(k);
+    while(stack.length){
+      const cur=stack.pop(); group.push(cur);
+      for(const other of (over[cur]||[]))
+        if(set.has(other) && !seen.has(other)){ seen.add(other); stack.push(other); }
     }
-    const tallest=Math.max(1,...[...cells.values()].map(c=>c.length));
-    const h=LANE_PAD*2+tallest*NODE_H+(tallest-1)*NODE_GAP;
-    for(const [d,members] of cells)
-      members.forEach((id,i)=>pos.set(id,{
-        x:LANE_LABEL+d*STEP_GAP,
-        y:cursor+LANE_PAD+i*(NODE_H+NODE_GAP)+NODE_H/2,
-        step:d, lane:name}));
-    lanes.push({slice:name,top:cursor,height:h,count:mine.length,
-                deps:(STATE.slices[name]||{}).deps||[],
-                wave:(STATE.slices[name]||{}).wave,
-                xc:isXC(name)});
-    cursor+=h;
+    if(group.length>1) out.push(group.sort());
   }
-
-  /* A dependency inside one lane is ordinary sequencing. One that crosses a
-     lane is a slice waiting on another slice -- what slice dependency is
-     projected FROM, and the reason a wave exists. Marked because it is a
-     different fact, not a louder one. */
-  const edges=[];
-  const sliceOf=id=>(STATE.byId[id]||{}).slice;
-  for(const e of ents){
-    for(const d of e.deps) if(pos.has(d)&&pos.has(e.id))
-      edges.push({kind:"h",from:d,to:e.id,cross:sliceOf(d)!==sliceOf(e.id)});
-    for(const m of e.emits) if(pos.has(m)&&pos.has(e.id))
-      edges.push({kind:"e",from:e.id,to:m,cross:sliceOf(m)!==sliceOf(e.id)});
-  }
-  return {pos,lanes,edges,maxStep,height:cursor,
-          crossSlice:edges.filter(x=>x.cross&&x.kind==="h").length,
-          width:LANE_LABEL+(maxStep+1)*STEP_GAP};
+  return out;
 }
 
-function oPath(a,b){
-  const x1=a.x+NODE_W, y1=a.y, x2=b.x, y2=b.y;
-  const bow=Math.max(40,(x2-x1)/2);
-  return `M ${x1} ${y1} C ${x1+bow} ${y1}, ${x2-bow} ${y2}, ${x2} ${y2}`;
+/* What a selection makes relevant: everything it waits on, and everything
+   waiting on it, transitively. Highlighted rather than drawn -- arrows
+   across four waves are less readable than colouring the two ends. */
+function unitChain(source){
+  if(!SEL_UNIT) return null;
+  const back={}, fwd={};
+  for(const [k,deps] of Object.entries(source.edges||{})){
+    back[k]=deps||[];
+    for(const d of (deps||[])) (fwd[d]=fwd[d]||[]).push(k);
+  }
+  const reach=(start,next)=>{
+    const seen=new Set(), stack=[...(next[start]||[])];
+    while(stack.length){
+      const k=stack.pop();
+      if(seen.has(k)) continue;
+      seen.add(k); stack.push(...(next[k]||[]));
+    }
+    return seen;
+  };
+  return { blockers:reach(SEL_UNIT,back), dependents:reach(SEL_UNIT,fwd), fwd };
+}
+
+function unitCard(k, source, chain){
+  const x=(source.units||[]).find(v=>v.key===k);
+  if(!x) return "";
+  const e=STATE.byId[x.anchor]||{};
+  const only=x.slices.length===1?x.slices[0]:null;
+  const follows=((source.edges||{})[k]||[]).length;
+  const waiting=Object.values(source.edges||{}).filter(v=>(v||[]).includes(k)).length;
+  const over=((source.overlap||{})[k]||[]).length;
+  let cls="";
+  if(chain && k!==SEL_UNIT)
+    cls = chain.blockers.has(k) ? " blocker"
+        : chain.dependents.has(k) ? " dependent" : " dim";
+  return `<button class="card${cls}" data-unit="${esc(k)}" style="--sl:${hueOf(only||"unsliced")}"
+      aria-pressed="${SEL_UNIT===k}">
+    <span class="k"><code>${esc(k)}</code>
+      ${x.tests?`<span class="tag t">tests</span>`:""}
+      ${x.slices.length>1?`<span class="tag xc">${x.slices.length} slices</span>`:""}</span>
+    <span class="ttl">${esc(e.title||x.anchor)}</span>
+    <span class="files">${(x.modules||[]).map(m=>
+      `<span class="fchip">${esc(m)}</span>`).join("")}</span>
+    <span class="facts">
+      <em>${x.size.entries} entr${x.size.entries===1?"y":"ies"}</em>
+      <em>${x.size.modules} file${x.size.modules===1?"":"s"}</em>
+      <em>${x.size.body_bytes}B</em>
+      ${follows?`<em>follows ${follows}</em>`:""}
+      ${waiting?`<em>${waiting} waiting</em>`:""}
+      ${over?`<em class="warnish">shares ${over}</em>`:""}
+    </span></button>`;
 }
 
 function drawOrder(){
-  const S=buildOrderScene(ORDER_LAYER);
-  SCENE={pos:S.pos,order:[],vEdges:[],hEdges:S.edges,crossings:0,bands:[]};
-  const g=$("scene"); g.innerHTML="";
+  const u=STATE.units;
+  const source=(u && u.cut) || (u && u.live) || null;
 
-  $("empty").classList.toggle("hide", S.pos.size>0);
-  if(!S.pos.size){
-    $("empty").textContent="Nothing in "+LAYERS[ORDER_LAYER][1]+" yet.";
-    $("k-xing").textContent="0"; $("vb-note").textContent="";
+  const flash=STATE.cutFlash
+    ? `<div id="cutflash" class="${esc(STATE.cutFlash.kind)}">${esc(STATE.cutFlash.text)}</div>`
+    : "";
+  const button=STATE.project
+    ? `<button id="do-cut" class="cutbtn">${u && u.cut ? "Re-cut" : "Cut work units"}</button>`
+    : "";
+  const bar=`<div class="cutbar">${button}<span class="muted">Cutting is yours to do — an
+    agent is never offered it, because a session that could cut would be deciding you had
+    finished revising. Re-cutting is free.</span></div>${flash}`;
+
+  if(!source || !(source.units||[]).length){
+    $("order").innerHTML=`<h3>Building — the order work units may be built in</h3>${bar}
+      <p class="muted" style="max-width:64ch">No work units yet. A work unit is one spec entry
+      and the files implementing it — one branch, one ticket. They appear once modules are
+      declared.</p>`;
+    const c=$("do-cut"); if(c) c.onclick=cutUnits;
     return;
   }
 
-  for(let s=0;s<=S.maxStep;s++){
-    const t=svgEl("text",{class:"stephead",x:LANE_LABEL+s*STEP_GAP,y:-22});
-    t.textContent = s===0 ? "STEP 0 · NOTHING FIRST" : "STEP "+s;
-    g.appendChild(t);
-  }
+  const over=source.overlap||{};
+  const chain=unitChain(source);
+  const keep=k=>{
+    const x=(source.units||[]).find(v=>v.key===k);
+    if(!x) return false;
+    if(UNIT_KIND==="impl" && x.tests) return false;
+    if(UNIT_KIND==="test" && !x.tests) return false;
+    if(focusSlice && !(x.slices||[]).includes(focusSlice)) return false;
+    return true;
+  };
 
-  S.lanes.forEach((L,i)=>{
-    g.appendChild(svgEl("rect",{class:"sliceband"+(i%2?" alt":""),
-      x:LANE_LABEL-16, y:L.top, width:S.width-LANE_LABEL+40, height:L.height, rx:8,
-      style:`--sl:${hueOf(L.slice)}`}));
-    g.appendChild(svgEl("line",{class:"lanerule",x1:LANE_LABEL-16,y1:L.top,
-      x2:S.width+24,y2:L.top}));
-    const nm=svgEl("text",{class:"lanelabel",x:0,y:L.top+26,style:`--sl:${hueOf(L.slice)}`});
-    nm.textContent=clip(L.slice,20)+(L.xc?" ✳":"");
-    const meta=svgEl("text",{class:"lanemeta",x:0,y:L.top+42});
-    meta.textContent=(L.wave==null?"":"wave "+L.wave+" · ")+L.count+" entries";
-    const after=svgEl("text",{class:"lanemeta",x:0,y:L.top+57});
-    after.textContent=L.deps.length?"after "+clip(L.deps.join(", "),24):"waits on nothing";
-    g.append(nm,meta,after);
-  });
+  const rows=(source.waves||[]).map(w=>{
+    const keys=(w.units||[]).filter(keep);
+    if(!keys.length) return "";
+    const groups=clustersIn(keys, over);
+    const boxed=new Set(groups.flat());
+    const free=keys.filter(k=>!boxed.has(k));
+    const stagger=groups.length
+      ? `${groups.flat().length} of ${keys.length} need staggering`
+      : "fully parallel";
+    return `<section class="wv${w.wave?" later":""}">
+      <div class="mark">${w.wave}</div>
+      <div class="wvhead">
+        <h4>Wave ${w.wave}</h4>
+        <span class="count">${keys.length} unit${keys.length===1?"":"s"}</span>
+        <span class="muted">${w.wave===0?"blocked by nothing"
+          :"unblocked once wave "+(w.wave-1)+" is in"} · ${stagger}</span>
+      </div>
+      ${groups.map(g=>`<div class="cluster">
+        <p class="clabel">one at a time
+          <span>${g.length} units write the same files — any order, never together</span></p>
+        <div class="deck">${g.map(k=>unitCard(k,source,chain)).join("")}</div></div>`).join("")}
+      ${free.length?`<div class="free">
+        <p class="clabel">${groups.length?"and in parallel":"all in parallel"}</p>
+        <div class="deck">${free.map(k=>unitCard(k,source,chain)).join("")}</div></div>`:""}
+    </section>`;
+  }).join("");
 
-  for(const e of S.edges){
-    const a=S.pos.get(e.from), b=S.pos.get(e.to);
-    g.appendChild(svgEl("path",{
-      class:"edge ord "+(e.kind==="e"?"e":"h")+(e.cross?" x":""),d:oPath(a,b),
-      "data-from":e.from,"data-to":e.to,"data-kind":e.kind}));
-  }
+  const seg=`<div class="seg" id="unit-kind">${
+    [["all","All units"],["impl","Implementation"],["test","Tests"]].map(([k,t])=>
+      `<button class="segb" data-k="${k}" aria-pressed="${UNIT_KIND===k}">${t}</button>`
+    ).join("")}</div>`;
 
-  for(const [id,p] of S.pos){
-    const e=STATE.byId[id], hue=hueOf(e.slice);
-    const n=svgEl("g",{class:"node",transform:`translate(${p.x} ${p.y-NODE_H/2})`,
-      "data-id":id,"data-slice":e.slice,style:`--sl:${hue}`,tabindex:"0"});
-    n.appendChild(svgEl("rect",{width:NODE_W,height:NODE_H,rx:6}));
-    n.appendChild(svgEl("rect",{class:"accent",width:3,height:NODE_H,rx:1.5}));
-    const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=id;
-    const t=svgEl("text",{class:"t",x:12,y:34}); t.textContent=clip(e.title,30);
-    const tip=svgEl("title"); tip.textContent=e.title;
-    n.append(i,t,tip);
-    g.appendChild(n);
-  }
+  $("order").innerHTML=`<h3>Building — the order work units may be built in</h3>${bar}
+    ${u.cut ? `<p class="muted">From cut ${u.cut.seq}${
+        u.cut.note ? " — " + esc(u.cut.note) : ""}${
+        u.drift && u.drift.changed && u.drift.changed.length
+          ? ` · <span class="warnish">${u.drift.changed.length} unit${
+              u.drift.changed.length===1?" has":"s have"} moved since</span>`
+          : " · matches the graph"}</p>`
+      : `<p class="muted warnish">No cut taken — showing the live projection. Cutting is a
+         person's decision, and nothing here has been handed out yet.</p>`}
+    <p class="lead">Every unit is <b>one spec entry and the files implementing it</b> — one
+      branch, one ticket. Top to bottom is the order they may be built in. A wave means
+      <b>nothing in it is blocked</b>, not that all of it runs at once: units sharing a file are
+      boxed together and must be taken one at a time.</p>
+    <div class="cutbar">${seg}<span class="muted">A test unit and the unit it precedes are
+      separate tickets; filtering to one kind hides half of every pair.</span></div>
+    ${rows || `<p class="muted">Nothing matches this filter.</p>`}
+    <p class="muted" style="max-width:66ch">Order has <b>two</b> sources. Most of it is projected
+    from <code>depends_on</code> between spec entries. The rest is verification: <b>the unit
+    implementing a contract follows the unit holding the tests that judge it</b> — documentation
+    first, tests second, code last, ordered rather than asked for. A test unit has no outbound
+    edge to have, so it can never sit in a cycle; it is shown immediately before the work it
+    precedes rather than at the front of the project.
+    <br><br><b>The edges are the contract; these waves are a view.</b> A unit waits for what it
+    actually depends on, not for a whole wave to finish.</p>
+    ${unfollowedNote(source)}`;
 
-  // NOT the crossings KPI: that counts edges crossing each other in the
-  // spine, and this is a different number entirely. Writing one into the
-  // other's label is how a dashboard starts lying quietly.
-  $("k-xing").textContent="—";
-  $("n-h").textContent=S.edges.filter(e=>e.kind==="h").length;
-  $("n-e").textContent=S.edges.filter(e=>e.kind==="e").length;
-  $("vb-note").textContent=S.maxStep===0
-    ? "no dependencies in this layer — everything can be worked at once"
-    : (S.maxStep+1)+" steps deep · "+S.crossSlice+" of "+
-      S.edges.filter(e=>e.kind==="h").length+" dependencies cross a slice";
-  $("hint").textContent="left to right is dependency order · a lane above another is a "+
-    "slice it waits on · click an entry for its chain";
-  applyView();
-  if(!KEEP_VIEW) requestAnimationFrame(fit);
+  const c=$("do-cut"); if(c) c.onclick=cutUnits;
+  for(const b of $("order").querySelectorAll("#unit-kind .segb"))
+    b.onclick=()=>{ UNIT_KIND=b.dataset.k; SEL_UNIT=null; drawOrder(); resetInspector(); };
+  for(const b of $("order").querySelectorAll(".card"))
+    b.onclick=()=>{
+      SEL_UNIT = SEL_UNIT===b.dataset.unit ? null : b.dataset.unit;
+      drawOrder(); SEL_UNIT ? showUnit(SEL_UNIT) : resetInspector();
+    };
 }
 
-function drawScene(){ MODE==="order" ? drawOrder() : drawSpine(); }
-
+/* The canvas has one occupant now. Order left it for a pane of its own,
+   because a timeline of cards is a document and not a graph. */
+function drawScene(){ drawSpine(); }
 
 /* =============================================================
    READ VIEW
@@ -1687,30 +1768,15 @@ function litSet(){
   return new Set([...ids, ...ids.map(GHOST)]);
 }
 
-/* The work unit a selection belongs to, as a set of node ids. THIS is
-   work units on the spine, and it is deliberately not a hull and not a
-   column: a unit groups entries and files across columns and across both
-   bands, so any permanent shape drawn around one states an adjacency the
-   graph does not have. Shown on demand instead -- select anything, and
-   the branch it would be built on lights up with it. */
-function unitSet(){
-  const key = sel && unitOf(sel);
-  if(!key) return null;
-  const out=new Set();
-  for(const id of Object.keys(UNITX)) if(UNITX[id]===key){ out.add(id); out.add(GHOST(id)); }
-  return out;
-}
-
 /* THE only writer of visual state. Every control calls this and
    nothing else touches a class -- which is what makes "clear it" a
    real operation rather than a second code path that has to
    remember to undo whatever the first one did. */
 function repaint(){
-  const g=$("scene"), lit=litSet(), unit=unitSet();
+  const g=$("scene"), lit=litSet();
   for(const n of g.querySelectorAll(".node")){
     const inSlice = !focusSlice || n.dataset.slice===focusSlice;
     n.classList.toggle("sel", n.dataset.real===sel);
-    n.classList.toggle("peer", !!(unit && unit.has(n.dataset.id) && n.dataset.real!==sel));
     n.classList.toggle("dim", !inSlice || !!(lit && !lit.has(n.dataset.id)));
   }
   for(const p of g.querySelectorAll(".edge")){
@@ -1760,6 +1826,12 @@ function pick(id){
      <h3>Radius</h3>
      <p class="muted"><b style="color:var(--ink);font-size:15px">${down.size}</b> entries downstream ·
         <b style="color:var(--ink);font-size:15px">${side.served.size}</b> waiting on it in-layer</p>`;
+  const go=$("to-order");
+  if(go) go.onclick=()=>{
+    const key=unitOf(id);
+    ARRIVING=true; show("order"); ARRIVING=false;
+    SEL_UNIT=key; drawOrder(); showUnit(key);
+  };
   if(!e.module) loadBody(id);
 }
 
@@ -1774,12 +1846,12 @@ function verifyPanel(e){
 
   if(e.test && !e.module){
     const files=modulesOf(e.id);
-    return `<h3>Scenario</h3>
+    return `<h3>Test</h3>
       ${pill("judges \u2014 exactly one contract", e.derives)}
       ${files.length
         ? pill("written in", files.map(f=>f.id))
         : `<p class="muted">No file implements this yet, so it is in no work
-           unit and orders nothing. <b>Not a failure</b> \u2014 a scenario that
+           unit and orders nothing. <b>Not a failure</b> \u2014 a test that
            has been specified but not built is not yet expected to pass.</p>`}`;
   }
   if(e.module || e.layer!==LIX.S) return "";
@@ -1799,40 +1871,21 @@ function verifyPanel(e){
     rather than asked for.</p>`;
 }
 
-/* The branch this node would be built on. Named here rather than drawn as
-   a shape on the graph: a unit groups across columns and across both
-   bands, so a hull around one asserts an adjacency that does not exist.
-   Selecting the node lights its peers instead. */
+/* Which ticket would build this, and nothing more.
+
+   The spine answers "what derives from what". A work unit is a different
+   question -- what gets handed out, in what order, beside what else -- and
+   it has a view of its own now. Rendering it in both places was two
+   renderings of one fact free to drift apart, which is the failure this
+   design refuses everywhere else. So: the name, and a way to go there. */
 function unitPanel(e){
   const key=unitOf(e.id);
   if(!key) return `<h3>Work unit</h3>
     <p class="muted">In none \u2014 no file implements this, so it is in no
     piece of work yet.</p>`;
-  const src=unitSource();
-  const byKey=Object.fromEntries(((src&&src.units)||[]).map(u=>[u.key,u]));
-  const u=byKey[key]||{}, follows=((src&&src.edges)||{})[key]||[];
-  const followedBy=Object.entries((src&&src.edges)||{})
-    .filter(pair=>(pair[1]||[]).includes(key)).map(pair=>pair[0]);
-  const label=k=>((byKey[k]||{}).tests?"tests: ":"")+(((byKey[k]||{}).modules||[])[0]||k);
-  const nMod=(u.modules||[]).length, nEnt=(u.entries||[]).length;
   return `<h3>Work unit</h3>
-    <p><code>${esc(key)}</code>${u.tests?` \u00b7 <b class="tstag">tests</b>`:""}</p>
-    <p class="muted">${nMod} file${nMod===1?"":"s"} \u00b7 ${nEnt} entr${
-      nEnt===1?"y":"ies"} \u00b7 ${
-      follows.length?`follows ${follows.length}`:"waits on nothing"}${
-      followedBy.length?` \u00b7 ${followedBy.length} waiting on it`:""}</p>
-    <p class="muted">${u.tests
-      ? "A unit holding test files has no outbound edge to have, so it is a <b>root</b>: it lands in wave 0 and cannot sit inside a cycle."
-      : "Its files are disjoint from every other unit's by construction, so nothing else can be editing them while this is built."}</p>
-    ${follows.length?`<div class="edgelist"><span>follows</span>${
-      follows.map(k=>`<span class="pill flat">${esc(label(k))}</span>`
-      ).join("")}</div>`:""}
-    ${followedBy.length?`<div class="edgelist"><span>waited on by</span>${
-      followedBy.map(k=>`<span class="pill flat">${esc(label(k))}</span>`
-      ).join("")}</div>`:""}
-    ${(STATE.units&&STATE.units.cut)?`<p class="muted">From the live graph.
-      The stored cut is what work was actually handed out from — see
-      Waves.</p>`:""}`;
+    <p><code>${esc(key)}</code></p>
+    <button class="pill" id="to-order">open in Order \u2192</button>`;
 }
 
 /* A body is fetched only when an entry is actually opened. The spine
@@ -1869,8 +1922,8 @@ function resetInspector(){
   <p class="muted"><b>⌒ dashed</b> emits_into, same layer, only into a cross-cutting slice.
   Imposes no order.</p>
   <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>
-  <h3>Scenarios</h3>
-  <p class="muted">A scenario forks off spec rather than continuing under it, so it is
+  <h3>Tests</h3>
+  <p class="muted">A test forks off spec rather than continuing under it, so it is
   never the fifth link in the chain. Two ways to draw that, and they trade against each
   other — <b>band</b> and <b>inline</b>, in the bar above.</p>
   ${LAYOUT==="band"
@@ -1884,13 +1937,14 @@ function resetInspector(){
        contract they judge. Nothing is duplicated and the whole derivation reads straight
        across. The cost: verification stops being one thing you can look at, and a
        project with few scenarios has a mostly empty column running its height.</p>`}
-  <p class="muted"><b>dashed scenario</b> written, no file yet. It is in no work unit, so
+  <p class="muted"><b>dashed test</b> written, no file yet. It is in no work unit, so
   it orders nothing and is not yet expected to pass — not a failure.</p>
   <h3>Work units</h3>
-  <p class="muted">Select anything and the rest of its work unit lights up — the files and
-  entries that would be built on one branch. Shown on selection rather than drawn as a
-  shape, because a unit groups across columns and across both bands, and any outline
-  around one states an adjacency the graph does not have.</p>`;
+  <p class="muted">Not drawn here. A unit groups entries and files across columns and
+  across both bands, so any outline around one on this graph would state an adjacency
+  the graph does not have — and what a unit is <i>for</i> is an order to build in, which
+  is a different picture. Select an entry and its unit is named, with a way through to
+  <b>Order</b>, where that picture lives.</p>`;
 }
 
 /* Blank canvas, or Escape, releases whichever mode is active. */
@@ -1931,17 +1985,10 @@ function drawWaves(){
     A cross-cutting slice lands in wave 0 by construction — the edge rules leave it no outbound
     dependency to have.
     <br><br>This is an <b>authoring</b> order. It says which slice may be derived next, not which
-    file may be built next — those are different questions with different answers.</p>
-    ${unitWaves()}`;
+    file may be built next — those are different questions with different answers, and the
+    second one is the <b>Order</b> view.</p>`;
   $("k-waves").textContent=STATE.waves.length||1;
 
-  const cut = $("do-cut");
-  if(cut) cut.onclick = cutUnits;
-  for(const b of $("waves").querySelectorAll(".unitchip"))
-    b.onclick = () => {
-      SEL_UNIT = SEL_UNIT === b.dataset.unit ? null : b.dataset.unit;
-      drawWaves(); showUnit(SEL_UNIT);
-    };
 }
 
 /* Scenarios judging a contract nobody is building. Ordinary and temporary
@@ -2003,7 +2050,6 @@ No other unit writes these files, so nothing else can be editing them while this
     b.onclick = () => { SEL_UNIT = b.dataset.unit; drawWaves(); showUnit(SEL_UNIT); };
 }
 
-let SEL_UNIT = null;
 
 /* Cutting is a person's decision, which is why it is a button here and not a
    tool an agent can reach. Every gate can be green while the author is still
@@ -2054,96 +2100,6 @@ async function cutUnits(){
    waves answer "what may be built next", and they disagree — a slice
    scheduled late can hold files that depend on nothing at all. Showing only
    the first reads as a bottleneck that is not there. */
-function unitWaves(){
-  const u = STATE.units;
-  const source = (u && u.cut) || (u && u.live) || null;
-  const flash = STATE.cutFlash
-    ? `<div id="cutflash" class="${esc(STATE.cutFlash.kind)}">${esc(STATE.cutFlash.text)}</div>`
-    : "";
-  const button = STATE.project
-    ? `<button id="do-cut" class="cutbtn">${u && u.cut ? "Re-cut" : "Cut work units"}</button>`
-    : "";
-  const bar = `<div class="cutbar">${button}<span class="muted">Cutting is yours to do — an
-    agent is never offered it, because a session that could cut would be deciding you had
-    finished revising. Re-cutting is free.</span></div>${flash}`;
-  if(!source || !(source.units || []).length){
-    return `<h3 class="again">Building — the order work units may be built in</h3>${bar}
-      <p class="muted" style="max-width:64ch">No work units yet. A work unit is a set of files and
-      the spec entries they implement, grouped so that no two units share a file — which is what
-      lets two branches run at once without being able to collide. They appear once modules are
-      declared and a person cuts the project into them.</p>`;
-  }
-  const byKey = Object.fromEntries(source.units.map(x=>[x.key,x]));
-  const sliceWave = {};
-  for(const w of STATE.waves) for(const name of (w.slices||[])) sliceWave[name]=w.wave;
-
-  // A unit whose slices are all scheduled later than the unit itself. Slice
-  // order over-serialises the build, and this is the size of that.
-  const early = source.units.filter(x=>{
-    const w = (source.waves||[]).findIndex(v=>(v.units||[]).includes(x.key));
-    const latest = Math.max(-1, ...(x.slices||[]).map(s=>sliceWave[s] ?? -1));
-    return w >= 0 && latest > w;
-  });
-
-  const over = (source.overlap||{});
-  const rows = (source.waves||[]).map(w=>
-    `<div class="wave"><div class="lbl">wave ${w.wave}</div><div class="unitbody">`+
-    (w.units||[]).map(k=>{
-      const x = byKey[k] || {};
-      const mods = x.modules || [], ents = x.entries || [], sls = x.slices || [];
-      const only = sls.length === 1 ? sls[0] : null;
-      const follows = ((source.edges||{})[k]||[]).length;
-      const waiting = Object.values(source.edges||{})
-        .filter(v=>(v||[]).includes(k)).length;
-      return `<button class="unitchip${sls.length>1?" multi":""}${
-          x.tests?" tst":""}"
-          style="--sl:${hueOf(only||"unsliced")}" data-unit="${esc(k)}"
-          aria-pressed="${SEL_UNIT===k}">
-        <b>${esc(mods[0]||k)}</b>
-        ${mods.length>1?`<span class="more">+ ${esc(mods.slice(1).join(", "))}</span>`:""}
-        <span class="facts">
-          ${x.tests?`<em class="tstag">scenarios</em>`:""}
-          <em>${ents.length} ${ents.length===1?"entry":"entries"}</em>
-          <em>${mods.length} ${mods.length===1?"file":"files"}</em>
-          ${follows?`<em>follows ${follows}</em>`:`<em>waits on nothing</em>`}
-          ${waiting?`<em>${waiting} waiting on it</em>`:""}
-          ${(over[k]||[]).length?`<em>shares ${over[k].length} file-set${
-            over[k].length===1?"":"s"}</em>`:""}
-          ${sls.length>1?`<em>${sls.length} slices</em>`:""}
-        </span></button>`;
-    }).join("")+
-    `<span class="wwidth">${(w.units||[]).length} wide</span></div></div>`).join("");
-
-  const note = early.length
-    ? `<div class="earlynote"><b>${early.length} work unit${early.length===1?"":"s"}
-       ${early.length===1?"is":"are"} buildable before ${early.length===1?"its":"their"} slice</b>
-       Slice order says these come later; nothing they depend on says so. Reading a slice wave as a
-       build order leaves work on the floor.</div>`
-    : "";
-
-  return `<h3 class="again">Building — the order work units may be built in</h3>${bar}
-    ${u.cut ? `<p class="muted">From cut ${u.cut.seq}${
-        u.cut.note ? " — " + esc(u.cut.note) : ""}${
-        u.drift && u.drift.changed && u.drift.changed.length
-          ? ` · <span class="warnish">${u.drift.changed.length} unit${
-              u.drift.changed.length===1?" has":"s have"} moved since</span>`
-          : " · matches the graph"}</p>`
-      : `<p class="muted warnish">No cut taken — showing the live projection. Cutting is a person's
-         decision, and nothing here has been handed out yet.</p>`}
-    ${note}${rows}
-    <p class="muted" style="max-width:64ch">A work unit is a maximal connected group of spec entries
-    and the files implementing them. Its files are disjoint from every other unit's <b>by
-    construction</b>, so two units in one wave cannot produce a merge conflict — that is a property
-    of the grouping, not a rule anyone has to follow.
-    <br><br>Order has <b>two</b> sources. Most of it is projected from <code>depends_on</code> one
-    layer down. The rest is verification: <b>the unit implementing a contract follows the unit
-    holding the scenarios that judge it</b> — documentation first, tests second, code last, ordered
-    rather than asked for. A unit holding test files has no outbound edge to have, so it is always
-    a root and always lands in wave 0; that is why this ordering can never deadlock.
-    <br><br><b>The edges are the contract; these waves are a view.</b> A unit waits for what it
-    actually depends on, not for a whole wave to finish.</p>${unfollowedNote(source)}`;
-}
-
 /* =============================================================
    MODULES
 
@@ -2232,7 +2188,7 @@ function verifySection(ix){
     </div>`;
   }).join("");
 
-  return `<h3 class="again">Verification — contract to scenario</h3>${head}${pending}
+  return `<h3 class="again">Verification — contract to test</h3>${head}${pending}
     ${rows?`<div class="modslice" style="--sl:var(--brand)">
       <h4>scenarios<em>${ix.tests.length-nPending}/${ix.tests.length} built</em></h4>
       ${rows}</div>`:""}
@@ -2654,16 +2610,16 @@ function drawLegend(){
 function show(v){
   for(const b of document.querySelectorAll("nav .view"))
     b.setAttribute("aria-current",b.dataset.v===v);
-  const onCanvas = v==="spine" || v==="order";
+  const onCanvas = v==="spine";
   const reading = v==="read";
   $("canvas").classList.toggle("hide",!onCanvas);
   $("read").classList.toggle("hide",!reading);
+  $("order").classList.toggle("hide",v!=="order");
   $("waves").classList.toggle("hide",v!=="waves");
   $("modules").classList.toggle("hide",v!=="modules");
   $("queues").classList.toggle("hide",v!=="queues");
   $("viewbar").hidden = !(onCanvas||reading);
   $("vb-spine").hidden = v!=="spine";
-  $("vb-order").hidden = v!=="order";
   $("vb-read").hidden  = !reading;
   if(onCanvas && v!==MODE){
     MODE=v; sel=null; focusSlice=null;
@@ -2673,6 +2629,9 @@ function show(v){
   // back when leaving -- it is the same column serving two jobs.
   if(reading){ MODE="read"; sel=null; drawRead(); }
   else if(MODE==="read" && !onCanvas){ MODE="spine"; resetInspector(); }
+  // Selection is per view: a unit selected in Order means nothing on the
+  // spine, and an entry selected on the spine means nothing here.
+  if(v==="order" && !ARRIVING){ SEL_UNIT=null; drawOrder(); resetInspector(); }
 }
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
@@ -2682,8 +2641,6 @@ for(const b of document.querySelectorAll("#lay-seg .segb"))
     for(const o of document.querySelectorAll("#lay-seg .segb"))
       o.setAttribute("aria-pressed", o.dataset.lay===LAYOUT);
     syncLegend(); drawScene(); resetInspector(); };
-$("ord-layer").onchange=()=>{ ORDER_LAYER=+$("ord-layer").value; sel=null;
-  syncLegend(); drawOrder(); resetInspector(); };
 $("rd-layer").onchange=()=>{ RD_LAYER=$("rd-layer").value; drawRead(); };
 // Debounced: every keystroke re-renders the whole document otherwise.
 let rdTimer=null;
@@ -2802,7 +2759,7 @@ function reconcile(d){
   try{
     if(changed("strip") || changed("gates")) drawStrip();
     if(changed("proposal")) drawPending();
-    if(structural){ drawLegend(); drawLayerPicker(); drawReadPicker(); }
+    if(structural){ drawLegend(); drawReadPicker(); }
     if(structural && MODE !== "read"){
       drawScene();
       // drawScene rebuilds every node, discarding the classes that carry
@@ -2933,24 +2890,6 @@ function drawStrip(){
   $("k-loc").textContent=STATE.locality==null?"–":Number(STATE.locality).toFixed(2);
 }
 
-/* Only layers that hold entries, and each labelled with whether it has any
-   dependencies at all -- offering Intent here would promise a dependency
-   view of a layer that structurally cannot have one. */
-function drawLayerPicker(){
-  const sel=$("ord-layer");
-  const opts=LAYERS.map((L,i)=>({i,name:L[1],
-      n:STATE.entries.filter(e=>e.layer===i).length,
-      d:STATE.entries.filter(e=>e.layer===i).reduce((a,e)=>a+e.deps.length,0)}))
-    .filter(o=>o.n>0 && o.i!==TEST_LAYER);
-  sel.innerHTML=opts.map(o=>
-    `<option value="${o.i}">${esc(o.name)} · ${o.n} entries${
-      o.d?" · "+o.d+" deps":" · no dependencies"}</option>`).join("");
-  // Open on the layer with the most to show, not the first that exists.
-  const best=opts.filter(o=>o.d>0).sort((a,b)=>b.d-a.d)[0] || opts[0];
-  if(best && !opts.some(o=>o.i===ORDER_LAYER && o.d>0)) ORDER_LAYER=best.i;
-  if(opts.length) sel.value=String(ORDER_LAYER);
-}
-
 function drawReadPicker(){
   const sel=$("rd-layer");
   const opts=readOrder().map(l=>({l,name:LAYERS[LIX[l]][1],
@@ -2962,7 +2901,7 @@ function drawReadPicker(){
 }
 
 function redraw(){
-  drawStrip(); drawPending(); drawLegend(); drawLayerPicker(); drawReadPicker();
+  drawStrip(); drawPending(); drawLegend(); drawReadPicker();
   drawScene(); drawWaves(); drawModules(); drawQueues();
   clearAll();
 }
