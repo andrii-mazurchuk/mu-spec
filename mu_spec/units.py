@@ -591,6 +591,12 @@ class Cut:
     untested: tuple[Identifier, ...] = ()
     unimplemented_tests: tuple[Identifier, ...] = ()
     unfollowed_tests: tuple[str, ...] = ()
+    # An order that was real and could not be drawn. Recorded for the same
+    # reason as the three above: a cut answers what was true when work went
+    # out, and "this unit should have waited for something, and the
+    # projection could not say what" is exactly the kind of thing nobody
+    # reconstructs afterwards from a graph that has moved on.
+    dangling: tuple[Identifier, ...] = ()
 
     def by_key(self) -> dict[str, Unit]:
         return {u.key: u for u in self.units}
@@ -613,6 +619,7 @@ class Cut:
             "untested": [str(i) for i in self.untested],
             "unimplemented_tests": [str(i) for i in self.unimplemented_tests],
             "unfollowed_tests": list(self.unfollowed_tests),
+            "dangling": [str(i) for i in self.dangling],
         }
 
 
@@ -690,6 +697,7 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
                     parse(i) for i in raw.get("unimplemented_tests", ())
                 ),
                 unfollowed_tests=tuple(raw.get("unfollowed_tests", ())),
+                dangling=tuple(parse(i) for i in raw.get("dangling", ())),
             )
         )
     return tuple(out)
@@ -740,6 +748,7 @@ def append_cut(
             str(i) for i in projection.unimplemented_tests
         ],
         "unfollowed_tests": list(projection.unfollowed_tests),
+        "dangling": [str(i) for i in projection.dangling],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -755,6 +764,7 @@ def append_cut(
         untested=projection.untested,
         unimplemented_tests=projection.unimplemented_tests,
         unfollowed_tests=projection.unfollowed_tests,
+        dangling=projection.dangling,
     )
 
 

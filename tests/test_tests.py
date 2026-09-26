@@ -432,6 +432,23 @@ def test_a_cut_records_what_verification_looked_like(tmp_path):
     assert "untested" in back.to_json()
 
 
+def test_a_cut_records_an_order_it_could_not_draw(tmp_path):
+    """A depends_on target in no unit. The edge is real and the projection
+    cannot draw it, so the unit that should have waited does not visibly
+    wait -- and after the graph moves on, nobody reconstructs which order
+    was missing at the moment work went out."""
+    from mu_spec.units import append_cut, current_cut, project
+
+    manifest = _manifest({"a.py": "S·01"})
+    graph = _graph(_spec("S·01", depends_on="S·09"), _spec("S·09"))
+    path = tmp_path / "units.jsonl"
+    proj = project(manifest, graph)
+    assert proj.dangling == (parse("S·09"),)
+
+    append_cut(path, proj, now_fn=lambda: 1.0)
+    assert current_cut(path).dangling == (parse("S·09"),)
+
+
 def test_a_cut_written_before_this_reloads_as_unsaid(tmp_path):
     """Not as zero. A log line that never carried the field is silent about
     it, and reading silence as "nothing was untested" would invent a fact
