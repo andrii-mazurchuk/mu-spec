@@ -609,10 +609,28 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "check_gates",
-            "Soundness and completeness. Sound means no orphans -- nothing "
-            "derives from something missing, retired, or below it. Complete "
-            "means nothing is unserved -- knowledge has reached spec on every "
-            "branch. Unsound blocks work; incomplete is the to-do list.",
+            "Soundness and completeness. Sound means nothing is malformed "
+            "and nothing is half-corrected; unsound blocks work. Complete "
+            "means no findings at all -- knowledge has reached spec on every "
+            "branch and every contract can be caught failing; incomplete is "
+            "the to-do list and blocks nothing. "
+            "Blocking kinds: `orphan` (derives from something missing, "
+            "sideways, or nothing at all), `bad_dependency`, `bad_emission`, "
+            "and `stranded`. "
+            "`stranded` is the one to read differently: it means a parent "
+            "was RETIRED and the finding names the successor, so nothing is "
+            "malformed -- a correction landed and has not been carried down "
+            "yet. It blocks because work must not be issued from a spec "
+            "citing a retired contract, but the remedy is to re-derive, not "
+            "to repair. Correcting a TESTED spec entry strands its "
+            "scenarios; re-pointing them is a follow-on `verification` "
+            "request, because an amendment writes one layer. "
+            "Reporting kinds, which never block: `unserved`, `untested`, and "
+            "`stale_emission` -- an emission whose target was retired. That "
+            "one does not block because an emission consumes nothing, so a "
+            "successor on the other end changes nothing the emitter relied "
+            "on; an emitter that needs its target's shape has declared a "
+            "dependency by mistake.",
             "GET",
             "/projects/{project}/gates",
             {"project": s},

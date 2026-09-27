@@ -664,6 +664,55 @@ def test_slice_context_grants_no_edit_permission(store, prompts):
     assert [e["id"] for e in payload["entries"]] == ["S·01"]
 
 
+def test_deriving_from_an_already_retired_parent_is_refused(store, prompts):
+    """The other half of the stranded rule, and the reason a kind alone is
+    not enough to decide admission.
+
+    An amendment that retires something is SUPPOSED to strand whatever
+    derived from it -- that is the blast radius, and it is admitted and
+    reported. Writing a brand new entry that cites a parent someone else
+    retired earlier is a different act: nothing about it is blast radius,
+    and it puts a reference into the graph that was stale the moment it was
+    written. Both report `stranded`; only the first is admitted."""
+    seed(store, prompts)
+    _, msg = post(store, prompts, "correction", "ranking is wrong")
+    status, first = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [{
+                "layer": "B",
+                "title": "ranked by rating",
+                "derives_from": ["I\u00b701"],
+                "supersedes": "B\u00b701",
+            }],
+        },
+    )
+    # The supersession itself lands, stranding the architecture beneath it.
+    assert first["admitted"] is True, first
+
+    # The same request, carrying on downward: origination is already past,
+    # so this is a propagation and the layer rule lets it write at A. What
+    # it must not do is cite the parent the step above just retired.
+    status, second = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {
+            "slice": "listings",
+            "in_response_to": msg["message_id"],
+            "entries": [{
+                "layer": "A",
+                "title": "a fresh architecture citing the retired behaviour",
+                "derives_from": ["B\u00b701"],
+            }],
+        },
+    )
+    assert status == 409, second
+    assert second.get("admitted") is False or "error" in second, second
+    kinds = [f["kind"] for f in second.get("findings", [])]
+    assert kinds == ["stranded"], second
+
+
 def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
     """The realistic path to unsound: a correction retires B·01, and A·01
     is left pointing at a retired entry. The architecture is now a stale
@@ -695,9 +744,13 @@ def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
     assert status == 409
     assert payload["issued"] is False
     assert payload["gates"]["sound"] is False
-    assert [f["id"] for f in payload["gates"]["findings"] if f["kind"] == "orphan"] == [
-        "A·01"
-    ]
+    # Stranded rather than orphaned: nothing is malformed, a correction is
+    # half-carried. It blocks all the same -- producing code from a spec
+    # whose architecture cites a retired entry is what the blast radius
+    # exists to prevent.
+    assert [
+        f["id"] for f in payload["gates"]["findings"] if f["kind"] == "stranded"
+    ] == ["A·01"]
 
 
 def test_slice_context_is_still_issued_while_another_branch_is_incomplete(

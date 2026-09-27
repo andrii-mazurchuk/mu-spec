@@ -3,6 +3,7 @@ from __future__ import annotations
 from mu_spec.gates import (
     BAD_DEPENDENCY,
     ORPHAN,
+    STRANDED,
     UNSERVED,
     UNTESTED,
     admission_gates,
@@ -161,10 +162,16 @@ def test_a_superseded_entry_is_not_reported_as_unserved():
     assert unserved_ids == ["B·02"]
 
 
-def test_deriving_from_a_superseded_entry_is_an_orphan():
-    """The replacement carries the identifier that should be referenced. An
-    edge left pointing at the retired one is a stale reference, which is the
-    exact rot the append-only rule exists to make visible."""
+def test_deriving_from_a_superseded_entry_is_stranded_not_orphaned():
+    """The replacement carries the identifier that should be referenced, so
+    an edge left pointing at the retired one is a stale reference -- the
+    exact rot the append-only rule exists to make visible.
+
+    It is reported as its own kind because it is not the same event as a
+    broken reference. Nothing here is malformed: a correction landed and has
+    not been carried down yet, which is the ordinary course of one. It still
+    blocks, and the finding names the successor, so the remedy travels with
+    the complaint."""
     graph = Graph(
         [
             _entry("I·01"),
@@ -173,9 +180,34 @@ def test_deriving_from_a_superseded_entry_is_an_orphan():
             _entry("A·01", "B·01"),
         ]
     )
-    findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
-    assert [str(f.id) for f in findings] == ["A·01"]
-    assert "superseded" in findings[0].detail
+    findings = admission_gates(graph)
+    stranded = [f for f in findings if f.kind == STRANDED]
+    assert [str(f.id) for f in stranded] == ["A·01"]
+    assert "B·02" in stranded[0].detail, "the successor is not named"
+    assert not [f for f in findings if f.kind == ORPHAN]
+
+
+def test_a_real_defect_alongside_a_retirement_outranks_it():
+    """Stranded means retirement is the WHOLE story. An entry that also
+    holds a dangling or sideways reference has a defect of its own, and
+    filing it as stale would put a broken edge on the to-be-re-derived pile
+    instead of the to-be-fixed one."""
+    graph = Graph(
+        [
+            _entry("I·01"),
+            _entry("B·01", "I·01"),
+            _entry("B·02", "I·01", supersedes=parse("B·01")),
+            _entry("A·01", "B·01 B·99"),
+        ]
+    )
+    findings = admission_gates(graph)
+    kinds = [f.kind for f in findings
+             if f.id == parse("A·01") and f.kind in (ORPHAN, STRANDED)]
+    assert kinds == [ORPHAN]
+    detail = next(f for f in findings if f.id == parse("A·01")).detail
+    assert "B·99" in detail and "superseded" in detail, (
+        "both objections must survive into the one finding"
+    )
 
 
 # -- reporting shape --------------------------------------------------------

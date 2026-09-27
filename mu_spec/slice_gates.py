@@ -52,6 +52,10 @@ from mu_spec.storage import CROSS_CUTTING, Manifest
 DEPENDENCY_CYCLE = "dependency_cycle"
 CROSS_CUTTING_OUTBOUND = "cross_cutting_outbound"
 BAD_EMISSION = "bad_emission"
+# An emission whose target was RETIRED rather than broken. Reported, never
+# refused: an emission consumes nothing, so a successor on the other end
+# changes nothing the emitter relied on. See the branch that raises it.
+STALE_EMISSION = "stale_emission"
 OVERLAPPING_MEMBERSHIP = "overlapping_membership"
 
 
@@ -149,6 +153,7 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
 
     for entry in graph.entries():
         problems: list[str] = []
+        stale: list[str] = []
 
         for target in entry.depends_on:
             owner = manifest.slice_of(target)
@@ -170,7 +175,29 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
                     "horizontal, like a dependency"
                 )
             elif graph.superseded_by(target) is not None:
-                problems.append(
+                # Reported, never refused, and this is the one place the
+                # emission rule parts company with the dependency rule.
+                #
+                # A dependency on a retired entry blocks because the
+                # dependent CONSUMED a meaning that has since moved. An
+                # emission consumes nothing -- that is the whole definition,
+                # and it is why an emission imposes no order and why a
+                # concern is derivable before everything that emits into it.
+                # If nothing came back, nothing moved for the emitter.
+                #
+                # The test that settles it: an emitter that needs to know
+                # the target's shape has declared the wrong edge kind.
+                # Needing what is on the other end is what makes something a
+                # dependency. So either the emission is true and the
+                # supersession is irrelevant to it, or the edge was
+                # mislabelled and the repair is the edge rather than this
+                # gate. Refusing here was the dependency rule inherited
+                # rather than argued.
+                #
+                # A target that never existed is still refused, below. That
+                # one is a dangling edge; this one is a retired entry whose
+                # successor the graph can name.
+                stale.append(
                     f"{target} is superseded by {graph.superseded_by(target)}"
                 )
             elif target not in graph:
@@ -183,10 +210,15 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
                     "off"
                 )
 
+        # Two kinds, because one entry can hold both a broken emission and a
+        # merely stale one, and collapsing them would make the blocking half
+        # invisible behind the reported half.
         if problems:
             findings.append(Finding(BAD_EMISSION, entry.id, "; ".join(problems)))
+        if stale:
+            findings.append(Finding(STALE_EMISSION, entry.id, "; ".join(stale)))
 
-    return sorted(findings, key=lambda f: sort_key(f.id))
+    return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
 
 
 def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:

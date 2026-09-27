@@ -286,9 +286,28 @@ Identifiers contain `·` (U+00B7). Raw or percent-encoded both work.
 
 ## Two health questions, reported separately
 
-- **Sound** -- every edge lands where it should. Unsound **blocks**: writes
-  are refused and no work unit is issued. Fix the graph; do not work
-  around it.
+- **Sound** -- every edge lands where it should, and no correction is
+  half-carried. Unsound **blocks**: writes are refused and no work unit is
+  issued.
+
+  Two shapes of unsound, and they want different responses. A `orphan`,
+  `bad_dependency` or `bad_emission` is **malformed** -- fix the graph, do
+  not work around it. A **`stranded`** entry is well formed and merely
+  behind: a parent was retired and the finding names its successor. The
+  remedy is to re-derive, not to repair.
+
+  Correcting a **tested** spec entry strands every scenario judging it,
+  the moment the supersession lands. That is the blast radius working, not
+  a defect. Re-pointing those scenarios is a separate `verification`
+  request -- an amendment writes one layer, so the session that supersedes
+  the contract cannot also rewrite the tests. Expect two requests for one
+  correction, and expect the graph to stay unsound in between.
+
+  A `stale_emission` does **not** block. An emission consumes nothing, so a
+  successor on the other end changes nothing the emitter relied on -- and
+  an emitter that needs its target's shape has declared a dependency by
+  mistake. Reported so the drift is visible; refusing it would be the
+  dependency rule applied to an edge that is not one.
 - **Complete** -- knowledge has reached spec on every branch. Incomplete
   **never blocks**. It is the to-do list, and `unserved` findings are that
   list rather than defects.

@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, admission_gates
+from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, STRANDED, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     ALL_LAYERS,
@@ -51,9 +51,15 @@ from mu_spec.waves import schedule
 
 COMMENTS_FILE = "comments.jsonl"
 
-# Everything except `unserved`. Being incomplete is the ordinary state of a
-# project mid-propagation; everything else here means the graph is wrong now.
-_BLOCKING = (ORPHAN, BAD_DEPENDENCY, BAD_EMISSION)
+# What makes a graph unsound. Three of these mean it is wrong NOW; the
+# fourth means a correction is half-finished, which withholds work packages
+# for a different reason and is not a defect.
+#
+# Deliberately absent: `unserved` and `untested`, which are the to-do list;
+# and `stale_emission`, because an emission consumes nothing, so a successor
+# on the other end changes nothing the emitter relied on -- see the branch
+# in `slice_gates` that raises it.
+_BLOCKING = (ORPHAN, BAD_DEPENDENCY, BAD_EMISSION, STRANDED)
 
 
 class ServiceError(ValueError):
@@ -86,16 +92,26 @@ def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
     """Two different questions, reported separately because they have
     different consequences.
 
-    `sound` -- no orphans, no broken horizontal edge, no slice-level finding.
-    A graph containing a claim that derives from nothing, that needs
-    something retired or nonexistent, or that is cut into slices which need
-    each other, is broken now. This blocks: amendments are refused and work
-    packages are not issued.
+    `sound` -- no orphans, no broken horizontal edge, nothing stranded by a
+    supersession, no slice-level finding. A graph containing a claim that
+    derives from nothing, that needs something retired or nonexistent, or
+    that is cut into slices which need each other, is broken now. This
+    blocks: amendments are refused and work packages are not issued.
 
-    `complete` -- nothing unserved. Knowledge has been carried all the way
-    down to spec on every branch. This does NOT block; being incomplete is
-    the ordinary state of a project mid-propagation, and it is the report of
-    what is left to do rather than a defect.
+    A *stranded* entry blocks for a different reason and is worth telling
+    apart. Nothing about it is malformed -- a parent retired and the
+    successor is named in the finding. What it means is that a correction is
+    half-finished, and issuing work packages from a spec whose scenarios
+    judge a retired contract is exactly what the blast radius exists to
+    prevent. Same consequence, different event, and a reader needs to know
+    which one they are looking at.
+
+    `complete` -- no findings at all: nothing unserved, nothing untested,
+    and none of the blocking kinds either. Knowledge has been carried all
+    the way down to spec on every branch and every contract can be caught
+    failing. This does NOT block; being incomplete is the ordinary state of
+    a project mid-propagation, and it is the report of what is left to do
+    rather than a defect.
 
     The two lists stay apart because they are about different things: an
     entry-level finding names an identifier, a slice-level one names a slice,
@@ -489,10 +505,16 @@ def submit_amendment(
     # re-derive, and the graph stays unsound until you do, which is what
     # withholds work packages in the meantime.
     #
-    # So the two kinds of new orphan are separated. Stranded-by-this-
+    # So the two kinds of new finding are separated. Stranded-by-THIS-
     # supersession is admitted and reported. Anything else -- a reference to
     # something that never existed, or one pointing the wrong way -- is
     # refused, because no amendment ever has a reason to introduce one.
+    #
+    # The kind alone is not enough, which is why the retired set is still
+    # consulted: an amendment that writes a NEW entry deriving from an
+    # already-retired parent also reports `stranded`, and that one is a
+    # defect rather than blast radius. Stranding something is the privilege
+    # of the amendment doing the superseding.
     retired = {str(e.supersedes) for e in staged if e.supersedes is not None}
     stale, blocking = [], []
     for finding in new_orphans:

@@ -3,9 +3,11 @@ from __future__ import annotations
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 from mu_spec.slice_gates import (
+    BAD_EMISSION,
     CROSS_CUTTING_OUTBOUND,
     DEPENDENCY_CYCLE,
     OVERLAPPING_MEMBERSHIP,
+    STALE_EMISSION,
     edge_gates,
     slice_gates,
 )
@@ -286,3 +288,87 @@ def test_an_entry_in_two_slices_is_refused():
 def test_distinct_membership_is_clean():
     manifest = _manifest(a=("S·01", "slice"), b=("S·02", "slice"))
     assert slice_gates(manifest, Graph([_entry("S·01"), _entry("S·02")])) == []
+
+
+# -- retired is not broken ---------------------------------------------------
+
+
+def _emitter(ident: str, emits_into: str = "", supersedes: str = "") -> Entry:
+    return Entry(
+        id=parse(ident),
+        emits_into=tuple(parse(e) for e in emits_into.split() if e),
+        supersedes=parse(supersedes) if supersedes else None,
+        title=ident,
+    )
+
+
+def _concern():
+    """One feature entry emitting into a cross-cutting concern that has been
+    corrected once: B\u00b702 retired, B\u00b703 carries the meaning now."""
+    return Manifest(
+        project="m",
+        slices={
+            "feature": Slice(name="feature", members={parse("B\u00b701")}),
+            "logging": Slice(
+                name="logging",
+                members={parse("B\u00b702"), parse("B\u00b703")},
+                type=CROSS_CUTTING,
+            ),
+        },
+    )
+
+
+def test_an_emission_into_a_superseded_target_is_reported_not_refused():
+    """The one place the emission rule parts company with the dependency
+    rule, and the reason is the definition of the edge.
+
+    A dependency on a retired entry blocks because the dependent CONSUMED a
+    meaning that has since moved. An emission consumes nothing -- that is
+    what makes it impose no order, and what lets a concern be derived before
+    everything that emits into it. If nothing came back, nothing moved for
+    the emitter.
+
+    The test that settles it: an emitter needing the target's shape has
+    declared the wrong edge kind, because needing what is on the other end
+    is what makes something a dependency. So either the emission is true and
+    the supersession cannot touch it, or the edge was mislabelled and the
+    repair is the edge. Refusing here was the dependency rule inherited
+    rather than argued for emissions."""
+    graph = Graph([
+        _emitter("B\u00b701", emits_into="B\u00b702"),
+        _emitter("B\u00b702"),
+        _emitter("B\u00b703", supersedes="B\u00b702"),
+    ])
+    findings = edge_gates(_concern(), graph)
+    stale = [f for f in findings if f.kind == STALE_EMISSION]
+    assert [str(f.id) for f in stale] == ["B\u00b701"]
+    assert "B\u00b703" in stale[0].detail, "the successor is not named"
+    assert not [f for f in findings if f.kind == BAD_EMISSION]
+
+
+def test_an_emission_into_something_that_never_existed_still_refuses():
+    """Stale is not broken. A retired target is an entry the graph still
+    holds and whose successor it can name; a target that never existed is a
+    dangling edge, and nothing about emissions makes that acceptable."""
+    graph = Graph([
+        _emitter("B\u00b701", emits_into="B\u00b799"),
+        _emitter("B\u00b702"),
+        _emitter("B\u00b703", supersedes="B\u00b702"),
+    ])
+    kinds = [f.kind for f in edge_gates(_concern(), graph)
+             if f.id == parse("B\u00b701")]
+    assert kinds == [BAD_EMISSION]
+
+
+def test_a_broken_emission_is_not_hidden_behind_a_stale_one():
+    """One entry can hold both. Collapsing them into a single finding would
+    put the blocking half behind the reported half, and the graph would read
+    as merely half-corrected while carrying a dangling edge."""
+    graph = Graph([
+        _emitter("B\u00b701", emits_into="B\u00b702 B\u00b799"),
+        _emitter("B\u00b702"),
+        _emitter("B\u00b703", supersedes="B\u00b702"),
+    ])
+    kinds = sorted(f.kind for f in edge_gates(_concern(), graph)
+                   if f.id == parse("B\u00b701"))
+    assert kinds == [BAD_EMISSION, STALE_EMISSION]

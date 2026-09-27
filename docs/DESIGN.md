@@ -427,6 +427,35 @@ before anyone said how it could fail.
 A fourth follows from the rules above rather than being decided: **tests are stored flat
 and join no slice** — §5 has the layout and the reason.
 
+### 4b.1b Correcting a tested contract takes two requests
+
+Amendments are append-only, so correcting a spec entry retires it and writes a
+successor. Every scenario deriving from the retired one is **stranded** that instant
+(§6): well formed, still pointing at a contract that has moved, and blocking until it is
+re-pointed.
+
+Nothing migrates them automatically, and nothing should. A scenario depends on its
+parent's *meaning*: whether it still falsifies the successor is exactly the judgement
+this unit does not make. Re-pointing is deliberate work by someone who reads both.
+
+Who does it follows from two rules already stated and is worth saying out loud, because
+on a corpus of any size it is the dominant cost of every correction:
+
+- **§10b** — an amendment writes entries at one layer. The session that supersedes the
+  spec entry writes `S` and cannot also write `T`.
+- **§4b.1a** — a `verification` request originates at `T`. That request type exists for
+  precisely this shape: every other type stopped at spec, so a standalone ask about how
+  a contract can fail had nowhere to originate.
+
+So the sequence is: a `correction` produces the spec supersession, and a follow-on
+`verification` produces the re-pointed scenarios. Two requests, two sessions, and the
+graph stays unsound in between — which is the point, because the scenarios judging the
+old contract must not be handed out as if they judged the new one.
+
+The cost is real and is not hidden: on `dark`, superseding two spec entries stranded
+seventeen scenarios. That is the blast radius doing its job, and it is why the finding
+names the successor — the work list is the gate report.
+
 ### 4b.2 Tests are the second source of truth
 
 Documentation first, tests second, code last. The agent implementing a spec entry
@@ -574,6 +603,7 @@ package is issued:*
 - Does every same-layer edge point at a live entry in the same layer? (bad dependencies)
 - Is every edge the right *kind* for what it points at — emissions into cross-cutting
   slices, dependencies into everything else? (bad emissions)
+- Is every derives-from edge pointing at a parent that is still live? (**stranded**)
 - Is the projected slice dependency graph acyclic? (bad slicing — see below)
 - Does any cross-cutting slice depend on a feature slice? (misclassification)
 - Does any entry belong to more than one slice? (overlapping ownership)
@@ -585,6 +615,31 @@ package is issued:*
 Blocking on completeness too would make every legitimate propagation illegal, because a
 half-propagated layer is always incomplete. Blocking on neither makes the gate
 decorative.
+
+**Stranded blocks, but it is not a defect, and the two must not be reported as one
+thing.** An orphan is malformed: it cites something that never existed, or points
+sideways, or traces to nothing. A *stranded* entry is well formed and merely behind —
+a parent retired, and the finding names the successor. It still blocks, because issuing
+work from a spec whose architecture cites a retired entry is precisely what the blast
+radius exists to prevent. But a reader needs to tell "a correction landed and has not
+been carried down yet", which is the ordinary course of correcting anything, from "this
+graph has a reference that never made sense". Filing both as `orphan` threw away a
+distinction the graph already held.
+
+**A retired *emission* target does not block, and this is the one place the emission
+rule parts company with the dependency rule.** A dependency on a retired entry blocks
+because the dependent **consumed** a meaning that has since moved. An emission consumes
+nothing — that is the whole definition of the edge, and it is why an emission imposes no
+order and why a concern is derivable before everything that emits into it. If nothing
+came back, nothing moved for the emitter.
+
+The test that settles it: **an emitter that needs to know its target's shape has
+declared the wrong edge kind.** Needing what is on the other end is what makes something
+a dependency. So either the emission is true and the supersession cannot touch it, or the
+edge was mislabelled and the repair is the edge rather than the gate. Refusing here was
+the dependency rule inherited rather than argued for emissions. It is reported as
+`stale_emission` and never refused. An emission into a target that never existed is a
+dangling edge and still blocks — stale is not broken.
 
 **A slice cycle is not a scheduling problem.** The entry graph can never cycle —
 `derives_from` runs strictly one layer up and `depends_on` strictly within a layer — so

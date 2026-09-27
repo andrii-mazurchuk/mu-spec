@@ -57,6 +57,13 @@ ORPHAN = "orphan"
 UNSERVED = "unserved"
 BAD_DEPENDENCY = "bad_dependency"
 UNTESTED = "untested"
+# An entry whose every derives-from problem is that a parent RETIRED. It
+# still blocks -- work packages must be withheld until it is re-derived --
+# but it is not the same event as a broken reference, and reporting it as
+# one hides the difference between the ordinary course of a correction and
+# a graph that never made sense. Its detail names the successor, so the
+# remedy is in the finding.
+STRANDED = "stranded"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -100,6 +107,9 @@ def orphans(graph: Graph) -> list[Finding]:
             continue
 
         problems: list[str] = []
+        # Kept apart from `problems` so that "every objection is a retired
+        # parent" can be answered without parsing the message back out.
+        retired: list[str] = []
         good = 0
         # A test derives from EXACTLY one spec entry, where every other layer
         # may derive from several. One scenario, one contract: a test citing
@@ -120,7 +130,7 @@ def orphans(graph: Graph) -> list[Finding]:
                     f"{parent} is not there"
                 )
             elif graph.superseded_by(parent) is not None:
-                problems.append(
+                retired.append(
                     f"{parent} is superseded by {graph.superseded_by(parent)}"
                 )
             elif parent not in graph:
@@ -128,8 +138,19 @@ def orphans(graph: Graph) -> list[Finding]:
             else:
                 good += 1
 
-        if good == 0 or problems:
-            findings.append(Finding(ORPHAN, entry.id, "; ".join(problems)))
+        # Stranded only when retirement is the WHOLE story. One live parent
+        # alongside a retired one is still stranded -- the justification that
+        # moved has to be re-derived either way -- but a dangling or
+        # sideways reference in the same entry is a defect of its own and
+        # outranks it.
+        if problems:
+            findings.append(
+                Finding(ORPHAN, entry.id, "; ".join(problems + retired))
+            )
+        elif retired:
+            findings.append(Finding(STRANDED, entry.id, "; ".join(retired)))
+        elif good == 0:
+            findings.append(Finding(ORPHAN, entry.id, "derives from nothing live"))
 
     return findings
 
