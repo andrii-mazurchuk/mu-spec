@@ -1225,8 +1225,9 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
       Being in one wave therefore does not make two branches safe to run
       concurrently, and the caller has to read `overlap`.
     - **entries** with full bodies: what to implement.
-    - **justification** -- the direct architecture parent in full, spine
-      above that.
+    - **justification** -- one chain for the whole unit, direct parent in
+      full and spine above that. One, not one per entry: every entry in a
+      unit shares an anchor and therefore an ancestry.
     - **read set** -- spec entries this unit depends on that live in other
       units, spine only, plus every cross-cutting entry.
 
@@ -1275,15 +1276,32 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     unit = by_key[key]
 
     own = set(unit.entries)
-    justification: dict[str, list[dict]] = {}
-    for identifier_ in unit.entries:
-        direct = set(graph.get(identifier_).derives_from)
-        chain = []
-        for ancestor in graph.ancestors(identifier_):
-            found = graph.get(ancestor)
-            if found is not None:
-                chain.append(_entry_view(found, full=ancestor in direct))
-        justification[str(identifier_)] = chain
+
+    # ONE chain for the unit, not one per entry.
+    #
+    # A unit is anchored on a single spec entry. An implementation unit holds
+    # only that entry; a test unit holds scenarios, and a scenario derives
+    # from exactly one spec entry -- this unit's anchor. So every entry in a
+    # unit has the same ancestry, always, and keying the chain by entry
+    # returned it once per entry. Measured on `dark`'s `S·01:T`: fifteen rows
+    # for five distinct ancestors, the anchor's full body three times over,
+    # 11.6 KB where 3.9 KB says the same thing. It is the section a builder
+    # most needs to trust, and two thirds of it was the same paragraph again.
+    #
+    # `get_slice_context` keeps the per-entry map, and correctly: a slice's
+    # entries have genuinely different parents.
+    #
+    # Guarded by a test rather than an assert. If the grain ever admits a unit
+    # whose entries disagree about their ancestry, that test fails loudly --
+    # which is the behaviour to want, because the alternative is this quietly
+    # answering for one entry and being believed about all of them.
+    representative = min(unit.entries, key=sort_key)
+    direct = set(graph.get(representative).derives_from)
+    justification = [
+        _entry_view(found, full=ancestor in direct)
+        for ancestor in graph.ancestors(representative)
+        if (found := graph.get(ancestor)) is not None
+    ]
 
     read_set = []
     for identifier_ in unit.entries:

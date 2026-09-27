@@ -540,3 +540,41 @@ def test_a_unit_is_reachable_by_the_key_the_projection_hands_out(tmp_path):
     # The coinciding case keeps working, and still means the implementation
     # unit rather than the test one.
     assert service.get_work_unit(store, "p", "S·01")["unit"]["key"] == "S·01"
+
+
+def test_every_entry_in_a_test_unit_shares_one_ancestry(tmp_path):
+    """The invariant that lets `get_work_unit` return ONE justification chain
+    instead of one per entry.
+
+    A scenario derives from exactly one spec entry, and a test unit is
+    anchored on that entry, so its scenarios cannot disagree about their
+    ancestry. On `dark`'s `S·01:T` the per-entry map returned fifteen rows for
+    five distinct ancestors and the anchor's full body three times.
+
+    This is the guard for the collapse. If the grain ever admits a unit whose
+    entries have different parents, this fails -- rather than `get_work_unit`
+    quietly answering for one entry and being believed about all of them.
+    """
+    from mu_spec import service
+
+    store = _sound(tmp_path)
+    store.append("p", [_test("T·02", "S·01", purpose="a second case")])
+    store.append("p", [_test("T·03", "S·01", purpose="a third case")])
+    store.set_module("p", "app/cart.py", ["S·01"])
+    store.set_module("p", "tests/test_cart.py", ["T·01", "T·02", "T·03"])
+
+    graph = store.load_graph("p")
+    manifest = store.load_manifest("p")
+    unit = project(manifest, graph).by_key()["S·01:T"]
+    assert len(unit.entries) == 3
+
+    chains = {
+        tuple(str(a) for a in graph.ancestors(i)) for i in unit.entries
+    }
+    assert len(chains) == 1, f"scenarios disagree about ancestry: {chains}"
+
+    payload = service.get_work_unit(store, "p", "S·01:T")
+    assert isinstance(payload["justification"], list)
+    assert [e["id"] for e in payload["justification"]] == list(chains.pop())
+    # The anchor appears once, with its body, not once per scenario.
+    assert [e["id"] for e in payload["justification"]].count("S·01") == 1
