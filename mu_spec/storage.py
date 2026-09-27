@@ -373,12 +373,15 @@ class ProjectStore:
         **A module implements spec entries or test entries, never both**, and
         this is the rule the whole test separation rests on. The design's
         claim is that "the agent implementing a spec entry may read the test
-        files and may never write them" needs no enforcement, because a test
-        module and an implementation module share no entry and therefore fall
-        into different work units -- different branch, different agent. That
-        is only true while no single file claims both. One mixed file and the
-        two collide into one unit, the write sets stop being disjoint, and a
+        files and may never write them" needs no enforcement, because an
+        implementation unit and a test unit are anchored on different kinds
+        and so are always different units -- different branch, different
+        agent. What that buys is only as good as the separation of their
+        write sets. One mixed file lands in both, and the agent building
+        `S·13` is handed a path the agent building `S·13:T` owns; a
         structural guarantee quietly degrades into an honour-system rule.
+        Overlap between two implementation units is ordinary and expected
+        (§4a); overlap across the kinds is the thing this refusal prevents.
 
         There is no stored `kind`. What a module is follows from the
         identifiers it claims, and a field would be a second statement of

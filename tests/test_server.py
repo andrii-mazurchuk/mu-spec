@@ -2726,6 +2726,41 @@ def test_no_tool_promises_that_units_never_share_a_file(store, prompts):
             assert claim not in low, f"{entry['name']} still promises: {claim}"
 
 
+def test_no_docstring_promises_that_units_never_share_a_file():
+    """The same sentence, one layer down, survived the commit that fixed the
+    manifest: `get_work_unit`'s own docstring went on calling its write set
+    "disjoint from every other unit's" while the comment sixty lines below it
+    explained why eight units write `server.py`. The test above only ever
+    read `/tools`, so the contradiction sat in the file the next developer
+    reads first.
+
+    Held to the same claims, on the two docstrings that describe a unit's
+    write set to whoever is about to build one. Two things are deliberately
+    not caught. The slice wording: "a slice's files are not disjoint from
+    other slices'" is still true, and is the reason a slice is not a branch
+    scope. And `units.__doc__`, which names maximal-connected in order to
+    record that it lost and why -- a module explaining the replaced grain is
+    the opposite of a stale promise, and a guard that cannot tell the
+    difference would pressure someone into deleting the explanation."""
+    from mu_spec import service, storage
+
+    claims = (
+        "disjoint from every other",
+        "maximal connected",
+        "cannot touch the same file",
+        "no two units share",
+        "no file is in two units",
+    )
+    described = {
+        "service.get_work_unit": service.get_work_unit.__doc__,
+        "storage.set_module": storage.ProjectStore.set_module.__doc__,
+    }
+    for where, doc in described.items():
+        low = (doc or "").lower()
+        for claim in claims:
+            assert claim not in low, f"{where} still promises: {claim}"
+
+
 def test_the_unit_tool_names_what_it_actually_returns(store, prompts):
     """A model picks its next call from these descriptions and nothing else.
     Three fields carry the whole of the new model -- what may not run beside

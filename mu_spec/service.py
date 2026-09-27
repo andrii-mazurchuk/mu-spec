@@ -1217,10 +1217,13 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
 
     Four parts, and the first is the one that matters:
 
-    - **write set** -- the module PATHS this unit owns. Disjoint from every
-      other unit's by construction, which is what makes two branches in one
-      wave unable to conflict. Not a convention to be observed: no file is
-      in two units, so there is nothing to observe.
+    - **write set** -- the module PATHS this unit owns. **Not disjoint from
+      every other unit's.** A unit is one spec entry, a file serves several,
+      so two units routinely claim the same path -- reported as the
+      `overlap` relation. Overlapping units must not run at the same time;
+      neither waits for the other, so nothing here says which goes first.
+      Being in one wave therefore does not make two branches safe to run
+      concurrently, and the caller has to read `overlap`.
     - **entries** with full bodies: what to implement.
     - **justification** -- the direct architecture parent in full, spine
       above that.
