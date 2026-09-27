@@ -2772,6 +2772,16 @@ def test_the_unit_tool_names_what_it_actually_returns(store, prompts):
     for field in ("overlap", "file_scope", "follows", "write_set", "size"):
         assert field in entry["description"], f"get_work_unit never mentions {field}"
 
+    # The route accepts a unit key as well as a member entry, and a caller
+    # only learns that from here. The fix is worth nothing undiscovered: a
+    # consumer iterating the listing's keys would still reach for
+    # `entries[0]`, or try the key, fail, and reason about the failure.
+    described = entry["description"] + entry["input_schema"]["properties"][
+        "entry"
+    ].get("description", "")
+    assert ":T" in described, "the test-unit key form is undocumented"
+    assert "key" in described.lower(), "get_work_unit never mentions a unit key"
+
     _, unit = call(store, prompts, "GET", "/projects/m/units/S\u00b701")
     for field in ("overlap", "file_scope", "follows", "write_set"):
         assert field in unit, f"the response lost {field}"

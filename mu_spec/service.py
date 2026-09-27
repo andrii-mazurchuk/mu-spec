@@ -1244,20 +1244,35 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
             "reason": "graph is unsound -- it contains orphaned entries",
             "gates": gates,
         }
-    try:
-        identifier = parse(entry)
-    except InvalidIdentifier as exc:
-        raise ServiceError(str(exc)) from exc
-
     projection = units.project(manifest, graph)
-    key = projection.unit_of().get(identifier)
-    if key is None:
-        raise ServiceError(
-            f"{identifier} belongs to no work unit. Either it is not a spec "
-            "or test entry, or no module implements it -- an entry nothing "
-            "implements is in no unit and so is in no piece of work"
-        )
-    unit = projection.by_key()[key]
+    by_key = projection.by_key()
+
+    # A unit key is accepted as well as a member entry, because the listing
+    # this route pairs with hands out keys and nothing else. For an
+    # implementation unit the two spellings coincide -- `S·01` is both the
+    # key and a member -- which is exactly what hid the asymmetry: a caller
+    # iterating the projection's keys worked on every implementation unit and
+    # answered "not found" for every test unit, whose key `S·01:T` names no
+    # entry at all. Half of all units are test units.
+    if entry in by_key:
+        key = entry
+    else:
+        try:
+            identifier = parse(entry)
+        except InvalidIdentifier as exc:
+            raise ServiceError(
+                f"{exc} -- this route takes either a unit key, as the unit "
+                "listing reports it, or any entry the unit contains"
+            ) from exc
+        key = projection.unit_of().get(identifier)
+        if key is None:
+            raise ServiceError(
+                f"{identifier} belongs to no work unit. Either it is not a "
+                "spec or test entry, or no module implements it -- an entry "
+                "nothing implements is in no unit and so is in no piece of "
+                "work"
+            )
+    unit = by_key[key]
 
     own = set(unit.entries)
     justification: dict[str, list[dict]] = {}

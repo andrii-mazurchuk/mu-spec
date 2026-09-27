@@ -424,12 +424,14 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "get_work_unit",
-            "One work unit and everything needed to build it, addressed by "
+            "One work unit and everything needed to build it, addressed "
+            "EITHER by its key, exactly as the unit listing reports it, OR by "
             "ANY entry it contains, spec or test. A work unit is ONE spec "
             "entry together with every module implementing it -- one unit is "
             "one branch and one ticket. A test unit is the scenarios derived "
             "from one spec entry and the files implementing those; its key is "
-            "the spec entry it is anchored to, plus `:T`. "
+            "the spec entry it is anchored to, plus `:T` -- and that key is a "
+            "key only, never an entry identifier, so pass it as the key. "
             "Its `write_set` is module PATHS, and those paths are NOT "
             "exclusive: a file implementing several spec entries is written "
             "by several units. `overlap` names the units this one shares a "
@@ -460,7 +462,16 @@ def _tools() -> list[dict[str, Any]]:
             "graph is unsound.",
             "GET",
             "/projects/{project}/units/{entry}",
-            {"project": s, "entry": s},
+            {
+                "project": s,
+                "entry": {
+                    "type": "string",
+                    "description": "A unit key as the listing reports it "
+                    "(`S·01`, `S·01:T`), or any entry the unit contains "
+                    "(`S·01`, `T·30`). Iterating the listing's keys is the "
+                    "normal use and works for both kinds of unit.",
+                },
+            },
             ("project", "entry"),
         ),
         tool(

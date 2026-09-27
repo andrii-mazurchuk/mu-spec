@@ -496,3 +496,47 @@ def test_a_cut_written_before_this_reloads_as_unsaid(tmp_path):
     assert cut.untested == ()
     assert cut.unimplemented_tests == ()
     assert cut.unfollowed_tests == ()
+
+
+def _sound(tmp_path) -> ProjectStore:
+    """A whole derivation chain, so the gates pass and a unit is issuable.
+
+    `_seeded` stops at architecture, which leaves `A·01` deriving from
+    nothing -- an orphan, so the graph is unsound and every unit is refused
+    before anything else can be tested.
+    """
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    store.append("p", [Entry(id=parse("I·01"), title="intent")])
+    store.append("p", [Entry(id=parse("B·01"), derives_from=(parse("I·01"),),
+                             title="behaviour")], slice_name="billing")
+    store.append("p", [Entry(id=ARCH, derives_from=(parse("B·01"),),
+                             title="arch")], slice_name="billing")
+    store.append("p", [_spec("S·01")], slice_name="billing")
+    store.append("p", [_test("T·01", "S·01", purpose="the empty cart case")])
+    return store
+
+
+def test_a_unit_is_reachable_by_the_key_the_projection_hands_out(tmp_path):
+    """`get_units` returns keys; `get_work_unit` took entry identifiers. For
+    an implementation unit the two coincide -- `S·01` is both the key and a
+    member -- so the asymmetry was invisible until the first TEST unit, whose
+    key `S·01:T` names no entry at all and answered "not found".
+
+    Half of all units are test units (72 of 144 on `dark`), so a consumer
+    iterating the projection's own keys failed on half its input -- and the
+    half it succeeded on first taught it the wrong lesson.
+    """
+    from mu_spec import service
+
+    store = _sound(tmp_path)
+    store.set_module("p", "app/cart.py", ["S·01"])
+    store.set_module("p", "tests/test_cart.py", ["T·01"])
+
+    by_entry = service.get_work_unit(store, "p", "T·01")
+    assert by_entry["unit"]["key"] == "S·01:T"
+    assert service.get_work_unit(store, "p", "S·01:T") == by_entry
+
+    # The coinciding case keeps working, and still means the implementation
+    # unit rather than the test one.
+    assert service.get_work_unit(store, "p", "S·01")["unit"]["key"] == "S·01"
