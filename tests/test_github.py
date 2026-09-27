@@ -76,8 +76,15 @@ class Recorder:
 
 
 def client(*responses, **kw):
+    """Pacing off unless a test asks for it.
+
+    The client paces itself by default -- that is its job -- but a test about
+    backoff wants to see only the backoff, and one about a 403 wants `slept`
+    empty to mean "did not retry" rather than "paced once".
+    """
     recorder = Recorder(*responses)
     slept: list[float] = []
+    kw.setdefault("pace", 0)
     gh = GitHub(
         "tok",
         opener=recorder,
@@ -243,8 +250,21 @@ def test_the_pace_between_writes_is_settable_and_waits_before_each():
     assert slept == [0.25, 0.25]
 
 
-def test_no_pace_means_no_sleeping():
-    gh, _, slept = client(FakeResponse({"id": 1, "number": 1}))
+def test_pacing_is_on_by_default():
+    """The whole point of it living here. An emission is 358 writes and the
+    caller should not have to remember -- a client that only paces when asked
+    is a client that bursts the first time somebody forgets."""
+    from mu_spec.github import DEFAULT_PACE
+
+    slept: list[float] = []
+    gh = GitHub("tok", opener=Recorder(FakeResponse({"id": 1, "number": 1})),
+                sleep=slept.append)
+    gh.create_issue(REPO, "t", "b")
+    assert slept == [DEFAULT_PACE]
+
+
+def test_pacing_can_be_turned_off_for_a_single_write():
+    gh, _, slept = client(FakeResponse({"id": 1, "number": 1}), pace=0)
     gh.create_issue(REPO, "t", "b")
     assert slept == []
 

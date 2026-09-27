@@ -100,7 +100,7 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — thirty-five of them,
+Everything beyond the four is declared in `/tools` — thirty-six of them,
 covering the inbox, amendments, slice classification and splitting, waves,
 the issue queue and its reconciliation, module backlinks, work units and
 their cuts, planning, the audit, the slice context, the slicing proposal

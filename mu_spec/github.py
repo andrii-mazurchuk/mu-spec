@@ -45,6 +45,22 @@ API_VERSION = "2026-03-10"
 # GitHub rejects requests without one.
 USER_AGENT = "mu-spec"
 
+# Seconds to wait before every write, by default.
+#
+# GitHub rate-limits content creation *secondarily* -- separately from the
+# 5000/hour budget, and specifically against bursts. An emission of `dark` is
+# 358 writes (144 issues, 214 dependencies), which is exactly the shape that
+# limit exists to stop, and the backoff below only helps once it is already too
+# late. So the client paces itself rather than leaving each caller to remember.
+#
+# The rate-limit policy lives here in full: the pace, the backoff, obeying
+# `Retry-After`, and telling a secondary limit apart from a permission error.
+# A caller that had to know any of that would be a caller that gets it wrong.
+#
+# Pass `pace=0` to disable, which is for tests and for a single write -- not for
+# a batch.
+DEFAULT_PACE = 1.0
+
 # Statuses worth trying again. 429 is the explicit rate limit; 5xx is GitHub
 # having a moment. 403 is conditional and handled separately -- it means both
 # "slow down" and "you may not", and those want opposite responses.
@@ -94,15 +110,17 @@ class GitHub:
         sleep: Callable[[float], None] = time.sleep,
         api_base: str = API_BASE,
         attempts: int = 4,
-        pace: float = 0.0,
+        pace: float = DEFAULT_PACE,
         timeout: float = 30.0,
     ) -> None:
-        """`pace` is a wait before every write.
+        """`pace` is a wait before every write, and it is on by default.
 
         The cheap half of not tripping a secondary rate limit: `dark` needs 358
         writes, and sending them as fast as the socket allows is exactly what
-        that limit exists to stop. The expensive half is the backoff below,
-        which only runs once it is already too late.
+        that limit exists to stop. The expensive half is the backoff in `_send`,
+        which only runs once it is already too late. Both halves live in this
+        module, because a caller that has to remember to pace itself is a
+        caller that will not.
         """
         if not token:
             # Issues are readable anonymously, so without this the failure

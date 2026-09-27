@@ -31,6 +31,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -108,6 +111,159 @@ def _pair(blocked: str, blocker: str) -> str:
     return f"{blocked}<-{blocker}"
 
 
+class RunBusy(RuntimeError):
+    """An emission is already in flight for this project.
+
+    Refused rather than queued or interleaved. Two concurrent runs would each
+    read the emission log before the other had written it, conclude that
+    nothing had been emitted, and both create every issue -- which is exactly
+    the duplication the log exists to prevent.
+    """
+
+
+class Run:
+    """One emission, watchable while it happens.
+
+    Progress is the whole reason this exists: a `dark`-sized run is 358 paced
+    writes, about six minutes, and a caller needs to see how many tickets have
+    been processed rather than whether the request has returned.
+
+    Every read and write is under the lock. The worker thread writes and an
+    HTTP request reads, so a status assembled field by field could otherwise
+    report a `processed` from after a `total` was replaced.
+    """
+
+    def __init__(self, project: str, now_fn: Callable[[], float]) -> None:
+        self.id = uuid.uuid4().hex[:12]
+        self.project = project
+        self._lock = threading.Lock()
+        self._state: dict = {
+            "run_id": self.id,
+            "project": project,
+            # Two different things, and they shared one field once. `phase` is
+            # the run's lifecycle -- running, done, failed. `step` is what the
+            # work is doing -- creating issues, then wiring order. Conflated,
+            # the first progress report set phase to "creating", every later
+            # one failed the "still running?" guard, and the count froze at one
+            # while the run went on for six minutes. Found by driving it; no
+            # unit test sent a second report.
+            "phase": "running",
+            "step": None,
+            "total": None,
+            "processed": 0,
+            "created": 0,
+            "skipped": 0,
+            "failed": 0,
+            "wired": 0,
+            "unwired": 0,
+            "started_at": now_fn(),
+            "finished_at": None,
+            "error": None,
+            "result": None,
+        }
+
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._state["phase"] == "running"
+
+    def report(self, progress: dict) -> None:
+        """Called from the worker after each unit and each edge."""
+        with self._lock:
+            if self._state["phase"] != "running":
+                return
+            # Never `phase`: that is this object's business, not the
+            # worker's.
+            for field in (
+                "step", "total", "processed", "created", "skipped",
+                "failed", "wired", "unwired",
+            ):
+                if field in progress:
+                    self._state[field] = progress[field]
+
+    def finish(self, result: dict | None, error: str | None, at: float) -> None:
+        with self._lock:
+            # A refusal -- no repo, no cut, drift -- is a FINISHED run, not a
+            # failed one. Painting an error on the dashboard for a project that
+            # is merely not ready would teach a reader to ignore the colour.
+            self._state["phase"] = "failed" if error else "done"
+            self._state["error"] = error
+            self._state["result"] = result
+            self._state["finished_at"] = at
+            if result and isinstance(result.get("counts"), dict):
+                for field, value in result["counts"].items():
+                    if field in self._state:
+                        self._state[field] = value
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._state)
+
+
+class Runs:
+    """The emissions in flight in this process, one at a time per project.
+
+    In-process and deliberately not persisted: a run is an activity, and the
+    durable record of what an activity achieved is the emission log. After a
+    restart there is no run to report and the log is the answer -- which is why
+    a status of `None` means "nothing running", never "nothing happened".
+
+    `spawn` is injected so the test suite stays deterministic and thread-free:
+    passing `lambda fn: fn()` makes the "background" work finish before `start`
+    returns, which is what a test wants and never what production wants.
+    """
+
+    def __init__(
+        self,
+        spawn: Callable[[Callable[[], None]], None] | None = None,
+        now_fn: Callable[[], float] = time.time,
+    ) -> None:
+        self._spawn = spawn or self._thread
+        self._now = now_fn
+        self._lock = threading.Lock()
+        self._runs: dict[str, Run] = {}
+
+    @staticmethod
+    def _thread(work: Callable[[], None]) -> None:
+        # Daemon: a half-finished emission must not keep the process alive at
+        # shutdown. What it managed to create is already in the log.
+        threading.Thread(target=work, daemon=True).start()
+
+    def start(self, project: str, work: Callable[[Callable[[dict], None]], dict]) -> Run:
+        """Begin an emission. `work` is handed a `report` callback.
+
+        Raises `RunBusy` if one is already in flight for this project.
+        """
+        with self._lock:
+            existing = self._runs.get(project)
+            if existing is not None and existing.active:
+                raise RunBusy(
+                    f"an emission for {project!r} is already running "
+                    f"(run {existing.id})"
+                )
+            run = Run(project, self._now)
+            self._runs[project] = run
+
+        def body() -> None:
+            try:
+                result = work(run.report)
+            except BaseException as exc:  # noqa: BLE001
+                # A worker that dies silently leaves the run "running" forever
+                # and the dashboard showing a spinner nobody can clear. Every
+                # exception becomes a terminal state with its reason.
+                run.finish(None, f"{type(exc).__name__}: {exc}", self._now())
+                return
+            run.finish(result, None, self._now())
+
+        self._spawn(body)
+        return run
+
+    def status(self, project: str) -> dict | None:
+        with self._lock:
+            run = self._runs.get(project)
+        return run.snapshot() if run else None
+
+
 def emit(
     *,
     log_path: Path,
@@ -118,6 +274,7 @@ def emit(
     fetch: Callable[[str], dict],
     client,
     now_fn: Callable[[], float],
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
     """Create an issue per work unit, then wire the dependencies between them.
 
@@ -146,9 +303,30 @@ def emit(
     skipped: list[dict] = []
     failed: list[dict] = []
     issues: dict[str, dict] = dict(known)
+    wired: list[dict] = []
+    unwired: list[dict] = []
+
+    def tick(step: str, processed: int) -> None:
+        """Report after every unit and every edge.
+
+        Per item rather than per phase: the point is watching a six-minute run
+        advance, and two updates in six minutes is a spinner with extra steps.
+        """
+        if on_progress is None:
+            return
+        on_progress({
+            "step": step,
+            "total": len(order),
+            "processed": processed,
+            "created": len(created),
+            "skipped": len(skipped),
+            "failed": len(failed),
+            "wired": len(wired),
+            "unwired": len(unwired),
+        })
 
     # -- pass one: the issues ----------------------------------------------
-    for key in order:
+    for position, key in enumerate(order, start=1):
         if key in known:
             skipped.append({
                 "key": key,
@@ -156,6 +334,7 @@ def emit(
                 "number": known[key].get("number"),
                 "url": known[key].get("url", ""),
             })
+            tick("creating", position)
             continue
         try:
             ticket = render(fetch(key))
@@ -163,6 +342,7 @@ def emit(
             # An unsound graph refuses one unit at a time. One bad unit must
             # not cost the other hundred and forty-three.
             failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
+            tick("creating", position)
             continue
         if ticket.oversized:
             skipped.append({
@@ -170,6 +350,7 @@ def emit(
                 "reason": f"the rendered body is too large for the tracker "
                           f"({len(ticket.body)} characters)",
             })
+            tick("creating", position)
             continue
         try:
             issue = client.create_issue(
@@ -177,6 +358,7 @@ def emit(
             )
         except GitHubError as exc:
             failed.append({"key": key, "reason": str(exc)})
+            tick("creating", position)
             continue
         issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url}
         created.append({
@@ -186,10 +368,9 @@ def emit(
             "url": issue.url,
             "labels": list(ticket.labels),
         })
+        tick("creating", position)
 
     # -- pass two: the order ------------------------------------------------
-    wired: list[dict] = []
-    unwired: list[dict] = []
     for blocked in order:
         for blocker in edges.get(blocked, ()) or ():
             pair = _pair(blocked, blocker)
@@ -206,6 +387,7 @@ def emit(
                     "reason": f"{missing} has no issue, so this order could "
                               "not be declared",
                 })
+                tick("wiring", len(order))
                 continue
             try:
                 client.add_blocked_by(repo, here["number"], there["id"])
@@ -213,6 +395,7 @@ def emit(
                 unwired.append({
                     "blocked": blocked, "blocker": blocker, "reason": str(exc)
                 })
+                tick("wiring", len(order))
                 continue
             wired_already.add(pair)
             wired.append({
@@ -221,6 +404,7 @@ def emit(
                 "blocked_number": here["number"],
                 "blocker_id": there["id"],
             })
+            tick("wiring", len(order))
 
     # Recorded even when the run went badly: otherwise a re-run duplicates the
     # issues that DID land, which is the one thing the guard exists to stop.

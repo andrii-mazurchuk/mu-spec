@@ -376,3 +376,163 @@ def test_the_run_is_recorded_against_the_project(tmp_path, monkeypatch):
     stored = read_emissions(store.emissions_path("p"))
     assert len(stored) == 1
     assert set(stored[0].issues) == {"S·01", "S·01:T"}
+
+
+# -- tracking a run in flight -----------------------------------------------
+
+
+def _runs(inline=True):
+    from mu_spec.emit import Runs
+    # `spawn` injected so the suite is deterministic and thread-free: inline
+    # means the "background" work finishes before start() returns, which is
+    # exactly what a test wants and never what production wants.
+    return Runs(spawn=(lambda fn: fn()) if inline else None)
+
+
+def test_a_run_reports_its_progress_while_it_goes(tmp_path):
+    seen = []
+    log = tmp_path / "e.jsonl"
+    emit(
+        log_path=log, repo=REPO, cut_seq=2, order=ORDER, edges=EDGES,
+        fetch=lambda k: payload(k, EDGES.get(k, ())), client=FakeClient(),
+        now_fn=lambda: 1.0, on_progress=seen.append,
+    )
+    # One after each unit and each edge, so 3 + 2.
+    assert len(seen) == 5
+    assert seen[0]["step"] == "creating"
+    assert seen[-1]["step"] == "wiring"
+    assert [s["processed"] for s in seen[:3]] == [1, 2, 3]
+    assert seen[2]["total"] == 3
+
+
+def test_starting_a_run_returns_something_trackable(tmp_path):
+    runs = _runs()
+    run = runs.start("dark", lambda report: {"emitted": True, "counts": {}})
+    assert run.id
+    status = runs.status("dark")
+    assert status["project"] == "dark"
+    assert status["phase"] == "done"
+    assert status["finished_at"] is not None
+
+
+def test_two_runs_for_one_project_are_refused_rather_than_interleaved(tmp_path):
+    """Careful implementation: two concurrent emissions would each read the log
+    before the other wrote it, and both would create every issue."""
+    from mu_spec.emit import RunBusy
+
+    # A spawn that never runs the work, so the first run stays "running".
+    runs = _runs(inline=False)
+    runs._spawn = lambda fn: None  # noqa: SLF001 -- the point of the test
+    runs.start("dark", lambda report: None)
+    with pytest.raises(RunBusy):
+        runs.start("dark", lambda report: None)
+
+
+def test_a_finished_run_does_not_block_the_next_one(tmp_path):
+    runs = _runs()
+    first = runs.start("dark", lambda report: {"emitted": True, "counts": {}})
+    second = runs.start("dark", lambda report: {"emitted": True, "counts": {}})
+    assert first.id != second.id
+
+
+def test_two_projects_run_independently(tmp_path):
+    runs = _runs(inline=False)
+    runs._spawn = lambda fn: None  # noqa: SLF001
+    runs.start("dark", lambda report: None)
+    runs.start("t-finance", lambda report: None)
+    assert runs.status("dark")["phase"] == "running"
+    assert runs.status("t-finance")["phase"] == "running"
+
+
+def test_a_run_that_raises_ends_failed_and_keeps_the_reason(tmp_path):
+    """A thread that dies silently leaves a run "running" forever, and the
+    dashboard shows a spinner nobody can clear."""
+    runs = _runs()
+
+    def boom(report):
+        raise RuntimeError("the store went away")
+
+    runs.start("dark", boom)
+    status = runs.status("dark")
+    assert status["phase"] == "failed"
+    assert "the store went away" in status["error"]
+    assert status["finished_at"] is not None
+
+
+def test_a_refusal_is_a_finished_run_not_a_failed_one(tmp_path):
+    """No repo, no cut, drift -- those are answers. Reporting them as failures
+    would put an error on the dashboard for a project that is merely not ready."""
+    runs = _runs()
+    runs.start("dark", lambda report: {"emitted": False, "reason": "no cut"})
+    status = runs.status("dark")
+    assert status["phase"] == "done"
+    assert status["error"] is None
+    assert status["result"]["reason"] == "no cut"
+
+
+def test_progress_reaches_the_status_as_the_work_proceeds(tmp_path):
+    runs = _runs()
+
+    def work(report):
+        report({"step": "creating", "total": 10, "processed": 4, "created": 4})
+        return {"emitted": True, "counts": {"created": 4}}
+
+    runs.start("dark", work)
+    status = runs.status("dark")
+    assert (status["total"], status["processed"], status["created"]) == (10, 4, 4)
+
+
+def test_progress_keeps_advancing_report_after_report(tmp_path):
+    """The regression. `phase` once meant both the lifecycle and the work step,
+    so the first report set it to "creating", every later report failed the
+    "still running?" guard, and a six-minute run showed processed=1 throughout.
+
+    Caught by driving the route, not by the suite: one test sent a single
+    report and the other read the callback rather than the run."""
+    runs = _runs()
+
+    def work(report):
+        for n in (1, 2, 3, 4):
+            report({"step": "creating", "total": 4, "processed": n})
+        return {"emitted": True, "counts": {}}
+
+    runs.start("dark", work)
+    status = runs.status("dark")
+    assert status["processed"] == 4, "progress stopped being reported"
+    assert status["phase"] == "done", "the worker must not set the lifecycle"
+
+
+def test_a_worker_cannot_overwrite_the_runs_lifecycle(tmp_path):
+    """`phase` belongs to the run. A worker reporting `phase: done` would make
+    a live run look finished and let a second one start beside it."""
+    runs = _runs(inline=False)
+    runs._spawn = lambda fn: fn()  # noqa: SLF001
+
+    def work(report):
+        report({"phase": "done", "step": "creating", "processed": 1})
+        return {"emitted": True, "counts": {}}
+
+    run = runs.start("dark", work)
+    assert run.snapshot()["phase"] == "done"  # set by finish, not the worker
+
+
+def test_status_for_a_project_that_never_ran_is_absent_not_an_error(tmp_path):
+    assert _runs().status("nothing-here") is None
+
+
+def test_a_real_thread_finishes_and_is_observable(tmp_path):
+    """One test that actually threads, because `spawn` being injectable is only
+    worth anything if the default it replaces works."""
+    import time as _time
+
+    from mu_spec.emit import Runs
+
+    runs = Runs()
+    done = []
+    runs.start("dark", lambda report: done.append(1) or {"emitted": True})
+    for _ in range(200):
+        if runs.status("dark")["phase"] in ("done", "failed"):
+            break
+        _time.sleep(0.01)
+    assert runs.status("dark")["phase"] == "done"
+    assert done == [1]

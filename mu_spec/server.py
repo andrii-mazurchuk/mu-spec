@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mu_spec import dashboard, docs, lifecycle as lc, service
+from mu_spec import dashboard, docs, emit as emitting, lifecycle as lc, service
 from mu_spec.service import ServiceError
 from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES
 from mu_spec.inbox import Inbox, InboxError, TYPES
@@ -65,6 +65,10 @@ def _tools() -> list[dict[str, Any]]:
     - **`set_repo`.** Which repository several hundred issues land in is a
       deployment decision. `get_repo` *is* offered: an agent checking that a
       project is configured before anything ships is the use to encourage.
+    - **`emit_tickets`.** Several hundred issues appearing on a repository is
+      not something to decide on somebody's behalf, and it is the one operation
+      here that cannot be undone from inside this unit. `get_emission` is
+      offered: watching is not deciding.
 
     The routes are not hidden -- a human surface reaches them, and enclosure
     is a process boundary, not a secret. What is withheld is the *offer*.
@@ -685,6 +689,20 @@ def _tools() -> list[dict[str, Any]]:
             {},
         ),
         tool(
+            "get_emission",
+            "How far an emission of this project's work units into its issue "
+            "tracker has got, and what previous runs created. `running` says "
+            "whether one is in flight; when it is, `processed` of `total` is "
+            "the progress and `phase` is `creating` or `wiring`. `emissions` "
+            "lists completed runs from the durable log, which survives a "
+            "restart when an in-flight run does not. Starting an emission is a "
+            "person's decision and is not offered here.",
+            "GET",
+            "/projects/{project}/emit",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "get_repo",
             "The repository this project's work units become tickets in, as "
             "`owner/name`. `null` means none is configured, which is a normal "
@@ -884,6 +902,10 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
         re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/split$"),
         "split_slice",
     ),
+    # Emitting, and watching it happen. A person triggers the POST; the GET is
+    # how anyone -- a dashboard, an agent checking -- sees how far it got.
+    ("POST", re.compile(rf"^/projects/{_P}/emit$"), "emit_tickets"),
+    ("GET", re.compile(rf"^/projects/{_P}/emit$"), "get_emission"),
     # Where this project's tickets go. One route, both methods: the write is a
     # deployment decision and is withheld from the tool manifest; the read is
     # offered, because an agent checking a project is configured before
@@ -942,6 +964,8 @@ def handle(
     inbox: Inbox | None = None,
     issues: IssueLog | None = None,
     events: Lifecycle | None = None,
+    runs: emitting.Runs | None = None,
+    emit_client=None,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -1168,6 +1192,37 @@ def handle(
             )
             return (200 if result["split"] else 409), JSON, json.dumps(result)
 
+        if name == "emit_tickets":
+            # Accepted, not completed: 358 paced writes is about six minutes,
+            # and a synchronous route would time out between the bridge and the
+            # browser. With no registry -- which is every test that does not
+            # ask for one -- it runs inline instead, so the suite stays
+            # deterministic and thread-free.
+            if runs is None:
+                result = service.emit_tickets(
+                    store, project, client=emit_client, events=events,
+                    now_fn=now_fn,
+                )
+                return (200 if result.get("emitted") else 409), JSON, json.dumps(result)
+            try:
+                run = runs.start(
+                    project,
+                    lambda report: service.emit_tickets(
+                        store, project, client=emit_client, events=events,
+                        now_fn=now_fn, on_progress=report,
+                    ),
+                )
+            except emitting.RunBusy as exc:
+                return 409, JSON, json.dumps({"error": str(exc)})
+            return 202, JSON, json.dumps(
+                {"project": project, "run_id": run.id, "started": True}
+            )
+
+        if name == "get_emission":
+            return 200, JSON, json.dumps(
+                service.get_emission(store, project, runs)
+            )
+
         if name == "get_repo":
             return 200, JSON, json.dumps(service.get_repo(store, project))
 
@@ -1250,6 +1305,12 @@ def handle(
 def build_handler(
     store: ProjectStore, prompts_dir: Path
 ) -> type[BaseHTTPRequestHandler]:
+    # One registry per server, closed over rather than module-level: process
+    # state, created where the process is, and substitutable in a test. An
+    # emission is a job of several minutes, so it runs in a thread and this is
+    # what a later request reads its progress from.
+    runs = emitting.Runs()
+
     class _Handler(BaseHTTPRequestHandler):
         def _respond(self, method: str) -> None:
             payload = None
@@ -1266,7 +1327,7 @@ def build_handler(
                     )
                     return
             status, content_type, body = handle(
-                method, self.path, store, prompts_dir, payload
+                method, self.path, store, prompts_dir, payload, runs=runs
             )
             self._write(status, content_type, body)
 

@@ -1515,16 +1515,11 @@ def split_slice(
 
 TOKEN_ENV = "MU_SPEC_GITHUB_TOKEN"
 
-# Seconds between writes. GitHub rate-limits content creation *secondarily* --
-# separately from the 5000/hour budget, and specifically against bursts -- and
-# `dark` is 358 writes: 144 issues plus 214 dependencies. A tight loop of those
-# is the exact shape that limit exists to stop, and the client's backoff only
-# helps once it is already too late.
-#
-# The cost is honest and worth knowing: 358 writes at this pace is about six
-# minutes, so an emission is a job and not a request. Whoever routes this must
-# not hold an HTTP connection open for it.
-EMIT_PACE = 1.0
+# The pace between writes is `github.DEFAULT_PACE`, and it is set there rather
+# than passed from here: the rate limit is GitHub's, so the policy for it
+# belongs in the module that talks to GitHub. What matters at this level is the
+# consequence -- 358 paced writes is about six minutes, so an emission is a job
+# and not a request, and the route must not hold a connection open for it.
 
 
 def emit_tickets(
@@ -1533,6 +1528,7 @@ def emit_tickets(
     client=None,
     events: Lifecycle | None = None,
     now_fn: Callable[[], float] = time.time,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
     """Create one issue per work unit in the current cut, and wire the order.
 
@@ -1610,7 +1606,7 @@ def emit_tickets(
     order += [key for key in schedule.unschedulable if key not in set(order)]
 
     if client is None:
-        client = github.GitHub(token, pace=EMIT_PACE)
+        client = github.GitHub(token)
 
     result = emitting.emit(
         log_path=store.emissions_path(project),
@@ -1621,6 +1617,7 @@ def emit_tickets(
         fetch=lambda key: get_work_unit(store, project, key),
         client=client,
         now_fn=now_fn,
+        on_progress=on_progress,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
@@ -1633,6 +1630,45 @@ def emit_tickets(
             **result["counts"],
         )
     return result
+
+
+def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
+    """How far an emission has got, and what earlier ones created.
+
+    Two sources, because they answer different questions and only one of them
+    survives a restart. A **run** is an activity held in this process: it has a
+    phase and a progress count, and it is gone when the process is. The
+    **emission log** is the durable record of what was actually created, and it
+    is what `running: false` should be read against -- so a status of no run
+    means "nothing in flight", never "nothing has happened".
+
+    Counts rather than the whole log: a run of 144 units records 144 issues and
+    214 orders, and nobody polling for progress wants that on every tick. The
+    issues themselves live in the log and in the tracker.
+    """
+    snapshot = runs.status(project) if runs is not None else None
+    try:
+        history = emitting.read_emissions(store.emissions_path(project))
+    except emitting.EmissionError as exc:
+        # The one place absence is not normal. Reporting an unreadable log as
+        # an empty one would invite a re-run that creates everything twice.
+        raise ServiceError(str(exc)) from exc
+    return {
+        "project": project,
+        "running": bool(snapshot and snapshot.get("phase") == "running"),
+        **(snapshot or {}),
+        "emissions": [
+            {
+                "seq": e.seq,
+                "at": e.at,
+                "cut_seq": e.cut_seq,
+                "repo": e.repo,
+                "issues": len(e.issues),
+                "wired": len(e.wired),
+            }
+            for e in history
+        ],
+    }
 
 
 def get_repo(store: ProjectStore, project: str) -> dict:

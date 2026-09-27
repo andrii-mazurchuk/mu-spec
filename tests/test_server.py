@@ -2037,6 +2037,10 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # ratifying are. The read is offered: an agent confirming a project is
         # configured before anything ships is the use to encourage.
         "set_repo": None,
+        "get_emission": "get_emission",
+        # The one operation here that cannot be undone from inside this unit.
+        # Watching it is offered; starting it is not.
+        "emit_tickets": None,
     }
     for _, _, name in _ROUTES:
         # health, tools, prompts and skills are the standard meta surface:
@@ -3209,3 +3213,131 @@ def test_setting_the_repo_is_not_offered_to_an_agent(store, prompts):
     names = {t["name"] for t in payload["tools"]}
     assert "set_repo" not in names
     assert "get_repo" in names
+
+
+# -- emitting tickets, as a tracked job -------------------------------------
+
+
+def _emit_ready(store, prompts):
+    """A sound project with a repo, a cut, and a token in the environment."""
+    mid = _two_columns(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search/index.py", "implements": ["S·01"]})
+    call(store, prompts, "POST", "/projects/m/repo", {"repo": "owner/name"})
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "ready"})
+    return mid
+
+
+class _Client:
+    def __init__(self):
+        self.created = []
+        self.n = 0
+
+    def create_issue(self, repo, title, body, labels=()):
+        from mu_spec.github import Issue
+        self.n += 1
+        self.created.append(title)
+        return Issue(id=900 + self.n, number=self.n, url=f"u/{self.n}")
+
+    def add_blocked_by(self, repo, blocked_number, blocker_id):
+        pass
+
+
+def _emit_call(store, prompts, method, path, body=None, runs=None, client=None):
+    from mu_spec.server import handle
+    status, content_type, raw = handle(
+        method, path, store, prompts, body, now_fn=lambda: 7.0,
+        runs=runs, emit_client=client,
+    )
+    return status, (json.loads(raw) if content_type == "application/json" else raw)
+
+
+def test_emitting_starts_a_job_and_returns_immediately(store, prompts, monkeypatch):
+    """358 paced writes is about six minutes. A synchronous route would time out
+    somewhere between the bridge and the browser, and a spinner is not the
+    observability that was asked for."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    runs = Runs(spawn=lambda fn: fn())
+    status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit",
+                                 {}, runs=runs, client=_Client())
+    assert status == 202, "accepted, not completed"
+    assert payload["run_id"]
+    assert payload["project"] == "m"
+
+
+def test_the_progress_of_a_run_is_readable(store, prompts, monkeypatch):
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    runs = Runs(spawn=lambda fn: fn())
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=runs,
+               client=_Client())
+
+    status, payload = _emit_call(store, prompts, "GET", "/projects/m/emit",
+                                 runs=runs)
+    assert status == 200
+    assert payload["phase"] == "done"
+    assert payload["total"] == payload["processed"]
+    assert payload["created"] >= 1
+    assert payload["result"]["emitted"] is True
+
+
+def test_a_second_emission_while_one_runs_is_refused(store, prompts, monkeypatch):
+    """Two runs would each read the emission log before the other wrote it and
+    both create every issue."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    runs = Runs(spawn=lambda fn: None)  # never finishes
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=runs,
+               client=_Client())
+    status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit", {},
+                                 runs=runs, client=_Client())
+    assert status == 409
+    assert "already running" in payload["error"]
+
+
+def test_asking_for_progress_when_nothing_ran_says_so_rather_than_404(
+    store, prompts
+):
+    """A run is in-process state, so after a restart there is none -- and the
+    durable answer is the emission log. `running: false` says which."""
+    from mu_spec.emit import Runs
+
+    _emit_ready(store, prompts)
+    status, payload = _emit_call(store, prompts, "GET", "/projects/m/emit",
+                                 runs=Runs(spawn=lambda fn: fn()))
+    assert status == 200
+    assert payload["running"] is False
+    assert payload["emissions"] == []
+
+
+def test_progress_reports_what_previous_runs_emitted(store, prompts, monkeypatch):
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    runs = Runs(spawn=lambda fn: fn())
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=runs,
+               client=_Client())
+    # A fresh registry, as after a restart: the run is gone, the log is not.
+    _, payload = _emit_call(store, prompts, "GET", "/projects/m/emit",
+                            runs=Runs(spawn=lambda fn: fn()))
+    assert payload["running"] is False
+    assert payload["emissions"], "the log survives the run that wrote it"
+    assert payload["emissions"][0]["issues"] >= 1
+
+
+def test_emitting_is_not_offered_to_an_agent(store, prompts):
+    """Several hundred issues appearing on a repository is a person's decision,
+    withheld for exactly the reason `cut_units` and `ratify` are. Reading the
+    progress is offered -- watching is not deciding."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    names = {t["name"] for t in payload["tools"]}
+    assert "emit_tickets" not in names
+    assert "get_emission" in names
