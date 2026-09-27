@@ -46,6 +46,14 @@ Every operation this unit performs is deterministic and derivable from the
 graph. Anything requiring judgement belongs to whoever calls this one -- a
 human working a map, or a session run elsewhere.
 
+**"Executes" means building the software. It does not mean "makes no
+outbound call."** This unit's purpose is to create tickets; shipping a work
+unit to an external tracker on a user trigger is *creating* one, and it is
+in scope. What is out of scope is picking a ticket up and implementing it.
+Read the line as *creates tickets, never acts on them* -- a session reading
+this has twice concluded that a POST to a tracker's API was forbidden, then
+refused to build the one thing the unit exists for.
+
 | mu-spec owns (mechanical) | Another unit owns (judgement) |
 |---|---|
 | Storing entries; enforcing identifier permanence and append-only history | Authoring entry bodies |
@@ -58,6 +66,7 @@ human working a map, or a session run elsewhere.
 | Scoring a *proposed* partition without creating it | Grouping behaviours by what they are about |
 | Recording the lifecycle: requests as worded, corrections and the layer they entered at, refusals, assumptions | Deciding what an assumption should have been |
 | Change locality, correction distribution, cohesion, coupling — reported, never enforced | Whether a slicing is any good |
+| Rendering a work unit as a ticket and creating it on an external tracker, on a user trigger, with its ordering wired from `edges` | Picking that ticket up, writing the software, opening the PR — and everything that happens to the ticket afterwards |
 
 The tell that this split is right: `docs/DESIGN.md` §6 calls admission gates
 "mechanical, run by the agent, human sees only failures." A mechanical check
@@ -65,8 +74,16 @@ doesn't need an agent — it needs a function. Putting them here means a
 session in a hurry cannot skip them, which is the entire point of a gate.
 
 If you find yourself writing code that spawns a process, edits a file outside
-this unit's own storage, calls a model, or decides that some project now
-needs work done to it — stop. That belongs elsewhere.
+this unit's own storage, calls a model, or decides *on its own* that some
+project now needs work done to it — stop. That belongs elsewhere.
+
+**None of those is an outbound HTTP call.** Creating an issue from a computed
+work unit spawns nothing, writes no file here or anywhere, asks no model, and
+decides nothing — a person triggered it and the content was already derived.
+The tracker holds the development history, the session handling and whatever
+else grows around the work; this unit hands it the ticket and stops. A work
+unit becomes an issue on an external service and is **never** used as a
+ticket system in here.
 
 **No caller is exempt from enclosure**, including one running inside this
 repository. Everything goes through the HTTP API, because putting the gates
