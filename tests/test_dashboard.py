@@ -415,8 +415,14 @@ def test_only_transient_interaction_pauses_the_refresh():
     resolve in seconds on their own, so pausing for them is safe."""
     text = page()
     assert "function readerIsBusy" in text
-    for guard in ("POINTER_DOWN", "dragging", "SELECT"):
+    for guard in ("POINTER_DOWN", "DRAGGING", "SELECT"):
         assert guard in text, f"readerIsBusy ignores {guard}"
+    # A plain flag, not a class on the canvas: `cursor` is inherited, so
+    # writing a class there recalculated style for the whole scene twice
+    # per click. Nothing may put an inherited property on an ancestor of
+    # the graph and toggle it.
+    assert ".canvas.dragging" not in text
+    assert "#grabpad{" in text
 
 
 def test_uncommitted_input_is_protected_without_freezing_the_page():

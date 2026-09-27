@@ -81,7 +81,14 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 
 .stage{position:relative;min-width:0;overflow:hidden}
 .canvas{position:absolute;inset:0;cursor:grab;overflow:hidden}
-.canvas.dragging{cursor:grabbing}
+/* `cursor` is INHERITED, so a grabbing rule on the canvas rewrites the
+   computed style of everything inside it -- on `dark` that was 5.7 ms of
+   style recalculation on pointerdown and the same again on pointerup,
+   for a handler doing 0.8 ms of actual work. Hence a pad: it has no
+   children, so showing it recalculates one element. It sits over the
+   scene for the length of the gesture, which also stops hover states
+   flickering under a moving pointer. */
+#grabpad{position:absolute;inset:0;z-index:1;cursor:grabbing}
 .canvas svg{display:block;width:100%;height:100%}
 .zoom{position:absolute;right:12px;bottom:12px;display:flex;gap:4px;z-index:2}
 .zoom button{width:28px;height:28px;border:1px solid var(--rule);background:var(--panel);
@@ -553,6 +560,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
         <button id="zin" title="zoom in">+</button>
         <button id="zfit" title="fit">⤢</button>
       </div>
+      <div id="grabpad" hidden></div>
       <div class="hint" id="hint"></div>
       <div class="empty hide" id="empty"></div>
     </div>
@@ -2764,7 +2772,7 @@ addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
   c.addEventListener("pointerdown",e=>{
     if(e.target.closest(".node")||e.target.closest("button")) return;
     down={x:e.clientX-view.x, y:e.clientY-view.y, sx:e.clientX, sy:e.clientY};
-    moved=0; c.classList.add("dragging");});
+    moved=0; DRAGGING=true; $("grabpad").hidden=false;});
   /* A pointer emits moves faster than the compositor draws frames, and
      every one of them used to trigger a full re-raster. Coalesced to the
      last position per frame: the gesture looks identical and the browser
@@ -2785,7 +2793,7 @@ addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
   // and a click on nothing means "I am looking at nothing".
   addEventListener("pointerup",()=>{
     if(down && moved<4) clearAll();
-    down=null; c.classList.remove("dragging")});
+    down=null; DRAGGING=false; $("grabpad").hidden=true;});
   c.addEventListener("wheel",e=>{
     e.preventDefault();
     const r=c.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
@@ -2841,12 +2849,16 @@ let FRESH_TICK = null;
    filter, which lives in RD_FIND and is reapplied on every draw. */
 function readerIsBusy(){
   if(POINTER_DOWN) return true;                       // a click in flight
-  if($("canvas").classList.contains("dragging")) return true;
+  if(DRAGGING) return true;                           // a pan in progress
   const a = document.activeElement;
   if(a && a.tagName === "SELECT") return true;        // an open menu
   return false;
 }
 let POINTER_DOWN = false;
+/* A plain flag rather than a class on the canvas. The class was read by
+   `readerIsBusy`, but writing it cost a style recalculation of the whole
+   scene -- see the grabpad comment. */
+let DRAGGING = false;
 addEventListener("pointerdown", ()=>{ POINTER_DOWN=true; }, true);
 addEventListener("pointerup",   ()=>{ POINTER_DOWN=false; }, true);
 addEventListener("pointercancel", ()=>{ POINTER_DOWN=false; }, true);
