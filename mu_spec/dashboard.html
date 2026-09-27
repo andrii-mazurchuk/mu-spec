@@ -470,6 +470,55 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
   display:flex;gap:12px;align-items:baseline}
 .flash.ok{background:var(--ok-bg);color:var(--ok)}
 .flash.bad{background:var(--down-bg);color:var(--down)}
+
+/* ── ship ───────────────────────────────────────────────────────── */
+/* Where work units leave. The one irreversible thing this page can do --
+   several hundred issues on somebody's repository -- so the preconditions
+   read first and the button is last, in that order and not the other. */
+.shipbar{display:flex;align-items:center;gap:10px;margin:0 0 6px;flex-wrap:wrap}
+.shipbar input{background:var(--panel-alt);color:var(--ink);border:1px solid var(--rule);
+  border-radius:var(--radius);padding:5px 9px;font:12.5px var(--mono);min-width:260px}
+.shipbar code{font:600 12.5px var(--mono);color:var(--ink)}
+/* Every condition, each either met or not, before anything is pressable.
+   A refusal arriving after the press is a refusal the reader could have
+   been told about before forming the intention. */
+.pre{display:flex;flex-direction:column;gap:5px;margin:0 0 16px;max-width:80ch}
+.pre div{display:flex;gap:9px;align-items:baseline;font-size:12.5px;color:var(--ink-soft)}
+.pre i{width:8px;height:8px;border-radius:99px;flex:none;margin-top:5px;background:var(--dim)}
+.pre div.met i{background:var(--ok)}
+.pre div.unmet i{background:var(--warn)}
+.pre b{color:var(--ink);font-weight:600}
+.pre em{font-style:normal;color:var(--dim)}
+
+/* Progress. `total` is known before the first write, so this is a real
+   proportion rather than a barber's pole -- 358 writes is about six
+   minutes and a reader is owed a number, not a spinner. */
+.prog{background:var(--panel-alt);border-radius:99px;height:8px;overflow:hidden;
+  margin:0 0 8px;max-width:60ch}
+.prog i{display:block;height:100%;background:var(--brand);border-radius:99px;
+  transition:width .25s linear}
+.progline{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;
+  color:var(--ink-soft);margin:0 0 18px}
+.progline b{font-variant-numeric:tabular-nums;color:var(--ink)}
+.progline .step{text-transform:uppercase;letter-spacing:.07em;font-size:10px;color:var(--dim)}
+
+/* The outcome, as counts before lists. Zero failures is the thing being
+   looked for, so it has to be legible without reading any list at all. */
+.tally{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+.tally div{border:1px solid var(--rule);border-radius:var(--radius);background:var(--panel-alt);
+  padding:7px 12px;min-width:92px}
+.tally b{display:block;font-size:16px;font-variant-numeric:tabular-nums}
+.tally span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.tally div.bad b{color:var(--down)}
+.tally div.warn b{color:var(--warn)}
+.tally div.good b{color:var(--ok)}
+#ship table{border-collapse:collapse;width:100%;margin-top:8px;font-size:12.5px}
+#ship th{text-align:left;font:600 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--dim);border-bottom:1px solid var(--rule);padding:0 10px 5px 0}
+#ship td{padding:4px 10px 4px 0;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+#ship td a{color:var(--brand);text-decoration:none}
+#ship td a:hover{text-decoration:underline}
+#ship .why{color:var(--ink-soft)}
 .flash button{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer;
   font:inherit;opacity:.7}
 #rejectbox{margin-top:12px}
@@ -515,6 +564,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     <button class="view" data-v="waves">Waves</button>
     <button class="view" data-v="modules">Modules<span class="dot" id="mdot" hidden></span></button>
     <button class="view" data-v="queues">Queues<span class="dot" id="qdot" hidden></span></button>
+    <button class="view" data-v="ship">Ship<span class="dot" id="sdot" hidden></span></button>
     <h2>Slices</h2>
     <div id="legend"></div>
     <h2>Edges</h2>
@@ -569,6 +619,7 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     <div class="pane hide" id="waves"></div>
     <div class="pane hide" id="modules"></div>
     <div class="pane hide" id="queues"></div>
+    <div class="pane hide" id="ship"></div>
   </section>
 
   <aside id="detail"></aside>
@@ -644,7 +695,11 @@ const STATE = {
      only when submitted or explicitly cancelled, never on blur: clicking
      away to re-read the proposal is not abandoning the note. */
   rejectDraft:{open:false, note:""},
-  preview:false         // spine recoloured by the proposal rather than the manifest
+  preview:false,        // spine recoloured by the proposal rather than the manifest
+  repo:null,            // owner/name, or null -- where this project's tickets go
+  emission:null,        // the run in flight, if any, and the durable log
+  repoDraft:null,       // uncommitted, for the same reason rejectDraft is
+  shipFlash:null        // the outcome of the last press, outliving its reload
 };
 
 async function loadProjects(){
@@ -657,7 +712,8 @@ async function loadProjects(){
    already overwritten it. */
 async function fetchProject(project){
   const base = "projects/" + enc(project);
-  const [spine, gates, waves, insights, issues, inbox, modules, proposal, units] =
+  const [spine, gates, waves, insights, issues, inbox, modules, proposal, units,
+         repo, emission] =
     await Promise.all([
     get(base + "/spine"),                               // the only hard requirement
     soft(base + "/gates", null),
@@ -667,7 +723,9 @@ async function fetchProject(project){
     soft("inbox?project=" + enc(project), {messages:[]}),
     soft(base + "/modules", {modules:[]}),
     soft(base + "/slicing/proposal", {status:"none"}),
-    soft(base + "/units", {cut:null, drift:null, live:null})
+    soft(base + "/units", {cut:null, drift:null, live:null}),
+    soft(base + "/repo", {repo:null}),
+    soft(base + "/emit", {running:false, emissions:[]})
   ]);
 
   const entries = (spine.spine || []).map(e => ({
@@ -735,7 +793,9 @@ async function fetchProject(project){
     untested: modules.untested || [],
     locality: (insights.change_locality || {}).mean,
     proposal: proposal && proposal.status === "pending" ? proposal : null,
-    units
+    units,
+    repo: repo.repo || null,
+    emission
   };
 }
 
@@ -754,7 +814,11 @@ function signatures(d){
     proposal: J(d.proposal),
     modules: J(d.modules),
     units: J(d.units),
-    queues: J([d.issues, d.requests])
+    queues: J([d.issues, d.requests]),
+    /* The repository and the emission LOG -- not the live run. A run in
+       flight changes several times a second and has its own poll; folding it
+       in here would make every ordinary tick look like a structural change. */
+    ship: J([d.repo, (d.emission||{}).emissions])
   };
 }
 
@@ -764,8 +828,11 @@ function applyProject(d){
   // showing another -- which is how a reader concludes the wrong thing is
   // broken. Cleared here rather than in the switch handler so a poll, which
   // also lands here, cannot resurrect it either.
-  if(STATE.project !== d.project) STATE.cutFlash = null;
+  if(STATE.project !== d.project){ STATE.cutFlash = null; STATE.shipFlash = null;
+                                   STATE.repoDraft = null; }
+  const draft = STATE.repoDraft;
   Object.assign(STATE, d, {bodies: STATE.bodies || {}, preview: false});
+  STATE.repoDraft = draft;
   /* Which slice each entry WOULD belong to if the proposal were ratified.
      Held beside the real membership rather than replacing it -- previewing a
      decision must never look like having taken it. */
@@ -2678,6 +2745,322 @@ function restoreDraftFocus(){
   DRAFT_CARET=null;
 }
 
+/* =============================================================
+   SHIP — work units become issues on a tracker
+   =============================================================
+   The only irreversible thing this page can do. mu-spec creates tickets and
+   never acts on them: what happens to an issue afterwards belongs to the
+   tracker and to whoever picks the work up, so nothing here reads one back.
+
+   Which means the preconditions read FIRST and the button is last. A refusal
+   arriving after the press is a refusal the reader could have been told about
+   before forming the intention, and this one costs several hundred issues on
+   somebody's repository when it goes the other way. */
+
+/* What has to be true, each either met or not. The token is deliberately
+   absent: it lives in the unit's environment, this page cannot see it, and
+   claiming either way would be a guess. */
+function shipReady(){
+  const cut  = STATE.units && STATE.units.cut;
+  const dr   = STATE.units && STATE.units.drift;
+  const moved = !!(dr && (dr.changed && dr.changed.length || dr.edges_changed));
+  const sound = !!(STATE.gates && STATE.gates.sound);
+  return {
+    repo:  !!STATE.repo,
+    cut:   !!cut,
+    sound,
+    fresh: !!cut && !moved,
+    units: cut ? (cut.units || []).length : 0,
+    seq:   cut ? cut.seq : null,
+    moved
+  };
+}
+
+function preRow(ok, label, note){
+  return `<div class="${ok ? "met" : "unmet"}"><i></i><span><b>${label}</b>
+    <em>${note}</em></span></div>`;
+}
+
+function shipPre(r){
+  return `<div class="pre">
+    ${preRow(r.repo, r.repo ? "Repository set" : "No repository",
+        r.repo ? `tickets go to <code>${esc(STATE.repo)}</code>`
+               : "nothing names where the issues would be created")}
+    ${preRow(r.sound, r.sound ? "Graph is sound" : "Graph is unsound",
+        r.sound ? "every entry derives from something above it"
+                : "a work unit is refused per unit while this holds")}
+    ${preRow(r.cut, r.cut ? `Cut ${r.seq} taken` : "No cut taken",
+        r.cut ? `${r.units} work unit${r.units===1?"":"s"} decided to go out`
+              : "a cut is the decision that work goes out from this shape — take one in Order")}
+    ${preRow(r.fresh, r.moved ? "The graph has moved since the cut" : "Cut matches the graph",
+        r.moved ? "emitting would ship units that are no longer what the project says — re-cut, or undo the change"
+                : "the unit list and the bodies agree")}
+    <div><i></i><span><b>Token</b>
+      <em>read from <code>MU_SPEC_GITHUB_TOKEN</code> in this unit's environment.
+      This page cannot see it, so it is not claimed either way here — an absent
+      one is reported when the run refuses.</em></span></div>
+  </div>`;
+}
+
+/* Counts before lists. Zero failures is the thing being looked for, so it has
+   to be legible without reading a single row. */
+function shipTally(c){
+  const box = (n, label, kind) =>
+    `<div class="${kind||""}"><b>${n}</b><span>${label}</span></div>`;
+  return `<div class="tally">
+    ${box(c.created||0, "created", (c.created||0) ? "good" : "")}
+    ${box(c.wired||0, "orders wired", (c.wired||0) ? "good" : "")}
+    ${box(c.skipped||0, "skipped", (c.skipped||0) ? "warn" : "")}
+    ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
+    ${box(c.unwired||0, "unwired", (c.unwired||0) ? "bad" : "")}
+    ${box(c.units||0, "work units")}
+  </div>`;
+}
+
+function shipProgress(e){
+  const total = e.total || 0, done = e.processed || 0;
+  const pct = total ? Math.round(100 * done / total) : 0;
+  return `<div class="prog"><i style="width:${pct}%"></i></div>
+    <div class="progline">
+      <span class="step">${esc(e.step || "starting")}</span>
+      <span><b>${done}</b> of <b>${total || "?"}</b> work units</span>
+      <span>created <b>${e.created || 0}</b></span>
+      <span>orders <b>${e.wired || 0}</b></span>
+      ${(e.failed||0) ? `<span style="color:var(--down)">failed <b>${e.failed}</b></span>` : ""}
+      ${(e.skipped||0) ? `<span style="color:var(--warn)">skipped <b>${e.skipped}</b></span>` : ""}
+    </div>`;
+}
+
+/* Every unit that did not simply land, with the reason attached. This is the
+   answer to "did they all transfer" -- a count alone says how many, and only
+   the reason says what to do about it. */
+function shipTrouble(r){
+  let out = "";
+  if((r.failed||[]).length)
+    out += `<div class="qsec"><h3>Failed <span class="n">${r.failed.length}</span>
+      <span class="muted" style="font-weight:400">no issue exists for these</span></h3>
+      <table><tr><th>unit</th><th>why</th></tr>` +
+      r.failed.map(f=>`<tr><td><code>${esc(f.key)}</code></td>
+        <td class="why">${esc(f.reason)}</td></tr>`).join("") + `</table></div>`;
+  if((r.unwired||[]).length)
+    out += `<div class="qsec"><h3>Orders not declared <span class="n">${r.unwired.length}</span>
+      <span class="muted" style="font-weight:400">the issues exist; the dependency between
+      them does not</span></h3>
+      <table><tr><th>blocked</th><th>waits on</th><th>why</th></tr>` +
+      r.unwired.map(u=>`<tr><td><code>${esc(u.blocked)}</code></td>
+        <td><code>${esc(u.blocker)}</code></td>
+        <td class="why">${esc(u.reason)}</td></tr>`).join("") + `</table></div>`;
+  if((r.skipped||[]).length)
+    out += `<div class="qsec"><h3>Skipped <span class="n">${r.skipped.length}</span>
+      <span class="muted" style="font-weight:400">already emitted, or too large to
+      send</span></h3>
+      <table><tr><th>unit</th><th>issue</th><th>why</th></tr>` +
+      r.skipped.map(k=>`<tr><td><code>${esc(k.key)}</code></td>
+        <td>${k.number ? (k.url
+              ? `<a href="${esc(k.url)}" target="_blank" rel="noreferrer">#${esc(k.number)}</a>`
+              : "#" + esc(k.number)) : "—"}</td>
+        <td class="why">${esc(k.reason)}</td></tr>`).join("") + `</table></div>`;
+  return out;
+}
+
+function shipCreated(r){
+  if(!(r.created||[]).length) return "";
+  return `<div class="qsec"><h3>Created <span class="n">${r.created.length}</span>
+    <span class="muted" style="font-weight:400">in dependency order, so a test unit sits
+    above the work it precedes</span></h3>
+    <table><tr><th>issue</th><th>unit</th><th>title</th><th>labels</th></tr>` +
+    r.created.map(c=>`<tr><td>${c.url
+        ? `<a href="${esc(c.url)}" target="_blank" rel="noreferrer">#${esc(c.number)}</a>`
+        : "#" + esc(c.number)}</td>
+      <td><code>${esc(c.key)}</code></td>
+      <td>${esc(c.title)}</td>
+      <td>${(c.labels||[]).map(l=>`<span class="pill flat">${esc(l)}</span>`).join(" ")}</td>
+      </tr>`).join("") + `</table></div>`;
+}
+
+function drawShip(){
+  if(!STATE.project){ $("ship").innerHTML = `<p class="muted">No project.</p>`; return; }
+  const e = STATE.emission || {running:false, emissions:[]};
+  const r = shipReady();
+  const f = STATE.shipFlash;
+  const blocked = !(r.repo && r.cut && r.sound && r.fresh);
+  const draft = STATE.repoDraft == null ? (STATE.repo || "") : STATE.repoDraft;
+
+  const head = `<h3>Ship — work units become issues on a tracker</h3>
+    <p class="muted" style="max-width:76ch">One issue per work unit, then the order between
+    them as native <b>blocked by</b> dependencies. The issues are written for an
+    <b>agent</b> to build from — legible to a person, but that is incidental. This unit
+    creates tickets and never acts on them: nothing here reads an issue back, closes one,
+    or reacts to a specification that has since moved.</p>`;
+
+  const repoBar = `<div class="shipbar">
+      <input id="repo-in" value="${esc(draft)}" placeholder="owner/name, or a github.com URL"
+        spellcheck="false">
+      <button class="btn" id="repo-save">${STATE.repo ? "Change" : "Set"} repository</button>
+      ${STATE.repo ? `<span class="muted">currently <code>${esc(STATE.repo)}</code></span>` : ""}
+    </div>`;
+
+  const running = !!e.running;
+  const act = `<div class="cutbar">
+      <button class="cutbtn" id="do-ship" ${blocked || running ? "disabled" : ""}>${
+        running ? "Shipping…"
+        : r.units ? `Ship ${r.units} work unit${r.units===1?"":"s"}` : "Ship"}</button>
+      <span class="muted">${blocked
+        ? "Not ready — see above."
+        : `Creates ${r.units} issue${r.units===1?"":"s"} on <code>${esc(STATE.repo)}</code>,
+           paced one write a second. Nothing already emitted is created twice.`}</span>
+    </div>`;
+
+  const flash = f ? `<div id="cutflash" class="${esc(f.kind)}">${esc(f.text)}</div>` : "";
+
+  let body = "";
+  if(running) body += shipProgress(e);
+  const last = e.result;
+  if(!running && last && last.counts){
+    body += shipTally(last.counts) + shipTrouble(last) + shipCreated(last);
+  } else if(!running && last && last.reason){
+    body += `<div class="inert"><b>The last run did nothing</b>${esc(last.reason)}</div>`;
+  }
+  if(!running && e.error)
+    body += `<div class="flash bad">The run stopped: ${esc(e.error)}</div>`;
+
+  const log = (e.emissions||[]).length
+    ? `<div class="qsec"><h3>Earlier runs <span class="n">${e.emissions.length}</span>
+        <span class="muted" style="font-weight:400">from the durable log, which outlives the
+        process a run happened in</span></h3>
+       <table><tr><th>run</th><th>cut</th><th>repo</th><th>issues</th><th>orders</th><th>at</th></tr>`
+      + e.emissions.slice().reverse().map(x=>`<tr><td>${esc(x.seq)}</td>
+          <td>cut ${esc(x.cut_seq)}</td><td><code>${esc(x.repo)}</code></td>
+          <td>${esc(x.issues)}</td><td>${esc(x.wired)}</td>
+          <td class="muted">${when(x.at)}</td></tr>`).join("")
+      + `</table></div>`
+    : `<p class="muted">Nothing has been shipped from this project yet.</p>`;
+
+  $("ship").innerHTML = head + flash + repoBar + shipPre(r) + act + body + log;
+
+  const save = $("repo-save"), input = $("repo-in");
+  if(input) input.oninput = () => { STATE.repoDraft = input.value; };
+  if(save) save.onclick = () => setRepo(input.value);
+  const go = $("do-ship");
+  if(go) go.onclick = shipTickets;
+}
+
+/* Which repository several hundred issues land in is a deployment decision, so
+   it is a control here and not a tool an agent can reach. */
+async function setRepo(value){
+  const btn = $("repo-save");
+  if(btn) btn.disabled = true;
+  try{
+    const res = await fetch("projects/" + enc(STATE.project) + "/repo", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({repo: value.trim() || null})
+    });
+    const text = await res.text();
+    let payload = null;
+    try{ payload = JSON.parse(text); }catch(_){}
+    if(!res.ok){
+      STATE.shipFlash = {kind:"bad", text:(payload && payload.error) || ("Refused — " + res.status)};
+    } else {
+      // Reporting what was STORED, not what was typed: a browser URL is
+      // reduced to owner/name, and a reader who assumes otherwise has no way
+      // to notice.
+      STATE.repo = payload.repo;
+      STATE.repoDraft = null;
+      STATE.shipFlash = payload.repo
+        ? {kind:"ok", text:"Repository set to " + payload.repo + "."}
+        : {kind:"ok", text:"Repository cleared."};
+    }
+  }catch(err){
+    STATE.shipFlash = {kind:"bad", text:"Could not reach the unit — " + err};
+  }
+  drawShip();
+}
+
+async function shipTickets(){
+  const btn = $("do-ship");
+  if(btn) btn.disabled = true;
+  STATE.shipFlash = {kind:"busy", text:"Starting…"};
+  drawShip();
+  try{
+    const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
+      method:"POST", headers:{"content-type":"application/json"}, body:"{}"
+    });
+    const text = await res.text();
+    let payload = null;
+    try{ payload = JSON.parse(text); }catch(_){}
+    if(!res.ok){
+      STATE.shipFlash = {kind:"bad",
+        text:(payload && (payload.error || payload.reason)) || ("Refused — " + res.status)};
+      drawShip();
+      return;
+    }
+    // 202: accepted, not finished. 358 paced writes is about six minutes, so
+    // what comes back is a run to watch rather than a result to report.
+    STATE.shipFlash = {kind:"busy", text:"Run " + (payload.run_id||"") + " started."};
+    STATE.emission = Object.assign({}, STATE.emission || {},
+      {running:true, phase:"running", processed:0, total:null, created:0, wired:0});
+    drawShip();
+    watchEmission();
+  }catch(err){
+    STATE.shipFlash = {kind:"bad", text:"Could not reach the unit — " + err};
+    drawShip();
+  }
+}
+
+/* A run advances several times a second at the start and then waits on the
+   pace, so it gets its own poll rather than riding the project one: the whole
+   payload is far too much to re-read every second, and the ordinary interval
+   is far too slow to watch progress with. Stops itself the moment the run is
+   not running, so a finished run costs nothing. */
+let EMIT_TIMER = null;
+function watchEmission(){
+  clearTimeout(EMIT_TIMER);
+  EMIT_TIMER = setTimeout(async () => {
+    if(!STATE.project) return;
+    try{
+      const d = await get("projects/" + enc(STATE.project) + "/emit");
+      STATE.emission = d;
+      if(d.phase === "done" || d.phase === "failed"){
+        const c = (d.result && d.result.counts) || null;
+        STATE.shipFlash = d.error
+          ? {kind:"bad", text:"The run stopped — " + d.error}
+          : c
+            ? {kind:(c.failed || c.unwired) ? "bad" : "ok",
+               text:"Shipped " + c.created + " issue" + (c.created===1?"":"s") +
+                    " and declared " + c.wired + " order" + (c.wired===1?"":"s") +
+                    (c.skipped ? ", skipped " + c.skipped : "") +
+                    (c.failed ? ". " + c.failed + " failed" : "") +
+                    (c.unwired ? ". " + c.unwired + " order" +
+                      (c.unwired===1?"":"s") + " could not be declared" : "") + "."}
+            : {kind:"bad", text:(d.result && d.result.reason) || "The run did nothing."};
+        if(MODE_SHIP()) drawShip();
+        // The cut and the graph did not move, but the log did, so re-read
+        // once rather than leave the page showing a project without its
+        // newest emission.
+        selectProject(STATE.project).catch(()=>{});
+        return;
+      }
+      if(MODE_SHIP()) drawShip();
+      watchEmission();
+    }catch(_){
+      // A unit that went away mid-run: stop asking. The log is the durable
+      // record and the next ordinary poll will find it.
+      if(MODE_SHIP()) drawShip();
+    }
+  }, 900);
+}
+const MODE_SHIP = () => !$("ship").classList.contains("hide");
+
+/* A run in flight, or a previous one that did not fully land. Both are things
+   a reader should see without opening the view. */
+function shipDot(){
+  const e = STATE.emission;
+  if(!e){ $("sdot").hidden = true; return; }
+  const c = (e.result && e.result.counts) || null;
+  $("sdot").hidden = !(e.running || e.error || (c && (c.failed || c.unwired)));
+}
+
+
 /* One delegated handler for every id link on the page: an identifier
    interpolated into an inline onclick would be markup built from
    stored data, which is the thing esc() exists to avoid. */
@@ -2734,6 +3117,7 @@ function show(v){
   $("waves").classList.toggle("hide",v!=="waves");
   $("modules").classList.toggle("hide",v!=="modules");
   $("queues").classList.toggle("hide",v!=="queues");
+  $("ship").classList.toggle("hide",v!=="ship");
   $("viewbar").hidden = !(onCanvas||reading);
   $("vb-spine").hidden = v!=="spine";
   $("vb-read").hidden  = !reading;
@@ -2748,6 +3132,7 @@ function show(v){
   // Selection is per view: a unit selected in Order means nothing on the
   // spine, and an entry selected on the spine means nothing here.
   if(v==="order" && !ARRIVING){ SEL_UNIT=null; drawOrder(); resetInspector(); }
+  if(v==="ship"){ drawShip(); resetInspector(); }
 }
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
@@ -2930,6 +3315,14 @@ function reconcile(d){
     // grows underneath an unchanged module map -- so it watches the graph too.
     if(changed("modules") || structural) drawModules();
     if(changed("queues") || changed("proposal")){ captureDraftFocus(); drawQueues(); }
+    // The repository, the cut and the emission log all bear on whether this
+    // project can ship, so it redraws on any of them. Never while a run is in
+    // flight: that has its own poll at its own rate, and an ordinary tick
+    // landing in the middle would overwrite live progress with a snapshot
+    // taken before it.
+    if(!(STATE.emission && STATE.emission.running)
+       && (changed("ship") || changed("units") || changed("gates"))) drawShip();
+    shipDot();
   } finally { KEEP_VIEW = false; }
 
   if(fresh.size) markNew(fresh);
@@ -3058,7 +3451,7 @@ function drawReadPicker(){
 
 function redraw(){
   drawStrip(); drawPending(); drawLegend(); drawReadPicker();
-  drawScene(); drawWaves(); drawModules(); drawQueues();
+  drawScene(); drawWaves(); drawModules(); drawQueues(); drawShip(); shipDot();
   clearAll();
 }
 

@@ -629,3 +629,62 @@ def test_the_waves_copy_states_both_sources_of_unit_order():
     assert "Order has</b> two sources" in page or "Order has <b>two</b> sources" in page
     assert "follows the unit\n    holding the scenarios" in page \
         or "follows the unit" in page
+
+
+# -- the ship view ----------------------------------------------------------
+
+
+def test_the_ship_view_is_reachable_and_has_a_pane():
+    """A nav button with no pane is a button that blanks the stage."""
+    page = dashboard.read_page()
+    assert 'data-v="ship"' in page
+    assert 'id="ship"' in page
+    assert page.count('id="ship"') == 1
+
+
+def test_shipping_reads_the_two_routes_it_needs():
+    """`/repo` says where tickets go and `/emit` says how far a run got.
+    Both are soft reads: a project that has never shipped has neither, and
+    that is a new project rather than a broken one."""
+    page = dashboard.read_page()
+    assert '"/repo"' in page and '"/emit"' in page
+    assert 'soft(base + "/repo"' in page
+    assert 'soft(base + "/emit"' in page
+
+
+def test_the_ship_button_is_guarded_by_its_preconditions():
+    """A refusal arriving after the press is one the reader could have been
+    told about before forming the intention -- and this press costs several
+    hundred issues on somebody's repository when it goes the other way."""
+    page = dashboard.read_page()
+    assert "function shipReady()" in page
+    assert "const blocked = !(r.repo && r.cut && r.sound && r.fresh)" in page
+    assert 'id="do-ship"' in page
+
+
+def test_the_run_is_polled_separately_from_the_project():
+    """A run advances several times a second; the project payload is far too
+    much to re-read at that rate, and the ordinary interval is far too slow to
+    watch progress with."""
+    page = dashboard.read_page()
+    assert "function watchEmission()" in page
+    assert "EMIT_TIMER" in page
+
+
+def test_a_run_in_flight_is_not_overwritten_by_an_ordinary_tick():
+    """The project poll and the run poll both write the panel. Without this
+    the slower one lands mid-run and replaces live progress with a snapshot
+    taken before it."""
+    page = dashboard.read_page()
+    assert "!(STATE.emission && STATE.emission.running)" in page
+
+
+def test_every_value_the_tracker_returns_is_escaped():
+    """Issue titles, labels and failure reasons are text this unit did not
+    write. None of it may reach the page as markup."""
+    page = dashboard.read_page()
+    start = page.index("function shipTrouble")
+    end = page.index("function drawShip")
+    for field in ("f.key", "f.reason", "u.blocked", "u.blocker", "u.reason",
+                  "k.key", "k.reason"):
+        assert f"esc({field})" in page[start:end], f"{field} is interpolated raw"
