@@ -2791,9 +2791,19 @@ addEventListener("keydown",e=>{ if(e.key==="Escape") clearAll(); });
     });});
   // A press on blank canvas that did not become a drag is a click,
   // and a click on nothing means "I am looking at nothing".
-  addEventListener("pointerup",()=>{
-    if(down && moved<4) clearAll();
-    down=null; DRAGGING=false; $("grabpad").hidden=true;});
+  /* Every way a gesture can end, not just the tidy one. The pad sits over
+     the scene while dragging, so a drag that is interrupted rather than
+     released would leave the graph unclickable -- and pointercancel is
+     what arrives when the browser or the OS takes the gesture away. */
+  const endPan=(click)=>{
+    if(click && down && moved<4) clearAll();
+    down=null; DRAGGING=false;
+    const pad=$("grabpad"); if(pad) pad.hidden=true;
+  };
+  addEventListener("pointerup",()=>endPan(true));
+  addEventListener("pointercancel",()=>endPan(false));
+  // Losing the window sends neither of the above.
+  addEventListener("blur",()=>endPan(false));
   c.addEventListener("wheel",e=>{
     e.preventDefault();
     const r=c.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
