@@ -70,6 +70,10 @@ PROPOSAL_FILE = "proposal.json"
 # the same reason: what the projection said when work was handed out is not
 # recoverable from what it says now.
 UNITS_FILE = "units.jsonl"
+# Which work unit became which issue, one line per emission run. Append-only,
+# and the only reason a second run does not create every issue again -- so
+# unlike every other absence in this unit, an unreadable one is a hard error.
+EMISSIONS_FILE = "emissions.jsonl"
 BEHAVIOUR_LAYER = "B"
 SPEC_LAYER = "S"
 MANIFEST_FILE = "manifest.json"
@@ -645,6 +649,15 @@ class ProjectStore:
         as the gates going green. Storing it is what makes a later
         projection comparable with the one work was handed out from."""
         return self._project_dir(project) / UNITS_FILE
+
+    def emissions_path(self, project: str) -> Path:
+        """The log of emission runs: which unit became which issue, and which
+        orders were declared.
+
+        Beside the cut log, because it answers the other half of the same
+        question. A cut says what the work was when it went out; this says
+        where it went."""
+        return self._project_dir(project) / EMISSIONS_FILE
 
     def events_path(self) -> Path:
         """The lifecycle log. Alongside the other two and never loaded during

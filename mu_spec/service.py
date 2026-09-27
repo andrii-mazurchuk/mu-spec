@@ -22,6 +22,7 @@ dict, so the whole surface is testable without a socket.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -45,6 +46,8 @@ from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
 from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
 from mu_spec.slicing import candidates, score
+from mu_spec import emit as emitting
+from mu_spec import github
 from mu_spec import units
 from mu_spec.storage import SLICE, SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
@@ -1508,6 +1511,128 @@ def split_slice(
         "moved": sorted(str(i) for i in moving),
         "remaining": sorted(str(i) for i in after.slices[source].members),
     }
+
+
+TOKEN_ENV = "MU_SPEC_GITHUB_TOKEN"
+
+# Seconds between writes. GitHub rate-limits content creation *secondarily* --
+# separately from the 5000/hour budget, and specifically against bursts -- and
+# `dark` is 358 writes: 144 issues plus 214 dependencies. A tight loop of those
+# is the exact shape that limit exists to stop, and the client's backoff only
+# helps once it is already too late.
+#
+# The cost is honest and worth knowing: 358 writes at this pace is about six
+# minutes, so an emission is a job and not a request. Whoever routes this must
+# not hold an HTTP connection open for it.
+EMIT_PACE = 1.0
+
+
+def emit_tickets(
+    store: ProjectStore,
+    project: str,
+    client=None,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+) -> dict:
+    """Create one issue per work unit in the current cut, and wire the order.
+
+    A person triggers this. Never a schedule and never a session: several
+    hundred issues appearing on a repository is not something to decide on
+    somebody's behalf, which is why the route is withheld from the tool
+    manifest exactly as `cut_units` is.
+
+    Four ways to refuse, and all four are answers rather than exceptions --
+    absence is normal everywhere in this unit except the emission log itself:
+
+    - **no repo.** Nothing names where the tickets would go.
+    - **no token.** It is unit config rather than project metadata, so the
+      reason has to name the variable; there is nothing in the project to look
+      at.
+    - **no cut.** A cut is the deliberate decision that work goes out from this
+      shape. Without one, nothing here was chosen.
+    - **drift.** The unit list comes from the cut and the bodies come from the
+      live graph. When those disagree, emitting would ship a shape nobody cut,
+      and silently preferring either side would be this unit deciding
+      something. The drift comes back attached, because the fix is either a
+      fresh cut or an undone change and only a person can say which.
+    """
+    manifest = store.load_manifest(project)
+    if not manifest.repo:
+        return {
+            "emitted": False,
+            "project": project,
+            "reason": "no repo is configured for this project, so there is "
+            "nowhere to create issues. Set one first.",
+        }
+
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token:
+        return {
+            "emitted": False,
+            "project": project,
+            "repo": manifest.repo,
+            "reason": f"no GitHub token: set {TOKEN_ENV} in this unit's "
+            "environment. It is unit config rather than project metadata, "
+            "because it is not project-specific and a secret does not belong "
+            "in a file that is read, diffed and shown on a dashboard.",
+        }
+
+    cut = units.current_cut(store.units_path(project))
+    if cut is None:
+        return {
+            "emitted": False,
+            "project": project,
+            "repo": manifest.repo,
+            "reason": "no cut has been taken, so no work has been decided to "
+            "go out. Take a cut first.",
+        }
+
+    graph = store.load_graph(project)
+    live = units.project(manifest, graph)
+    drift = units.drift(cut, live)
+    if drift["changed"] or drift["edges_changed"]:
+        return {
+            "emitted": False,
+            "project": project,
+            "repo": manifest.repo,
+            "cut_seq": cut.seq,
+            "reason": f"the graph has moved since cut {cut.seq}, so emitting "
+            "it would ship work units that are no longer what the project "
+            "says. Take a fresh cut, or undo the change.",
+            "drift": drift,
+        }
+
+    # Dependency order, so issue numbers ascend with the build order and a test
+    # unit sits immediately above the work it precedes. Correctness does not
+    # need it -- the second pass wires whatever exists -- legibility does.
+    schedule = units.wave_view(list(cut.units), cut.edges)
+    order = [key for wave in schedule.waves for key in wave]
+    order += [key for key in schedule.unschedulable if key not in set(order)]
+
+    if client is None:
+        client = github.GitHub(token, pace=EMIT_PACE)
+
+    result = emitting.emit(
+        log_path=store.emissions_path(project),
+        repo=manifest.repo,
+        cut_seq=cut.seq,
+        order=order,
+        edges={k: tuple(v) for k, v in cut.edges.items()},
+        fetch=lambda key: get_work_unit(store, project, key),
+        client=client,
+        now_fn=now_fn,
+    )
+    result["project"] = project
+    if events is not None and result.get("emitted"):
+        events.record(
+            "tickets_emitted",
+            project,
+            now_fn,
+            repo=manifest.repo,
+            cut_seq=cut.seq,
+            **result["counts"],
+        )
+    return result
 
 
 def get_repo(store: ProjectStore, project: str) -> dict:
