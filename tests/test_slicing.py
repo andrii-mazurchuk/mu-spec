@@ -137,6 +137,49 @@ def test_entries_left_out_of_every_slice_are_reported():
     assert any("nowhere to live" in w for w in result["warnings"])
 
 
+def test_scenarios_are_not_counted_as_entries_with_nowhere_to_live():
+    """Two layers are unsliced by design, and the warning is about neither.
+    Intent, because slicing happens after behaviour and an intent entry
+    never had a slice to lose. Tests, because 4b.1a stores them flat and
+    joins them to nothing -- a scenario's column is the column of the
+    contract it judges, resolved on read rather than recorded.
+
+    The intent exclusion was there from the start; the test layer arrived
+    later without one. On `dark` that reported all 486 scenarios as entries
+    that would have nowhere to live -- the correct state described as a
+    defect, and loud enough to bury the real warnings under it."""
+    graph = Graph(
+        [
+            Entry(id=parse("I\u00b701"), title="an intent"),
+            Entry(id=parse("S\u00b701"), title="index"),
+            Entry(id=parse("S\u00b702"), title="ledger"),
+            Entry(id=parse("T\u00b701"), title="a scenario",
+                  derives_from=(parse("S\u00b701"),)),
+            Entry(id=parse("T\u00b702"), title="another",
+                  derives_from=(parse("S\u00b701"),)),
+        ]
+    )
+    result = score(Manifest(project="m"), graph, {"a": ["S\u00b701"], "b": ["S\u00b702"]})
+    assert result["unassigned"] == []
+    assert not any("nowhere to live" in w for w in result["warnings"])
+
+
+def test_a_spec_entry_left_out_is_still_reported_when_scenarios_exist():
+    """The other half: silencing the tests must not silence the warning.
+    A contract in no slice really does have nowhere to live."""
+    graph = Graph(
+        [
+            Entry(id=parse("S\u00b701"), title="index"),
+            Entry(id=parse("S\u00b702"), title="ledger"),
+            Entry(id=parse("T\u00b701"), title="a scenario",
+                  derives_from=(parse("S\u00b701"),)),
+        ]
+    )
+    result = score(Manifest(project="m"), graph, {"a": ["S\u00b701"]})
+    assert result["unassigned"] == ["S\u00b702"]
+    assert any("nowhere to live" in w for w in result["warnings"])
+
+
 def test_a_one_entry_slice_is_warned_about_not_refused():
     result = score(Manifest(project="m"), _spec(), {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]})
     assert result["legal"] is True
