@@ -1336,7 +1336,13 @@ def test_depending_on_a_cross_cutting_slice_is_refused_end_to_end(store, prompts
     )
     assert (status, payload["admitted"]) == (409, False)
     assert payload["findings"][0]["kind"] == "bad_emission"
-    assert "emits_into, not depends_on" in payload["findings"][0]["detail"]
+    detail = payload["findings"][0]["detail"]
+    # The refusal must offer BOTH remedies, because it cannot know which of
+    # the two claims is the false one. Naming only the relabel sends a
+    # caller with a real dependency looking for an edge that does not exist,
+    # when what is wrong is the classification.
+    assert "emits_into" in detail
+    assert "foundational" in detail and "Split" in detail
 
 
 def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):

@@ -158,11 +158,26 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
         for target in entry.depends_on:
             owner = manifest.slice_of(target)
             if owner is not None and owner in cross:
+                # Two claims that cannot both hold, and the message must
+                # not assume which one is false. If the dependency is
+                # spurious, the edge is an emission. If it is real -- the
+                # caller consumes what the target returns -- then the
+                # classification is what is wrong, and no relabelling will
+                # express it: fan-in is not the criterion, and a slice
+                # others depend on is FOUNDATIONAL rather than
+                # cross-cutting. A slice holding both an ambient concern and
+                # a service its callers consume is two slices, and slices
+                # split.
                 problems.append(
-                    f"{target} is in {owner!r}, which is cross-cutting -- "
-                    "reach it with emits_into, not depends_on. Depending on "
-                    "it means branching on what it returns, and a concern "
-                    "you branch on is not cross-cutting"
+                    f"{target} is in {owner!r}, which is cross-cutting, and "
+                    "a cross-cutting slice is reached with emits_into. Two "
+                    "readings, and they have opposite remedies. If nothing "
+                    "is consumed back, this is an emission -- change the "
+                    "edge. If the caller really does use what "
+                    f"{target} returns, then {owner!r} is misclassified for "
+                    "this entry: depending on it is what a foundational "
+                    "slice is for, and fan-in is never what makes something "
+                    f"cross-cutting. Split {owner!r} and classify each half"
                 )
 
         for target in entry.emits_into:
