@@ -2031,6 +2031,12 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "ratify": None,
         "reject_proposal": None,
         "stats": None,
+        "get_repo": "get_repo",
+        # Which repository several hundred issues land in is a deployment
+        # decision, so the write is withheld for the same reason cutting and
+        # ratifying are. The read is offered: an agent confirming a project is
+        # configured before anything ships is the use to encourage.
+        "set_repo": None,
     }
     for _, _, name in _ROUTES:
         # health, tools, prompts and skills are the standard meta surface:
@@ -3161,3 +3167,45 @@ def test_no_tool_leaves_a_writing_parameter_undescribed(store, prompts):
                 continue            # path substitutions, named by the path
             documented = prop in desc or "enum" in schema
             assert documented, f"{tool['name']}.{prop} is undocumented"
+
+
+# -- the remote a project's tickets go to -----------------------------------
+
+
+def test_the_repo_is_readable_and_absent_by_default(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = call(store, prompts, "GET", "/projects/m/repo")
+    assert (status, payload["repo"]) == (200, None)
+
+
+def test_setting_the_repo_normalises_and_reports_what_was_stored(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/repo",
+                           {"repo": "https://github.com/andrii-mazurchuk/dark.git"})
+    assert (status, payload["repo"]) == (200, "andrii-mazurchuk/dark")
+
+    _, read = call(store, prompts, "GET", "/projects/m/repo")
+    assert read["repo"] == "andrii-mazurchuk/dark"
+
+
+def test_a_repo_that_is_not_a_repository_is_refused_with_the_reason(store, prompts):
+    _two_columns(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/repo",
+                           {"repo": "not a repo"})
+    assert status == 400
+    assert "owner/name" in payload["error"]
+
+
+def test_setting_the_repo_is_not_offered_to_an_agent(store, prompts):
+    """Which repository a project ships to is a deployment decision, so the
+    write is withheld from the manifest for the same reason `cut_units` and
+    `ratify` are -- a session that could set it would be choosing on
+    somebody's behalf where several hundred issues land.
+
+    The read is offered: an agent verifying that a project is configured
+    before anything is emitted is exactly the use this unit wants.
+    """
+    _, payload = call(store, prompts, "GET", "/tools")
+    names = {t["name"] for t in payload["tools"]}
+    assert "set_repo" not in names
+    assert "get_repo" in names

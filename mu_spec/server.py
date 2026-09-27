@@ -62,6 +62,9 @@ def _tools() -> list[dict[str, Any]]:
       while the author is still revising, so a session that could cut would
       be deciding on someone's behalf that they had finished. Re-cutting is
       free precisely because a person triggers it.
+    - **`set_repo`.** Which repository several hundred issues land in is a
+      deployment decision. `get_repo` *is* offered: an agent checking that a
+      project is configured before anything ships is the use to encourage.
 
     The routes are not hidden -- a human surface reaches them, and enclosure
     is a process boundary, not a secret. What is withheld is the *offer*.
@@ -682,6 +685,19 @@ def _tools() -> list[dict[str, Any]]:
             {},
         ),
         tool(
+            "get_repo",
+            "The repository this project's work units become tickets in, as "
+            "`owner/name`. `null` means none is configured, which is a normal "
+            "answer and not a fault -- but nothing can be emitted until one "
+            "is. Check this before assuming an emission failed for some more "
+            "interesting reason. Setting it is a deployment decision and is "
+            "not offered here.",
+            "GET",
+            "/projects/{project}/repo",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "list_docs",
             "Index of this unit's own documentation: name, title, summary, size.",
             "GET",
@@ -868,6 +884,12 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
         re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/split$"),
         "split_slice",
     ),
+    # Where this project's tickets go. One route, both methods: the write is a
+    # deployment decision and is withheld from the tool manifest; the read is
+    # offered, because an agent checking a project is configured before
+    # anything ships is the point.
+    ("POST", re.compile(rf"^/projects/{_P}/repo$"), "set_repo"),
+    ("GET", re.compile(rf"^/projects/{_P}/repo$"), "get_repo"),
     # Reads.
     ("GET", re.compile(r"^/projects$"), "list_projects"),
     ("GET", re.compile(rf"^/projects/{_P}/spine$"), "spine"),
@@ -1145,6 +1167,16 @@ def handle(
                 store, project, params["slice"], body or {}, events, now_fn
             )
             return (200 if result["split"] else 409), JSON, json.dumps(result)
+
+        if name == "get_repo":
+            return 200, JSON, json.dumps(service.get_repo(store, project))
+
+        if name == "set_repo":
+            return (
+                200,
+                JSON,
+                json.dumps(service.set_repo(store, project, body or {})),
+            )
 
         if name == "declare_module":
             return (

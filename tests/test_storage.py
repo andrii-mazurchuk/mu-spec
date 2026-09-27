@@ -454,3 +454,66 @@ def test_architecture_still_requires_a_slice(tmp_path):
     store.create_project("m")
     with pytest.raises(ValueError):
         store.append("m", [Entry(id=parse("A·01"), title="an architecture")])
+
+
+# -- the remote a project's tickets go to -----------------------------------
+
+
+def test_a_project_has_no_repo_until_one_is_set(tmp_path):
+    """Absence is normal. Every existing project predates this field, and a
+    manifest written before it must load rather than raise -- which is also
+    what makes `emit` able to answer "no repo configured" instead of crashing.
+    """
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    assert store.load_manifest("p").repo is None
+
+
+def test_setting_the_repo_survives_a_round_trip(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    store.set_repo("p", "andrii-mazurchuk/dark")
+    assert store.load_manifest("p").repo == "andrii-mazurchuk/dark"
+
+    # And through the file, not just the object in memory.
+    raw = json.loads((tmp_path / "p" / "manifest.json").read_text(encoding="utf-8"))
+    assert raw["repo"] == "andrii-mazurchuk/dark"
+
+
+def test_a_browser_url_is_accepted_and_normalised(tmp_path):
+    """`owner/repo` is what every REST path needs, and a full browser URL is
+    what a person has in the clipboard. Accepting both costs four lines and
+    removes the likeliest way to configure this wrong -- a URL stored verbatim
+    builds `/repos/https://github.com/owner/repo/issues`, which 404s with
+    nothing pointing at the cause.
+    """
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    for given in (
+        "https://github.com/andrii-mazurchuk/dark",
+        "https://github.com/andrii-mazurchuk/dark.git",
+        "http://github.com/andrii-mazurchuk/dark/",
+        "git@github.com:andrii-mazurchuk/dark.git",
+        "andrii-mazurchuk/dark",
+    ):
+        store.set_repo("p", given)
+        assert store.load_manifest("p").repo == "andrii-mazurchuk/dark", given
+
+
+def test_a_repo_that_is_not_owner_slash_name_is_refused(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    for bad in ("dark", "", "   ", "a/b/c", "owner/", "/name"):
+        with pytest.raises(ValueError):
+            store.set_repo("p", bad)
+    assert store.load_manifest("p").repo is None
+
+
+def test_clearing_the_repo_is_allowed(tmp_path):
+    """Set in error, or a project that should stop emitting. Passing None is
+    how, rather than a second method."""
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    store.set_repo("p", "andrii-mazurchuk/dark")
+    store.set_repo("p", None)
+    assert store.load_manifest("p").repo is None

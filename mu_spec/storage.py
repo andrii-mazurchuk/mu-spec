@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from pathlib import Path
 
 from mu_spec.graph import Entry, Graph
@@ -81,6 +82,42 @@ MANIFEST_FILE = "manifest.json"
 SLICE = "slice"
 CROSS_CUTTING = "cross_cutting"
 SLICE_TYPES = (SLICE, CROSS_CUTTING)
+
+# `owner/name`, which is the only form a REST path can use. A person has a
+# browser URL or an SSH remote in the clipboard instead, so both are accepted
+# and reduced to this -- a URL stored verbatim builds
+# `/repos/https://github.com/owner/name/issues`, which 404s with nothing
+# pointing at the cause.
+_REPO_PREFIXES = (
+    "https://github.com/",
+    "http://github.com/",
+    "git@github.com:",
+    "ssh://git@github.com/",
+)
+_REPO = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def normalise_repo(value: str) -> str:
+    """`owner/name` from any spelling a person is likely to paste.
+
+    Validated rather than trusted: this string is interpolated into every
+    issue URL, and the failure of a wrong one is a 404 several hundred writes
+    into an emission.
+    """
+    text = (value or "").strip()
+    for prefix in _REPO_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    text = text.rstrip("/")
+    if text.endswith(".git"):
+        text = text[: -len(".git")]
+    if not _REPO.match(text):
+        raise ValueError(
+            f"{value!r} is not a repository: expected 'owner/name', or a "
+            "github.com URL to take one from"
+        )
+    return text
 
 
 class MalformedEntryFile(ValueError):
@@ -208,6 +245,20 @@ class Manifest:
     # tying a file to the reasoning that produced it. Without it the graph
     # stops at spec and the whole scheme is decorative.
     modules: dict[str, set[Identifier]] = dataclasses.field(default_factory=dict)
+    # `owner/name` -- where this project's work units become tickets.
+    #
+    # Deployment config rather than graph structure, and it lives here anyway
+    # because there is nowhere else: a project IS a directory holding a
+    # manifest, so `list_projects` scans for this file and no central project
+    # list exists. Inventing one would give "which projects exist" a second
+    # answer, which is the drift this unit refuses everywhere else. One public
+    # field in an existing file is the smaller cost.
+    #
+    # The TOKEN is deliberately not here. It is not project-specific and a
+    # secret does not belong in a file that is read, diffed and shown on a
+    # dashboard -- it comes from `os.environ`, as all config in this system
+    # does. `None` is normal: every project predates this field.
+    repo: str | None = None
 
     def slice_of(self, identifier: Identifier) -> str | None:
         for name, sl in self.slices.items():
@@ -269,6 +320,7 @@ class Manifest:
                     path: sorted(str(i) for i in ids)
                     for path, ids in sorted(self.modules.items())
                 },
+                "repo": self.repo,
             },
             indent=2,
         )
@@ -291,6 +343,7 @@ class Manifest:
                 path: {parse(i) for i in ids}
                 for path, ids in raw.get("modules", {}).items()
             },
+            repo=raw.get("repo") or None,
         )
 
 
@@ -341,6 +394,18 @@ class ProjectStore:
 
     def save_manifest(self, project: str, manifest: Manifest) -> None:
         self._write_manifest(self._project_dir(project), manifest)
+
+    def set_repo(self, project: str, repo: str | None) -> str | None:
+        """Point this project's tickets at a repository, or clear it.
+
+        `None` clears rather than a second method: set in error and set to
+        nothing are the same operation on one field. Returns what was stored,
+        which is the normalised form and not necessarily what was passed.
+        """
+        manifest = self.load_manifest(project)
+        manifest.repo = normalise_repo(repo) if repo is not None else None
+        self.save_manifest(project, manifest)
+        return manifest.repo
 
     # -- identifier allocation ----------------------------------------------
 

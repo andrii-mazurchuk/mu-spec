@@ -1510,6 +1510,36 @@ def split_slice(
     }
 
 
+def get_repo(store: ProjectStore, project: str) -> dict:
+    """Where this project's work units become tickets, if anywhere.
+
+    `None` is a normal answer, not a fault: every project predates the field,
+    and a project that never emits never needs one.
+    """
+    return {"project": project, "repo": store.load_manifest(project).repo}
+
+
+def set_repo(store: ProjectStore, project: str, body: dict) -> dict:
+    """Point this project at a repository, or clear it with `null`.
+
+    Reports what was *stored* rather than echoing what was sent, because the
+    two differ: a browser URL is reduced to `owner/name`, and a caller that
+    assumes otherwise has no way to notice.
+    """
+    if "repo" not in body:
+        raise ServiceError(
+            "'repo' is required: 'owner/name', a github.com URL to take one "
+            "from, or null to clear it"
+        )
+    value = body["repo"]
+    if value is not None and not isinstance(value, str):
+        raise ServiceError("'repo' must be a string, or null to clear it")
+    try:
+        return {"project": project, "repo": store.set_repo(project, value)}
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+
+
 def declare_module(store: ProjectStore, project: str, body: dict) -> dict:
     """Record which spec entries a module implements.
 
