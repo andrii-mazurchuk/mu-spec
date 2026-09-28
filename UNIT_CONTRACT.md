@@ -9,7 +9,8 @@ This file only says what's specific to mu-spec.
 ## What mu-spec implements
 
 The standard four endpoints (`/health`, `/stats`, `/tools`,
-`/prompts/<tier>`) in `mu_spec/server.py`, plus `GET /skills`.
+`/prompts/<tier>`) in `mu_spec/server.py`, plus `GET /skills` and
+`GET /config`.
 
 Three prompt tiers rather than the minimum one: `default` orients a peer,
 `reference` is the authoring contract, and `wayfinding` is how to run an
@@ -17,7 +18,17 @@ effort that fills the graph in. `/skills` names the skills such an effort
 expects — `wayfinder` and the ones it calls — and declares plainly that none
 of them ship from here. Skills have no sharing standard in this system yet,
 and a unit that started shipping them would be setting that standard by
-accident. `unit_type: memory`,
+accident.
+
+`GET /config` declares every environment variable this unit reads, so the
+node can show that a value is *wanted* and not merely unset — `units.yaml`
+records what has been set and cannot record what is needed, which is why
+nothing on the gateway's dashboard could show that mu-spec wants a GitHub
+PAT. It declares only: no value is carried, and there is no write path,
+because setting a value is the gateway's job and a unit that configured
+itself would be answering a question nobody asked it.
+
+`unit_type: memory`,
 `lifecycle: persistent`. No `/trigger`: this unit does no scheduled work.
 
 ## The dashboard

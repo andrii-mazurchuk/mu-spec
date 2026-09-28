@@ -739,6 +739,86 @@ def _tools() -> list[dict[str, Any]]:
     ]
 
 
+def _config() -> list[dict[str, Any]]:
+    """Every environment variable this unit reads, and what happens without it.
+
+    `units.yaml` records what has been *set*. It cannot record what the unit
+    *needs*, so a variable nobody has set yet is invisible to the node -- which
+    is why nothing on the gateway's dashboard could show that mu-spec wants a
+    PAT. This is the missing half.
+
+    Hand-written, like `_tools()`: each entry needs a description a person can
+    act on, and `required` is a judgement -- it means the unit cannot do some
+    part of its job without the value, not that the value has no default.
+    Deriving the list by scanning for `os.environ` would produce names and no
+    reasons. Completeness *is* mechanical, so a test checks that against the
+    source instead; a list that has drifted from what the code reads tells the
+    same lie forever, and that is the only way this endpoint does harm.
+
+    No value is ever carried here, and there is no write path. Setting a value
+    is the gateway's job; a unit that configured itself would be answering a
+    question nobody asked it, and one that read its own secret back out over
+    HTTP would have turned a declaration into a leak.
+    """
+
+    def var(name, description, required=False, secret=False, default=None):
+        return {
+            "name": name,
+            "description": description,
+            "required": required,
+            "secret": secret,
+            "default": default,
+        }
+
+    return [
+        var(
+            service.TOKEN_ENV,
+            "Personal access token used to create GitHub issues from a cut's "
+            "work units. Needs the `repo` scope, since it writes issues and "
+            "their dependencies. Without it emission is refused and "
+            "GET /projects/{project}/emit reports `token: false`, so the Ship "
+            "panel greys the button rather than failing at the press.",
+            required=True,
+            secret=True,
+        ),
+        var(
+            "MU_SPEC_PORT",
+            "Port this unit listens on. The gateway injects it; the default "
+            "is what makes `python -m mu_spec.main` work with no gateway.",
+            default="9006",
+        ),
+        var(
+            "MU_SPEC_HOST",
+            "Interface this unit binds. Loopback by default, because the "
+            "gateway is the only thing that should be able to reach it.",
+            default="127.0.0.1",
+        ),
+        var(
+            "HOLONIC_STATE_DIR",
+            "The directory this unit keeps its private storage under: the "
+            "graph lives in <dir>/projects. The gateway injects it and creates "
+            "it before this process starts. Not required only because there is "
+            "a relative fallback for running standalone -- in the node, a "
+            "wrong value writes an append-only graph somewhere nobody will "
+            "look for it.",
+            default="state",
+        ),
+        var(
+            "MU_SPEC_ROOT",
+            "Overrides the projects directory outright, ignoring "
+            "HOLONIC_STATE_DIR. For running against a copy of a graph; unset "
+            "in the node.",
+        ),
+        var(
+            "MU_SPEC_PROMPTS_DIR",
+            "Directory backing GET /prompts/<tier> -- this unit's "
+            "self-description as a peer reads it. Absent, the tiers 404 and "
+            "nothing else is affected.",
+            default="prompts",
+        ),
+    ]
+
+
 def _skills() -> dict[str, Any]:
     """The skills an effort against this unit expects to exist.
 
@@ -882,6 +962,10 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # delivery mechanism -- this system has no standard for sharing
     # skills yet, and inventing one here would prejudge it.
     ("GET", re.compile(r"^/skills$"), "skills"),
+    # What this unit reads from the environment. For the node's Settings
+    # page, not for a model -- infrastructure about the unit, not an
+    # operation on the graph, so it is absent from /tools.
+    ("GET", re.compile(r"^/config$"), "config"),
     ("GET", re.compile(r"^/prompts/(?P<tier>[^/]+)$"), "prompts"),
     # Documentation: derived from the files this repo already ships. See
     # the node's docs/UNIT_STANDARDS.md, "Documentation: two endpoints".
@@ -1013,6 +1097,9 @@ def handle(
 
         if name == "skills":
             return 200, JSON, json.dumps(_skills())
+
+        if name == "config":
+            return 200, JSON, json.dumps({"unit": UNIT_NAME, "config": _config()})
 
         if name == "propose":
             return 200, JSON, json.dumps(service.propose(store, project, body))

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from mu_spec import main as main_mod, service
 from mu_spec.server import UNIT_NAME, handle, read_prompt
 from mu_spec.storage import ProjectStore, Slice
 
@@ -2047,8 +2048,11 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # a peer reads them to learn what this unit is, not to do work.
         # dashboard is the same exemption for the other audience: it
         # serves a page to a human in a browser, and a model offered it
-        # would fetch HTML in place of the data behind it.
-        if name in ("health", "tools", "prompts", "skills", "dashboard", "actions"):
+        # would fetch HTML in place of the data behind it. config is the
+        # node's: which variables this unit reads is infrastructure about
+        # the unit, and the gateway is the only caller that can act on it.
+        if name in ("health", "tools", "prompts", "skills", "dashboard",
+                    "actions", "config"):
             continue
         assert name in exposed, f"route {name!r} is exposed by no tool"
         if exposed[name]:
@@ -3341,3 +3345,58 @@ def test_emitting_is_not_offered_to_an_agent(store, prompts):
     names = {t["name"] for t in payload["tools"]}
     assert "emit_tickets" not in names
     assert "get_emission" in names
+
+
+def test_config_declares_what_the_unit_reads(store, prompts):
+    """`units.yaml` records what has been SET; it cannot record what the unit
+    NEEDS, so a key nobody has set yet is invisible to the node. This endpoint
+    is the missing half."""
+    status, payload = call(store, prompts, "GET", "/config")
+    assert status == 200
+    assert payload["unit"] == UNIT_NAME
+    by_name = {c["name"]: c for c in payload["config"]}
+    token = by_name["MU_SPEC_GITHUB_TOKEN"]
+    assert token["required"] is True
+    assert token["secret"] is True
+    assert token["default"] is None
+    # A working default means the unit can do its job without it. Marking it
+    # required makes the node's "required values missing" banner cry wolf.
+    assert by_name["MU_SPEC_PORT"]["required"] is False
+    assert by_name["MU_SPEC_PORT"]["default"] == "9006"
+    for entry in payload["config"]:
+        assert entry["description"], entry["name"]
+        assert set(entry) == {"name", "description", "required", "secret", "default"}
+
+
+def test_config_declares_every_variable_the_unit_reads(store, prompts):
+    """A declaration that drifts from what the code reads tells the same lie
+    forever. The list stays hand-written -- each entry needs a description a
+    person can act on, and `required` is a judgement -- but completeness is
+    mechanical, so it is checked mechanically."""
+    read = set()
+    for src in (Path("mu_spec")).glob("*.py"):
+        read |= set(re.findall(r'os\.environ\.get\(\s*"([A-Z_]+)"', src.read_text()))
+    read |= {service.TOKEN_ENV, main_mod.STATE_DIR_ENV}
+    _status, payload = call(store, prompts, "GET", "/config")
+    declared = {c["name"] for c in payload["config"]}
+    assert read - declared == set(), "read but never declared"
+    assert declared - read == set(), "declared but never read"
+
+
+def test_config_never_carries_a_value(store, prompts, monkeypatch):
+    """A declaration, not a delivery mechanism. Setting a value is the
+    gateway's job; a unit that could read its own secret back out over HTTP
+    has turned a declaration into a leak."""
+    monkeypatch.setenv(service.TOKEN_ENV, "ghp_notasecretbutpretend")
+    status, payload = call(store, prompts, "GET", "/config")
+    assert status == 200
+    assert "ghp_notasecretbutpretend" not in json.dumps(payload)
+    for entry in payload["config"]:
+        assert "value" not in entry and "set" not in entry
+
+
+def test_config_is_not_offered_to_an_agent(store, prompts):
+    """The node reads this to render its Settings page. It is infrastructure
+    about the unit, not an operation on the graph."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    assert "/config" not in {t["path"] for t in payload["tools"]}
