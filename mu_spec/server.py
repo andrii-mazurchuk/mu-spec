@@ -699,8 +699,10 @@ def _tools() -> list[dict[str, Any]]:
             "of the CURRENT cut that have issues to those issues -- so the "
             "number a run would newly create is the cut's units minus these, "
             "which is not the same as the unit count and is the number worth "
-            "knowing before starting one. Starting an emission is a person's "
-            "decision and is not offered here.",
+            "knowing before starting one. `token` says whether this unit holds "
+            "a tracker token at all -- a boolean, never the value, and the one "
+            "precondition nothing in the project can answer. Starting an "
+            "emission is a person's decision and is not offered here.",
             "GET",
             "/projects/{project}/emit",
             {"project": s},

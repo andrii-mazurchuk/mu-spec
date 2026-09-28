@@ -2818,9 +2818,10 @@ function restoreDraftFocus(){
    before forming the intention, and this one costs several hundred issues on
    somebody's repository when it goes the other way. */
 
-/* What has to be true, each either met or not. The token is deliberately
-   absent: it lives in the unit's environment, this page cannot see it, and
-   claiming either way would be a guess. */
+/* What has to be true, each either met or not -- including the token, which
+   the unit reports as a BOOLEAN. Never the value: a secret rendered on a page
+   that is read, screenshotted and left open has leaked whatever it protected.
+   Presence is enough to answer the question a reader actually has. */
 function shipReady(){
   const cut  = STATE.units && STATE.units.cut;
   const dr   = STATE.units && STATE.units.drift;
@@ -2831,6 +2832,7 @@ function shipReady(){
     cut:   !!cut,
     sound,
     fresh: !!cut && !moved,
+    token: !!(STATE.emission && STATE.emission.token),
     units: cut ? (cut.units || []).length : 0,
     seq:   cut ? cut.seq : null,
     moved
@@ -2854,7 +2856,13 @@ function shipPre(r){
         "take one in Order — a cut is the decision that work goes out")}
     ${preChip(r.fresh, r.moved ? "cut is stale" : "cut matches the graph",
         "re-cut, or undo the change")}
-    <div><i></i><b>token</b><em>server-side, not visible here</em></div>
+    ${/* Presence only -- the value is never sent and there is no route that
+          would return one. Reported because it is the precondition nothing
+          in the project can answer: the token is this unit's environment,
+          so without this a fresh deploy looks entirely ready and refuses on
+          the press. */
+      preChip(r.token, r.token ? "token" : "no token",
+        "set MU_SPEC_GITHUB_TOKEN in this unit's environment")}
   </div>`;
 }
 
@@ -2976,7 +2984,10 @@ function drawShip(){
   const e = STATE.emission || {running:false, emissions:[]};
   const r = shipReady();
   const f = STATE.shipFlash;
-  const blocked = !(r.repo && r.cut && r.sound && r.fresh);
+  // The token joins the rest now that it is knowable. Every refusal the unit
+  // would give is a refusal this page can give first, which is the whole
+  // argument for the checklist being here at all.
+  const blocked = !(r.repo && r.cut && r.sound && r.fresh && r.token);
   const draft = STATE.repoDraft == null ? (STATE.repo || "") : STATE.repoDraft;
 
   const head = `<h3>Ship — work units become issues on a tracker</h3>

@@ -11,6 +11,8 @@ point at.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mu_spec.emit import emit, read_emissions
@@ -583,3 +585,35 @@ def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monk
     status = service.get_emission(store, "p")
     assert status["cut_seq"] == 2
     assert status["already"] == {}, "a new cut is a new emission"
+
+
+def test_the_status_says_whether_a_token_exists_never_what_it_is(tmp_path, monkeypatch):
+    """The one precondition the panel could not check, and the one most likely
+    to be wrong on a fresh deploy: the token lives in this unit's environment,
+    so nothing in the project says whether it is there.
+
+    Presence only. The value never leaves the process -- a secret on a page
+    that is read, screenshotted and rendered in somebody's browser has leaked
+    whatever it was protecting."""
+    from mu_spec import service
+
+    store = _project(tmp_path)
+
+    monkeypatch.delenv("MU_SPEC_GITHUB_TOKEN", raising=False)
+    assert service.get_emission(store, "p")["token"] is False
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "ghp_a_real_looking_secret")
+    status = service.get_emission(store, "p")
+    assert status["token"] is True
+    assert "ghp_a_real_looking_secret" not in json.dumps(status)
+
+
+def test_a_blank_token_counts_as_absent(tmp_path, monkeypatch):
+    """An env var set to empty string is how a token most often goes missing --
+    a substitution that resolved to nothing. Reporting it as present would
+    make the chip green and the run refuse anyway."""
+    from mu_spec import service
+
+    store = _project(tmp_path)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "   ")
+    assert service.get_emission(store, "p")["token"] is False

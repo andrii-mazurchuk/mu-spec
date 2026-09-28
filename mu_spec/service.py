@@ -1676,6 +1676,15 @@ def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
         **(snapshot or {}),
         "cut_seq": cut.seq if cut is not None else None,
         "already": already,
+        # Whether a token exists. Never what it is, and there is no route that
+        # returns one -- a secret on a page that is read, screenshotted and
+        # rendered in somebody's browser has leaked whatever it protected.
+        #
+        # Worth reporting because it is the one precondition nothing else can
+        # check: the token is this unit's environment rather than the project's
+        # data, so a fresh deploy looks completely ready and refuses on the
+        # press. A boolean turns the last unknown into a known one.
+        "token": bool(os.environ.get(TOKEN_ENV, "").strip()),
         "emissions": [
             {
                 "seq": e.seq,

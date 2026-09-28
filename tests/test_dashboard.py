@@ -658,7 +658,7 @@ def test_the_ship_button_is_guarded_by_its_preconditions():
     hundred issues on somebody's repository when it goes the other way."""
     page = dashboard.read_page()
     assert "function shipReady()" in page
-    assert "const blocked = !(r.repo && r.cut && r.sound && r.fresh)" in page
+    assert "const blocked = !(r.repo && r.cut && r.sound && r.fresh && r.token)" in page
     assert 'id="do-ship"' in page
 
 
@@ -688,3 +688,17 @@ def test_every_value_the_tracker_returns_is_escaped():
     for field in ("f.key", "f.reason", "u.blocked", "u.blocker", "u.reason",
                   "k.key", "k.reason"):
         assert f"esc({field})" in page[start:end], f"{field} is interpolated raw"
+
+
+def test_the_token_is_a_verdict_and_never_a_value():
+    """The last precondition the panel could not answer. The unit reports a
+    boolean; nothing on the page asks for, renders, or stores the token, and
+    there is no route that would return one."""
+    page = dashboard.read_page()
+    assert "STATE.emission && STATE.emission.token" in page
+    assert "r.repo && r.cut && r.sound && r.fresh && r.token" in page
+    # No input, no field, no echo. The only mention is the variable NAME, as a
+    # remedy for a reader whose token is missing.
+    assert 'id="token' not in page
+    assert "token-in" not in page
+    assert page.count("MU_SPEC_GITHUB_TOKEN") == 1
