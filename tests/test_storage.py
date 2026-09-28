@@ -494,6 +494,8 @@ def test_a_browser_url_is_accepted_and_normalised(tmp_path):
         "https://github.com/andrii-mazurchuk/dark.git",
         "http://github.com/andrii-mazurchuk/dark/",
         "git@github.com:andrii-mazurchuk/dark.git",
+        "github.com/andrii-mazurchuk/dark",
+        "www.github.com/andrii-mazurchuk/dark",
         "andrii-mazurchuk/dark",
     ):
         store.set_repo("p", given)

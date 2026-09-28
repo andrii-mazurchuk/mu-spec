@@ -695,8 +695,12 @@ def _tools() -> list[dict[str, Any]]:
             "whether one is in flight; when it is, `processed` of `total` is "
             "the progress and `phase` is `creating` or `wiring`. `emissions` "
             "lists completed runs from the durable log, which survives a "
-            "restart when an in-flight run does not. Starting an emission is a "
-            "person's decision and is not offered here.",
+            "restart when an in-flight run does not. `already` maps the units "
+            "of the CURRENT cut that have issues to those issues -- so the "
+            "number a run would newly create is the cut's units minus these, "
+            "which is not the same as the unit count and is the number worth "
+            "knowing before starting one. Starting an emission is a person's "
+            "decision and is not offered here.",
             "GET",
             "/projects/{project}/emit",
             {"project": s},

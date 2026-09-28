@@ -474,49 +474,110 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 /* ── ship ───────────────────────────────────────────────────────── */
 /* Where work units leave. The one irreversible thing this page can do --
    several hundred issues on somebody's repository -- so the preconditions
-   read first and the button is last, in that order and not the other. */
-.shipbar{display:flex;align-items:center;gap:10px;margin:0 0 6px;flex-wrap:wrap}
+   read first and the button is last, in that order and not the other.
+
+   Laid out ACROSS rather than down. Everything the press depends on is one
+   band: where it goes, how many issues it would actually create, and the
+   button. Stacked, the count sat below where attention goes, and it is the
+   one number the press is about. */
+.launch{display:flex;gap:20px;align-items:center;flex-wrap:wrap;
+  border:1px solid var(--rule);border-radius:var(--radius);background:var(--panel);
+  padding:16px 18px;margin:0 0 14px;box-shadow:var(--shadow)}
+.launch .where{flex:1 1 300px;min-width:0}
+.launch .count{flex:0 0 auto;display:flex;gap:22px;align-items:center;padding:0 22px;
+  border-left:1px solid var(--rule-soft);border-right:1px solid var(--rule-soft)}
+.launch .go{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px}
+
+.shipbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .shipbar input{background:var(--panel-alt);color:var(--ink);border:1px solid var(--rule);
-  border-radius:var(--radius);padding:5px 9px;font:12.5px var(--mono);min-width:260px}
+  border-radius:var(--radius);padding:7px 10px;font:12.5px var(--mono);flex:1 1 230px;min-width:0}
 .shipbar code{font:600 12.5px var(--mono);color:var(--ink)}
-/* Every condition, each either met or not, before anything is pressable.
-   A refusal arriving after the press is a refusal the reader could have
-   been told about before forming the intention. */
-.pre{display:flex;flex-direction:column;gap:5px;margin:0 0 16px;max-width:80ch}
-.pre div{display:flex;gap:9px;align-items:baseline;font-size:12.5px;color:var(--ink-soft)}
-.pre i{width:8px;height:8px;border-radius:99px;flex:none;margin-top:5px;background:var(--dim)}
+.shiphelp{color:var(--dim);font-size:11.5px;margin:6px 0 0}
+
+/* The number the press is about. NOT the unit count: a re-run of the same
+   cut creates none of them, and the difference is the whole question. */
+.bignum{display:flex;flex-direction:column;line-height:1.05}
+.bignum b{font-size:32px;font-variant-numeric:tabular-nums;color:var(--brand)}
+.bignum span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em;
+  margin-top:4px}
+.bignum.zero b{color:var(--dim)}
+/* Already out. True, worth having, and not what anyone is looking for. */
+.bignum.quiet b{font-size:19px;color:var(--ink-soft);font-weight:600;padding-top:9px}
+
+/* A major commitment, and it must not look like the other buttons. */
+.shipgo{background:var(--brand);color:var(--brand-ink);border:0;border-radius:var(--radius);
+  padding:15px 30px;font:700 15.5px var(--sans);cursor:pointer;white-space:nowrap;
+  box-shadow:0 1px 3px #00000026}
+.shipgo:hover:not(:disabled){filter:brightness(1.08)}
+.shipgo:disabled{background:var(--panel-alt);color:var(--dim);box-shadow:none;cursor:not-allowed}
+.gonote{color:var(--dim);font-size:11px;max-width:24ch;text-align:center}
+
+/* Each condition either met or not, before anything is pressable. A refusal
+   arriving after the press is one the reader could have been told about
+   before forming the intention. A row of chips: this is a checklist to
+   scan, not a document to read. */
+.pre{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+.pre > div{display:flex;gap:7px;align-items:baseline;font-size:12px;color:var(--ink-soft);
+  background:var(--panel-alt);border:1px solid var(--rule);border-radius:99px;
+  padding:4px 13px 4px 10px}
+.pre i{width:7px;height:7px;border-radius:99px;flex:none;background:var(--dim)}
 .pre div.met i{background:var(--ok)}
+.pre div.unmet{border-color:var(--warn);background:var(--warn-bg);color:var(--warn)}
 .pre div.unmet i{background:var(--warn)}
-.pre b{color:var(--ink);font-weight:600}
+.pre b{font-weight:600}
 .pre em{font-style:normal;color:var(--dim)}
+.pre div.unmet em{color:var(--warn);opacity:.85}
 
 /* Progress. `total` is known before the first write, so this is a real
    proportion rather than a barber's pole -- 358 writes is about six
    minutes and a reader is owed a number, not a spinner. */
-.prog{background:var(--panel-alt);border-radius:99px;height:8px;overflow:hidden;
-  margin:0 0 8px;max-width:60ch}
+.prog{background:var(--panel-alt);border-radius:99px;height:10px;overflow:hidden;margin:0 0 8px}
 .prog i{display:block;height:100%;background:var(--brand);border-radius:99px;
   transition:width .25s linear}
-.progline{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;
+.progline{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;font-size:13px;
   color:var(--ink-soft);margin:0 0 18px}
 .progline b{font-variant-numeric:tabular-nums;color:var(--ink)}
 .progline .step{text-transform:uppercase;letter-spacing:.07em;font-size:10px;color:var(--dim)}
 
-/* The outcome, as counts before lists. Zero failures is the thing being
-   looked for, so it has to be legible without reading any list at all. */
-.tally{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+/* Counts before lists. Zero failures is the thing being looked for, so it
+   must be legible without reading a row -- and anything that did NOT ship
+   has to be louder than anything that did. A failure in the same grey as a
+   success is a failure nobody acts on. */
+.tally{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px}
 .tally div{border:1px solid var(--rule);border-radius:var(--radius);background:var(--panel-alt);
-  padding:7px 12px;min-width:92px}
-.tally b{display:block;font-size:16px;font-variant-numeric:tabular-nums}
+  padding:8px 14px;min-width:96px}
+.tally b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
 .tally span{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
-.tally div.bad b{color:var(--down)}
-.tally div.warn b{color:var(--warn)}
 .tally div.good b{color:var(--ok)}
+.tally div.bad{background:var(--down-bg);border-color:var(--down)}
+.tally div.bad b,.tally div.bad span{color:var(--down)}
+.tally div.quiet b{font-size:16px;color:var(--ink-soft);font-weight:600}
+
+/* Did not ship. Loud on purpose: an issue that does not exist, or an order
+   never declared, is work an agent will never be handed or will be handed
+   in the wrong order -- and both look like nothing at all. */
+.trouble{border:1px solid var(--down);border-left:4px solid var(--down);
+  border-radius:var(--radius);background:var(--down-bg);padding:13px 16px;margin:0 0 16px}
+.trouble > h3{margin:0 0 3px;color:var(--down);font-size:14px;
+  display:flex;align-items:baseline;gap:9px}
+.trouble > h3 .n{font-size:18px;font-variant-numeric:tabular-nums}
+.trouble > p{margin:0 0 6px;color:var(--down);font-size:12.5px}
+.trouble th{color:var(--down);border-bottom-color:var(--down)}
+.trouble td{border-bottom-color:var(--rule)}
+.trouble code{color:var(--down);font-weight:700}
+.trouble .why{color:var(--ink);font-size:12.5px}
+/* Already emitted. Present because it is true, quiet because it is not a
+   problem -- the reader is hunting for what did not ship. */
+.tame{border:1px solid var(--rule);border-radius:var(--radius);background:var(--panel-alt);
+  padding:10px 14px;margin:0 0 16px;color:var(--ink-soft)}
+.tame summary{cursor:pointer;color:var(--dim);font-size:12.5px}
+.tame summary b{color:var(--ink-soft);font-variant-numeric:tabular-nums}
+
 #ship table{border-collapse:collapse;width:100%;margin-top:8px;font-size:12.5px}
 #ship th{text-align:left;font:600 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;
   color:var(--dim);border-bottom:1px solid var(--rule);padding:0 10px 5px 0}
-#ship td{padding:4px 10px 4px 0;border-bottom:1px solid var(--rule-soft);vertical-align:top}
-#ship td a{color:var(--brand);text-decoration:none}
+#ship td{padding:5px 10px 5px 0;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+#ship td a{color:var(--brand);text-decoration:none;font-weight:600}
 #ship td a:hover{text-decoration:underline}
 #ship .why{color:var(--ink-soft)}
 .flash button{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer;
@@ -2776,44 +2837,59 @@ function shipReady(){
   };
 }
 
-function preRow(ok, label, note){
-  return `<div class="${ok ? "met" : "unmet"}"><i></i><span><b>${label}</b>
-    <em>${note}</em></span></div>`;
+/* A chip, not a paragraph. The label carries the verdict and the note is the
+   remedy -- so a met condition needs no note at all, and an unmet one says what
+   to do rather than what is wrong. */
+function preChip(ok, label, fix){
+  return `<div class="${ok ? "met" : "unmet"}"><i></i><b>${label}</b>${
+    ok || !fix ? "" : `<em>${fix}</em>`}</div>`;
 }
 
 function shipPre(r){
   return `<div class="pre">
-    ${preRow(r.repo, r.repo ? "Repository set" : "No repository",
-        r.repo ? `tickets go to <code>${esc(STATE.repo)}</code>`
-               : "nothing names where the issues would be created")}
-    ${preRow(r.sound, r.sound ? "Graph is sound" : "Graph is unsound",
-        r.sound ? "every entry derives from something above it"
-                : "a work unit is refused per unit while this holds")}
-    ${preRow(r.cut, r.cut ? `Cut ${r.seq} taken` : "No cut taken",
-        r.cut ? `${r.units} work unit${r.units===1?"":"s"} decided to go out`
-              : "a cut is the decision that work goes out from this shape — take one in Order")}
-    ${preRow(r.fresh, r.moved ? "The graph has moved since the cut" : "Cut matches the graph",
-        r.moved ? "emitting would ship units that are no longer what the project says — re-cut, or undo the change"
-                : "the unit list and the bodies agree")}
-    <div><i></i><span><b>Token</b>
-      <em>read from <code>MU_SPEC_GITHUB_TOKEN</code> in this unit's environment.
-      This page cannot see it, so it is not claimed either way here — an absent
-      one is reported when the run refuses.</em></span></div>
+    ${preChip(r.repo, r.repo ? "repository" : "no repository", "set one above")}
+    ${preChip(r.sound, r.sound ? "graph sound" : "graph unsound",
+        "every unit is refused while this holds")}
+    ${preChip(r.cut, r.cut ? `cut ${r.seq} · ${r.units} units` : "no cut",
+        "take one in Order — a cut is the decision that work goes out")}
+    ${preChip(r.fresh, r.moved ? "cut is stale" : "cut matches the graph",
+        "re-cut, or undo the change")}
+    <div><i></i><b>token</b><em>server-side, not visible here</em></div>
   </div>`;
 }
 
+/* What a press would actually create.
+   NOT the unit count, which is the number a reader reaches for and the wrong
+   one: a re-run of the same cut creates nothing at all. `already` is scoped
+   to the current cut and repository server-side, exactly as the skip is, so
+   these two numbers add up to the cut and neither is a guess. */
+function shipPreflight(){
+  const e = STATE.emission || {};
+  const cut = STATE.units && STATE.units.cut;
+  const keys = cut ? (cut.units || []).map(u => u.key) : [];
+  const already = e.already || {};
+  const out = keys.filter(k => already[k]).length;
+  return {total: keys.length, already: out, fresh: keys.length - out};
+}
+
 /* Counts before lists. Zero failures is the thing being looked for, so it has
-   to be legible without reading a single row. */
+   to be legible without reading a single row -- and what did NOT ship has to
+   be louder than what did. `skipped` is deliberately quiet: already-emitted
+   is true, worth stating, and not what anyone is hunting for. */
 function shipTally(c){
   const box = (n, label, kind) =>
     `<div class="${kind||""}"><b>${n}</b><span>${label}</span></div>`;
   return `<div class="tally">
     ${box(c.created||0, "created", (c.created||0) ? "good" : "")}
     ${box(c.wired||0, "orders wired", (c.wired||0) ? "good" : "")}
-    ${box(c.skipped||0, "skipped", (c.skipped||0) ? "warn" : "")}
     ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
-    ${box(c.unwired||0, "unwired", (c.unwired||0) ? "bad" : "")}
-    ${box(c.units||0, "work units")}
+    ${box(c.unwired||0, "orders not declared", (c.unwired||0) ? "bad" : "")}
+    ${/* "already out" is the standing count in the launch band; this is what
+          THIS run passed over, which is a different number. Named apart, and
+          omitted at zero -- an empty box for a non-problem is the kind of
+          thing that teaches a reader to skim past the boxes that matter. */
+      (c.skipped||0) ? box(c.skipped, "skipped this run", "quiet") : ""}
+    ${box(c.units||0, "work units", "quiet")}
   </div>`;
 }
 
@@ -2837,29 +2913,46 @@ function shipProgress(e){
 function shipTrouble(r){
   let out = "";
   if((r.failed||[]).length)
-    out += `<div class="qsec"><h3>Failed <span class="n">${r.failed.length}</span>
-      <span class="muted" style="font-weight:400">no issue exists for these</span></h3>
+    out += `<div class="trouble"><h3><span class="n">${r.failed.length}</span>
+      did not ship — no issue exists</h3>
+      <p>Nobody will ever be handed this work. Re-running ships only these.</p>
       <table><tr><th>unit</th><th>why</th></tr>` +
       r.failed.map(f=>`<tr><td><code>${esc(f.key)}</code></td>
         <td class="why">${esc(f.reason)}</td></tr>`).join("") + `</table></div>`;
   if((r.unwired||[]).length)
-    out += `<div class="qsec"><h3>Orders not declared <span class="n">${r.unwired.length}</span>
-      <span class="muted" style="font-weight:400">the issues exist; the dependency between
-      them does not</span></h3>
+    out += `<div class="trouble"><h3><span class="n">${r.unwired.length}</span>
+      orders not declared</h3>
+      <p>These issues exist and look finished. The dependency between them does
+      not, so the tracker will release the blocked work too early — which is the
+      failure that looks like nothing at all.</p>
       <table><tr><th>blocked</th><th>waits on</th><th>why</th></tr>` +
       r.unwired.map(u=>`<tr><td><code>${esc(u.blocked)}</code></td>
         <td><code>${esc(u.blocker)}</code></td>
         <td class="why">${esc(u.reason)}</td></tr>`).join("") + `</table></div>`;
-  if((r.skipped||[]).length)
-    out += `<div class="qsec"><h3>Skipped <span class="n">${r.skipped.length}</span>
-      <span class="muted" style="font-weight:400">already emitted, or too large to
-      send</span></h3>
-      <table><tr><th>unit</th><th>issue</th><th>why</th></tr>` +
-      r.skipped.map(k=>`<tr><td><code>${esc(k.key)}</code></td>
-        <td>${k.number ? (k.url
-              ? `<a href="${esc(k.url)}" target="_blank" rel="noreferrer">#${esc(k.number)}</a>`
-              : "#" + esc(k.number)) : "—"}</td>
+
+  // Two different things have been called "skipped". One is a problem.
+  const skipped = r.skipped || [];
+  const toobig = skipped.filter(k => !k.number);
+  const out_already = skipped.filter(k => k.number);
+  if(toobig.length)
+    out += `<div class="trouble"><h3><span class="n">${toobig.length}</span>
+      too large to send</h3>
+      <p>Over the tracker's body limit. Nothing was truncated — a contract cut
+      off mid-sentence still reads like a contract, and an agent would build
+      from it.</p>
+      <table><tr><th>unit</th><th>why</th></tr>` +
+      toobig.map(k=>`<tr><td><code>${esc(k.key)}</code></td>
         <td class="why">${esc(k.reason)}</td></tr>`).join("") + `</table></div>`;
+  if(out_already.length)
+    out += `<div class="tame"><details><summary><b>${out_already.length}</b>
+      already out — created by an earlier run of this cut, not created again
+      </summary>
+      <table><tr><th>unit</th><th>issue</th></tr>` +
+      out_already.map(k=>`<tr><td><code>${esc(k.key)}</code></td>
+        <td>${k.url
+              ? `<a href="${esc(k.url)}" target="_blank" rel="noreferrer">#${esc(k.number)}</a>`
+              : "#" + esc(k.number)}</td></tr>`).join("") +
+      `</table></details></div>`;
   return out;
 }
 
@@ -2893,22 +2986,40 @@ function drawShip(){
     creates tickets and never acts on them: nothing here reads an issue back, closes one,
     or reacts to a specification that has since moved.</p>`;
 
-  const repoBar = `<div class="shipbar">
-      <input id="repo-in" value="${esc(draft)}" placeholder="owner/name, or a github.com URL"
-        spellcheck="false">
-      <button class="btn" id="repo-save">${STATE.repo ? "Change" : "Set"} repository</button>
-      ${STATE.repo ? `<span class="muted">currently <code>${esc(STATE.repo)}</code></span>` : ""}
-    </div>`;
-
   const running = !!e.running;
-  const act = `<div class="cutbar">
-      <button class="cutbtn" id="do-ship" ${blocked || running ? "disabled" : ""}>${
-        running ? "Shipping…"
-        : r.units ? `Ship ${r.units} work unit${r.units===1?"":"s"}` : "Ship"}</button>
-      <span class="muted">${blocked
-        ? "Not ready — see above."
-        : `Creates ${r.units} issue${r.units===1?"":"s"} on <code>${esc(STATE.repo)}</code>,
-           paced one write a second. Nothing already emitted is created twice.`}</span>
+  const pf = shipPreflight();
+
+  /* One band, across: where it goes, what it would create, and the press.
+     Paste the repository's address and the owner/name is taken out of it --
+     asking somebody to retype two of five path segments is asking them to get
+     it wrong. What was STORED is shown back, because the two differ. */
+  const launch = `<div class="launch">
+      <div class="where">
+        <div class="shipbar">
+          <input id="repo-in" value="${esc(draft)}" spellcheck="false"
+            placeholder="paste the repository link, or owner/name">
+          <button class="btn" id="repo-save">${STATE.repo ? "Change" : "Set"}</button>
+        </div>
+        <p class="shiphelp">${STATE.repo
+          ? `Issues go to <code>${esc(STATE.repo)}</code>. Paste a repository URL to change it.`
+          : `Paste the repository's address — the owner and name are taken from it.`}</p>
+      </div>
+      <div class="count">
+        <div class="bignum ${pf.fresh ? "" : "zero"}">
+          <b>${pf.fresh}</b><span>new issue${pf.fresh===1?"":"s"}</span></div>
+        ${pf.already
+          ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out</span></div>`
+          : ""}
+      </div>
+      <div class="go">
+        <button class="shipgo" id="do-ship" ${blocked || running || !pf.fresh ? "disabled" : ""}>${
+          running ? "Shipping…" : "Ship to GitHub"}</button>
+        <span class="gonote">${
+          running ? "in flight"
+          : blocked ? "not ready"
+          : !pf.fresh ? "everything in this cut is already out"
+          : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"}, paced one a second`}</span>
+      </div>
     </div>`;
 
   const flash = f ? `<div id="cutflash" class="${esc(f.kind)}">${esc(f.text)}</div>` : "";
@@ -2936,7 +3047,7 @@ function drawShip(){
       + `</table></div>`
     : `<p class="muted">Nothing has been shipped from this project yet.</p>`;
 
-  $("ship").innerHTML = head + flash + repoBar + shipPre(r) + act + body + log;
+  $("ship").innerHTML = head + flash + launch + shipPre(r) + body + log;
 
   const save = $("repo-save"), input = $("repo-in");
   if(input) input.oninput = () => { STATE.repoDraft = input.value; };

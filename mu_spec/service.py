@@ -1653,10 +1653,29 @@ def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
         # The one place absence is not normal. Reporting an unreadable log as
         # an empty one would invite a re-run that creates everything twice.
         raise ServiceError(str(exc)) from exc
+
+    # Which units are ALREADY out, so a caller can say how many a run would
+    # newly create. "144 work units" is not that number: a re-run of the same
+    # cut creates none of them, and the difference is the whole question
+    # somebody is asking before they press anything.
+    #
+    # Scoped to the current cut and repo exactly as the skip in `emit` is. A
+    # unit emitted under an older cut is NOT skipped, so counting it here
+    # would promise a smaller run than the one that happens.
+    cut = units.current_cut(store.units_path(project))
+    repo = store.load_manifest(project).repo
+    already: dict[str, dict] = {}
+    if cut is not None and repo:
+        for emission in history:
+            if emission.cut_seq == cut.seq and emission.repo == repo:
+                already.update(emission.issues)
+
     return {
         "project": project,
         "running": bool(snapshot and snapshot.get("phase") == "running"),
         **(snapshot or {}),
+        "cut_seq": cut.seq if cut is not None else None,
+        "already": already,
         "emissions": [
             {
                 "seq": e.seq,

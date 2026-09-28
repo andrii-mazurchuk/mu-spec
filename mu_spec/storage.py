@@ -97,6 +97,10 @@ _REPO_PREFIXES = (
     "http://github.com/",
     "git@github.com:",
     "ssh://git@github.com/",
+    # Scheme-less, because a browser shows the address that way and that is
+    # what gets copied out of the bar.
+    "www.github.com/",
+    "github.com/",
 )
 _REPO = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 

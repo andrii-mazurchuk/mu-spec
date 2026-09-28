@@ -536,3 +536,50 @@ def test_a_real_thread_finishes_and_is_observable(tmp_path):
         _time.sleep(0.01)
     assert runs.status("dark")["phase"] == "done"
     assert done == [1]
+
+
+def test_the_emission_status_says_which_units_are_already_out(tmp_path, monkeypatch):
+    """What a reader needs BEFORE pressing: how many issues this would newly
+    create. A count of work units is not that -- a re-run of a 144-unit cut
+    creates none of them -- and the difference is the whole question.
+
+    Scoped to the current cut and repo, exactly as the skip is: a unit emitted
+    under an older cut is not skipped, so reporting it as already out would
+    promise a smaller run than the one that happens."""
+    from mu_spec import service
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+
+    before = service.get_emission(store, "p")
+    assert before["already"] == {}
+    assert before["cut_seq"] == 1
+
+    service.emit_tickets(store, "p", client=FakeClient())
+    after = service.get_emission(store, "p")
+    assert set(after["already"]) == {"S·01", "S·01:T"}
+    assert after["already"]["S·01"]["number"] == 2
+
+
+def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monkeypatch):
+    from mu_spec import service
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    service.emit_tickets(store, "p", client=FakeClient())
+
+    # The graph moves, and a fresh cut is taken.
+    store.append("p", [Entry(id=parse("S·02"), derives_from=(parse("A·01"),),
+                             title="another")], slice_name="core")
+    store.set_module("p", "app/other.py", ["S·02"])
+    _cut(store)
+
+    status = service.get_emission(store, "p")
+    assert status["cut_seq"] == 2
+    assert status["already"] == {}, "a new cut is a new emission"
