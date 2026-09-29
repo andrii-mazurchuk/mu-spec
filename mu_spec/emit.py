@@ -41,6 +41,12 @@ from mu_spec.github import GitHubError
 from mu_spec.render import render
 
 
+# Every line in the log carries a kind. An emission omits it, because the
+# log predates there being more than one kind and rewriting history to add a
+# field is precisely what this unit does not do.
+ROLLBACK = "rollback"
+
+
 @dataclasses.dataclass(frozen=True)
 class Emission:
     """One run. Append-only, like everything else this unit records."""
@@ -66,6 +72,40 @@ class Emission:
         }
 
 
+@dataclasses.dataclass(frozen=True)
+class Rollback:
+    """One withdrawal. Appended beside the emission it undoes, never replacing
+    it: what was created and then withdrawn is two facts, and a log that kept
+    only the second could not answer why issue #57 is closed.
+
+    `closed` is unit key -> issue number, and it is what makes the emitted
+    units emittable again -- the duplicate guard subtracts it. `failed` holds
+    the ones GitHub would not close, and they are deliberately NOT subtracted:
+    an issue still open on the tracker must not be recreated, or the rollback
+    turns one stray issue into two.
+    """
+
+    seq: int
+    at: float
+    cut_seq: int
+    repo: str
+    undone: tuple[int, ...]
+    closed: dict[str, int]
+    failed: tuple[dict, ...] = ()
+
+    def to_json(self) -> dict:
+        return {
+            "kind": ROLLBACK,
+            "seq": self.seq,
+            "at": self.at,
+            "cut_seq": self.cut_seq,
+            "repo": self.repo,
+            "undone": list(self.undone),
+            "closed": self.closed,
+            "failed": list(self.failed),
+        }
+
+
 class EmissionError(ValueError):
     """An emission log that cannot be read back.
 
@@ -73,6 +113,38 @@ class EmissionError(ValueError):
     That reading would create every issue a second time, which makes this the
     one place in this feature where absence must not be treated as normal.
     """
+
+
+def read_log(path: Path) -> tuple[tuple[Emission, ...], tuple[Rollback, ...]]:
+    """Both kinds, in one pass. Strict about both: a line that cannot be read
+    is a hard error for the reason `EmissionError` gives."""
+    emissions = read_emissions(path)
+    rollbacks: list[Rollback] = []
+    if not Path(path).exists():
+        return emissions, ()
+    for number, line in enumerate(
+        Path(path).read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+            if raw.get("kind") != ROLLBACK:
+                continue
+            rollbacks.append(
+                Rollback(
+                    seq=int(raw["seq"]),
+                    at=float(raw["at"]),
+                    cut_seq=int(raw["cut_seq"]),
+                    repo=str(raw["repo"]),
+                    undone=tuple(int(u) for u in raw.get("undone") or ()),
+                    closed={str(k): int(v) for k, v in (raw.get("closed") or {}).items()},
+                    failed=tuple(raw.get("failed") or ()),
+                )
+            )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise EmissionError(f"{path}:{number} is not a rollback: {exc}") from exc
+    return emissions, tuple(rollbacks)
 
 
 def read_emissions(path: Path) -> tuple[Emission, ...]:
@@ -86,6 +158,8 @@ def read_emissions(path: Path) -> tuple[Emission, ...]:
             continue
         try:
             raw = json.loads(line)
+            if raw.get("kind") == ROLLBACK:
+                continue
             out.append(
                 Emission(
                     seq=int(raw["seq"]),
@@ -101,10 +175,17 @@ def read_emissions(path: Path) -> tuple[Emission, ...]:
     return tuple(out)
 
 
-def _append(path: Path, emission: Emission) -> None:
+def _append(path: Path, record) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with Path(path).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(emission.to_json(), ensure_ascii=False) + "\n")
+        handle.write(json.dumps(record.to_json(), ensure_ascii=False) + "\n")
+
+
+def _next_seq(path: Path) -> int:
+    """One sequence across both kinds: they share a file, and two counters
+    over one append-only log is how a duplicate seq happens."""
+    emissions, rollbacks = read_log(path)
+    return max([e.seq for e in emissions] + [r.seq for r in rollbacks] + [0]) + 1
 
 
 def _pair(blocked: str, blocker: str) -> str:
@@ -264,6 +345,134 @@ class Runs:
         return run.snapshot() if run else None
 
 
+def rollback(
+    *,
+    log_path: Path,
+    repo: str,
+    cut_seq: int,
+    client,
+    now_fn: Callable[[], float],
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Withdraw every issue this unit created for one cut, on this repository.
+
+    Scoped by `(cut_seq, repo)` because that is exactly the key the duplicate
+    guard uses. One concept, not two: what a re-emission would skip is what a
+    rollback undoes, and the two staying in step is not an accident that has
+    to be maintained.
+
+    Closed, never deleted. REST cannot delete an issue; that is an admin-only
+    GraphQL mutation. Closing is also the reversible half, which is the right
+    default for an operation whose entire purpose is undoing something -- and
+    a closed issue leaves the default `is:open` list, which is the visible
+    outcome somebody asking for a rollback actually wants.
+
+    Nothing raises. A run of 144 closes has to come back as a pass/fail list,
+    exactly like the emission it undoes, not as one exception about the first
+    issue GitHub would not touch.
+
+    **The one thing this does NOT do is decide.** It withdraws what a person
+    asked to withdraw. Nothing here reads an issue's state back, reacts to a
+    comment, or concludes on its own that a cut is stale -- that is the line
+    this unit does not cross, and a rollback sits on the near side of it
+    because a person triggered it and the set was already recorded.
+    """
+    emissions, done = read_log(log_path)
+    mine = [e for e in emissions if e.cut_seq == cut_seq and e.repo == repo]
+    # By issue NUMBER, never by unit key. A unit withdrawn and then emitted
+    # again is a different issue under the same key, and keying this by the
+    # key made that second issue permanently un-withdrawable -- the first
+    # rollback had already claimed the name. Found by driving two full rounds
+    # against dark; the second rollback closed nothing and reported success.
+    withdrawn: set[int] = set()
+    for record in done:
+        if record.cut_seq == cut_seq and record.repo == repo:
+            withdrawn.update(record.closed.values())
+
+    # Highest issue number first. An emission creates a test unit before the
+    # implementation that follows it, so closing in reverse withdraws the
+    # dependent before the thing it depends on and never leaves a live issue
+    # blocked by a withdrawn one, however far the run gets.
+    targets: dict[str, dict] = {}
+    for emission in mine:
+        for key, issue in emission.issues.items():
+            number = issue.get("number")
+            if number is not None and int(number) not in withdrawn:
+                targets[key] = issue
+            else:
+                # A later emission may have replaced a withdrawn issue under
+                # the same key; only the withdrawn one drops out.
+                targets.pop(key, None)
+    order = sorted(targets, key=lambda k: -int(targets[k].get("number") or 0))
+
+    if not order:
+        return {
+            "rolled_back": False,
+            "reason": (
+                f"nothing to withdraw: no issue from cut {cut_seq} on {repo} "
+                "is still recorded as open by this unit"
+            ),
+            "repo": repo,
+            "cut_seq": cut_seq,
+        }
+
+    closed: dict[str, int] = {}
+    failed: list[dict] = []
+    total = len(order)
+
+    def tick(step: str) -> None:
+        if on_progress:
+            on_progress({
+                "step": step,
+                "total": total,
+                "processed": len(closed) + len(failed),
+                "closed": len(closed),
+                "failed": len(failed),
+            })
+
+    tick("closing")
+    for key in order:
+        number = targets[key].get("number")
+        try:
+            client.close_issue(repo, int(number))
+        except (GitHubError, TypeError, ValueError) as exc:
+            # Left OUT of `closed`, so the duplicate guard still considers it
+            # emitted. An issue that is still open must never be recreated --
+            # that turns one stray issue into two, which is worse than the
+            # thing being fixed.
+            failed.append({"key": key, "number": number, "reason": str(exc)})
+        else:
+            closed[key] = int(number)
+        tick("closing")
+
+    if closed or failed:
+        _append(
+            log_path,
+            Rollback(
+                seq=_next_seq(log_path),
+                at=now_fn(),
+                cut_seq=cut_seq,
+                repo=repo,
+                undone=tuple(sorted(e.seq for e in mine)),
+                closed=closed,
+                failed=tuple(failed),
+            ),
+        )
+
+    return {
+        "rolled_back": True,
+        "repo": repo,
+        "cut_seq": cut_seq,
+        "closed": [{"key": k, "number": n} for k, n in closed.items()],
+        "failed": failed,
+        "counts": {
+            "targeted": total,
+            "closed": len(closed),
+            "failed": len(failed),
+        },
+    }
+
+
 def emit(
     *,
     log_path: Path,
@@ -283,13 +492,38 @@ def emit(
     than taken from a store, so the loop is testable and so this module needs to
     know nothing about how a unit is assembled.
     """
-    previous = read_emissions(log_path)
+    previous, rollbacks = read_log(log_path)
     known: dict[str, dict] = {}
     wired_already: set[str] = set()
     for emission in previous:
         if emission.cut_seq == cut_seq and emission.repo == repo:
             known.update(emission.issues)
             wired_already.update(emission.wired)
+    # A withdrawn unit is emittable again -- that is the whole point of a
+    # rollback, and without this the guard would skip every unit whose issue
+    # is now closed and the re-emission would create nothing.
+    #
+    # Matched on the issue NUMBER the guard currently holds, not on the key: a
+    # unit emitted, withdrawn and emitted again has a live issue under a key
+    # that also appears in a rollback, and dropping it by name would create a
+    # third issue for work that already has one.
+    closed_numbers: set[int] = set()
+    for rollback in rollbacks:
+        if rollback.cut_seq == cut_seq and rollback.repo == repo:
+            closed_numbers.update(rollback.closed.values())
+    reopened = {
+        key for key, issue in known.items()
+        if issue.get("number") is not None
+        and int(issue["number"]) in closed_numbers
+    }
+    for key in reopened:
+        known.pop(key, None)
+    # The edges go with them: an edge wired between two issues that are now
+    # closed must be declared again between their replacements.
+    wired_already = {
+        pair for pair in wired_already
+        if not any(key in pair.split("<-") for key in reopened)
+    }
 
     if not order:
         return {
@@ -412,7 +646,7 @@ def emit(
         _append(
             log_path,
             Emission(
-                seq=(previous[-1].seq + 1) if previous else 1,
+                seq=_next_seq(log_path),
                 at=now_fn(),
                 cut_seq=cut_seq,
                 repo=repo,

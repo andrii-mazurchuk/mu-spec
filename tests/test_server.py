@@ -1914,6 +1914,7 @@ def test_actions_declares_exactly_the_presses_a_person_makes(store, prompts):
         "cut_units",
         "set_repo",
         "emit_tickets",
+        "rollback_tickets",
     }
     assert all(a["method"] == "POST" for a in payload["actions"])
 
@@ -2058,6 +2059,10 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # The one operation here that cannot be undone from inside this unit.
         # Watching it is offered; starting it is not.
         "emit_tickets": None,
+        # And its inverse, withheld for the same reason and harder: an agent
+        # that could withdraw a batch could quietly unship work somebody is
+        # already building against.
+        "rollback_tickets": None,
     }
     for _, _, name in _ROUTES:
         # health, tools, prompts and skills are the standard meta surface:
@@ -3474,3 +3479,107 @@ def test_actions_declares_no_path_the_page_never_presses(store, prompts):
             p == path or p.startswith(path.rstrip("/") + "/") or path.startswith(p + "/")
             for p in pressed
         ), f"/actions declares {path!r}, which no button presses"
+
+
+def _closing_client():
+    client = _Client()
+    client.closed = []
+    client.close_issue = lambda repo, number, reason="not_planned": (
+        client.closed.append((number, reason))
+    )
+    return client
+
+
+def test_a_rollback_withdraws_what_the_emission_created(store, prompts, monkeypatch):
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    client = _closing_client()
+    runs = Runs(spawn=lambda fn: fn())
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=runs,
+               client=client)
+    created = client.n
+    assert created >= 1
+
+    status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit/rollback",
+                                 {}, runs=Runs(spawn=lambda fn: fn()), client=client)
+    assert status == 202
+    assert len(client.closed) == created
+    assert all(reason == "not_planned" for _n, reason in client.closed)
+
+
+def test_a_rollback_makes_the_units_emittable_again(store, prompts, monkeypatch):
+    """Otherwise the withdrawal is half an operation: the issues are closed on
+    GitHub and this unit still believes they exist, so the re-emission that
+    the withdrawal was FOR creates nothing."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    client = _closing_client()
+    inline = lambda: Runs(spawn=lambda fn: fn())  # noqa: E731
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
+               client=client)
+    first = client.n
+    _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {},
+               runs=inline(), client=client)
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
+               client=client)
+    assert client.n == first * 2, "every unit was created a second time"
+
+
+def test_a_rollback_cannot_run_while_an_emission_is(store, prompts, monkeypatch):
+    """One registry for both. They write the same log, and the loser's writes
+    would be invisible to the winner."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    runs = Runs(spawn=lambda fn: None)  # started, never finishes
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=runs,
+               client=_closing_client())
+    status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit/rollback",
+                                 {}, runs=runs, client=_closing_client())
+    assert status == 409
+    assert "already running" in payload["error"]
+
+
+def test_a_rollback_with_no_token_is_an_answer_not_a_crash(store, prompts, monkeypatch):
+    monkeypatch.delenv("MU_SPEC_GITHUB_TOKEN", raising=False)
+    _emit_ready(store, prompts)
+    status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {})
+    assert status == 409
+    assert payload["rolled_back"] is False
+    assert "MU_SPEC_GITHUB_TOKEN" in payload["reason"]
+
+
+def test_a_rollback_can_name_an_older_cut(store, prompts, monkeypatch):
+    """The case it exists for: by the time a batch is known to be wrong, the
+    spec has moved and a newer cut is current. Defaulting to the current cut
+    with no way to name another would miss exactly that."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    client = _closing_client()
+    inline = lambda: Runs(spawn=lambda fn: fn())  # noqa: E731
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
+               client=client)
+    emitted = client.n
+    # A fresh cut: the current cut_seq is now 2 and holds no issues.
+    call(store, prompts, "POST", "/projects/m/units/cut", {"note": "again"})
+    _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {},
+               runs=inline(), client=client)
+    assert client.closed == [], "the current cut has emitted nothing"
+    _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {"cut_seq": 1},
+               runs=inline(), client=client)
+    assert len(client.closed) == emitted
+
+
+def test_rolling_back_is_not_offered_to_an_agent(store, prompts):
+    """Withheld for the same reason emitting is, and harder: an agent that
+    could withdraw a batch could quietly unship work somebody is building."""
+    _, payload = call(store, prompts, "GET", "/tools")
+    names = {t["name"] for t in payload["tools"]}
+    assert "rollback_tickets" not in names

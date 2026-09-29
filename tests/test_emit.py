@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from mu_spec.emit import emit, read_emissions
+from mu_spec.emit import emit, read_emissions, read_log, rollback
 from mu_spec.github import GitHubError, Issue
 
 REPO = "andrii-mazurchuk/dark"
@@ -46,10 +46,14 @@ def payload(key: str, follows=()) -> dict:
 class FakeClient:
     """Records calls; hands out ascending numbers and ids."""
 
-    def __init__(self, fail_on=(), fail_wiring=()) -> None:
+    def __init__(self, fail_on=(), fail_wiring=(), start=0) -> None:
         self.created: list[tuple] = []
         self.wired: list[tuple] = []
-        self._n = 0
+        # `start` exists because GitHub never reuses an issue number. A second
+        # client numbering from 1 hands replacement issues the numbers the
+        # withdrawn ones had, which hides a real bug -- see the test named for
+        # it below.
+        self._n = start
         self._fail_on = set(fail_on)
         self._fail_wiring = set(fail_wiring)
 
@@ -617,3 +621,151 @@ def test_a_blank_token_counts_as_absent(tmp_path, monkeypatch):
     store = _project(tmp_path)
     monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "   ")
     assert service.get_emission(store, "p")["token"] is False
+
+
+# -- withdrawing a batch -----------------------------------------------------
+
+
+def _closer(client):
+    """Teach the FakeClient to close, recording the order it was asked."""
+    client.closed = []
+
+    def close_issue(repo, number, reason="not_planned"):
+        if number in getattr(client, "fail_close", ()):
+            raise GitHubError("GitHub answered 403: no", status=403)
+        client.closed.append((repo, number, reason))
+
+    client.close_issue = close_issue
+    return client
+
+
+def _rollback(log, client, **kw):
+    return rollback(log_path=log, repo=REPO, cut_seq=2, client=client,
+                    now_fn=lambda: 2000.0, **kw)
+
+
+def test_a_rollback_closes_every_issue_of_the_cut(tmp_path):
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    out = _rollback(log, client)
+    assert out["rolled_back"] is True
+    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0}
+    assert {n for _r, n, _why in client.closed} == {1, 2, 3}
+    assert all(why == "not_planned" for _r, _n, why in client.closed), (
+        "withdrawn is not completed"
+    )
+
+
+def test_a_rollback_closes_the_dependent_before_what_it_depends_on(tmp_path):
+    """An emission creates a test unit before the implementation that follows
+    it, so withdrawing in reverse never leaves a live issue blocked by a
+    withdrawn one, however far a failing run gets."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    _rollback(log, client)
+    assert [n for _r, n, _w in client.closed] == [3, 2, 1]
+
+
+def test_a_withdrawn_unit_is_emitted_again(tmp_path):
+    """The whole point. Without subtracting the rollback, the duplicate guard
+    skips every unit whose issue is now closed and the re-emission creates
+    nothing at all."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    _rollback(log, client)
+    again, client2, _ = run(tmp_path, client=_closer(FakeClient()))
+    # Same log file: `run` builds the path from tmp_path.
+    assert again["counts"]["created"] == 3, again["counts"]
+    assert again["counts"]["skipped"] == 0
+    assert again["counts"]["wired"] == 2, "the edges are declared again too"
+
+
+def test_an_issue_that_would_not_close_is_not_recreated(tmp_path):
+    """Left out of `closed` on purpose. An issue still open on the tracker
+    must not be emitted a second time -- that turns one stray issue into two,
+    which is worse than the thing being repaired."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    client.fail_close = {2}
+    out = _rollback(log, client)
+    assert out["counts"] == {"targeted": 3, "closed": 2, "failed": 1}
+    assert out["failed"][0]["number"] == 2
+    again, _c, _l = run(tmp_path, client=FakeClient())
+    assert again["counts"]["created"] == 2
+    assert [s["key"] for s in again["skipped"]] == ["S·01"], (
+        "the one still open on GitHub stays skipped"
+    )
+
+
+def test_a_rollback_is_appended_and_erases_nothing(tmp_path):
+    """The log is the audit trail. What was created and then withdrawn is two
+    facts, and a log keeping only the second could not say why #2 is closed."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    _rollback(log, client)
+    emissions, rollbacks = read_log(log)
+    assert len(emissions) == 1, "the emission is still there"
+    assert len(rollbacks) == 1
+    assert rollbacks[0].undone == (emissions[0].seq,)
+    assert rollbacks[0].closed == {"S·01:T": 1, "S·01": 2, "S·02": 3}
+    # One sequence across both kinds.
+    assert rollbacks[0].seq == emissions[0].seq + 1
+
+
+def test_rolling_back_twice_withdraws_nothing_the_second_time(tmp_path):
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    _rollback(log, client)
+    client.closed.clear()
+    out = _rollback(log, client)
+    assert out["rolled_back"] is False
+    assert "nothing to withdraw" in out["reason"]
+    assert client.closed == []
+
+
+def test_a_rollback_reports_progress_as_it_goes(tmp_path):
+    """Same reason the emission does: 144 paced closes is minutes, and a
+    spinner is not observability."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    seen = []
+    _rollback(log, client, on_progress=seen.append)
+    assert seen[0]["total"] == 3
+    assert [s["processed"] for s in seen] == [0, 1, 2, 3]
+    assert seen[-1]["closed"] == 3
+
+
+def test_a_rollback_leaves_another_cut_alone(tmp_path):
+    """Scoped by (cut_seq, repo), exactly as the duplicate guard is."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    emit(log_path=log, repo=REPO, cut_seq=9, order=["S·09"], edges={},
+         fetch=lambda key: payload(key), client=client, now_fn=lambda: 1500.0)
+    before = len(client.created)
+    out = _rollback(log, client)
+    assert out["counts"]["targeted"] == 3, "cut 9's issue is not touched"
+    assert before == 4
+
+
+def test_a_unit_emitted_again_can_be_withdrawn_again(tmp_path):
+    """A withdrawal is of an ISSUE, not of a unit key.
+
+    Tracking it by key made the second issue under a key permanently
+    un-withdrawable: the first rollback had already claimed the name, so the
+    second reported success and closed nothing. Found by driving two full
+    rounds against dark, and invisible to a test whose second client numbers
+    issues from 1 again -- because then the replacements reuse the withdrawn
+    numbers, which GitHub never does.
+    """
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    _rollback(log, client)
+
+    second = _closer(FakeClient(start=client._n))
+    run(tmp_path, client=second)
+    out = _rollback(log, second)
+    assert out["rolled_back"] is True
+    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0}
+    assert {n for _r, n, _w in second.closed} == {4, 5, 6}, (
+        "the replacements, not the issues already withdrawn"
+    )

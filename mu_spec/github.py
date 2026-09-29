@@ -189,13 +189,38 @@ class GitHub:
             {"issue_id": int(blocker_id)},
         )
 
+    def close_issue(self, repo: str, number: int, reason: str = "not_planned") -> None:
+        """Close one issue, as `not_planned` rather than `completed`.
+
+        The distinction is the whole point of carrying a reason: an issue
+        withdrawn because the specification moved was never done, and marking
+        it `completed` would put it in the same bucket as work that shipped.
+        GitHub renders the two differently, and anything counting delivered
+        work reads that field.
+
+        Closing, not deleting. REST cannot delete an issue at all -- that is
+        GraphQL and an admin-only mutation -- and closing is the reversible
+        one, which is the right default for an operation whose whole purpose
+        is undoing something. A closed issue also leaves the default `is:open`
+        list, which is the visible outcome somebody asking for a rollback
+        actually wants.
+        """
+        self._patch(f"/repos/{repo}/issues/{int(number)}",
+                    {"state": "closed", "state_reason": reason})
+
     # -- the transport ------------------------------------------------------
 
+    def _patch(self, path: str, payload: dict) -> dict:
+        return self._request("PATCH", path, payload)
+
     def _post(self, path: str, payload: dict) -> dict:
+        return self._request("POST", path, payload)
+
+    def _request(self, method: str, path: str, payload: dict) -> dict:
         request = urllib.request.Request(
             self._base + path,
             data=json.dumps(payload).encode("utf-8"),
-            method="POST",
+            method=method,
             headers={
                 "Authorization": f"Bearer {self._token}",
                 "Accept": "application/vnd.github+json",

@@ -304,3 +304,35 @@ def test_a_created_issue_missing_its_id_is_refused():
     gh, _, _ = client(FakeResponse({"number": 42}))
     with pytest.raises(GitHubError, match="id"):
         gh.create_issue(REPO, "t", "b")
+
+
+def test_close_issue_is_a_patch_marked_not_planned(_unused=None):
+    """Withdrawn is not done. An issue closed because the specification moved
+    was never completed, and `completed` would file it beside work that
+    actually shipped -- which is what anything counting delivered work reads.
+    """
+    gh, recorder, _ = client(FakeResponse({}, status=200))
+    gh.close_issue(REPO, 41)
+    request = recorder.requests[0]
+    assert request.get_method() == "PATCH"
+    assert request.full_url.endswith(f"/repos/{REPO}/issues/41")
+    assert recorder.bodies[0] == {"state": "closed", "state_reason": "not_planned"}
+
+
+def test_close_issue_carries_the_same_headers_as_a_create():
+    """One transport, so a PATCH cannot drift from a POST in auth or API
+    version -- the failure that would produce is a 401 on rollback only."""
+    gh, recorder, _ = client(FakeResponse({}, status=200))
+    gh.close_issue(REPO, 7)
+    headers = recorder.requests[0].headers
+    assert headers["Authorization"] == "Bearer tok"
+    assert headers["X-github-api-version"] == API_VERSION
+
+
+def test_a_failed_close_raises_the_one_exception_type():
+    """Same contract as the creates: a caller that also had to know about
+    HTTPError would miss whatever urllib raises next."""
+    gh, _recorder, _ = client(http_error(404, "Not Found"))
+    with pytest.raises(GitHubError) as caught:
+        gh.close_issue(REPO, 999)
+    assert caught.value.status == 404

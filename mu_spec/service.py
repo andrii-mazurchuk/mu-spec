@@ -1632,6 +1632,98 @@ def emit_tickets(
     return result
 
 
+def rollback_tickets(
+    store: ProjectStore,
+    project: str,
+    body: dict | None = None,
+    *,
+    client=None,
+    now_fn: Callable[[], float] = time.time,
+    on_progress: Callable[[dict], None] | None = None,
+    events=None,
+) -> dict:
+    """Withdraw the issues one cut put on the tracker.
+
+    The inverse of `emit_tickets`, and deliberately shaped the same way: a
+    person triggers it, the set comes from this unit's own emission log, and
+    nothing is decided here. It closes what it created and records that it
+    did.
+
+    Which cut, and why it is not always the current one: `cut_seq` may be
+    given in the body, because the reason to withdraw a batch is usually that
+    the specification has already moved on -- and once it has moved, a fresh
+    cut has been taken and the current `cut_seq` is no longer the one whose
+    issues are wrong. Defaulting to the current cut and offering no way to
+    name another would make the operation useless in exactly the case it
+    exists for.
+    """
+    body = body or {}
+    manifest = store.load_manifest(project)
+    if not manifest.repo:
+        return {
+            "rolled_back": False,
+            "project": project,
+            "reason": "no repo is configured for this project, so there is "
+            "nothing to withdraw from.",
+        }
+
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token:
+        return {
+            "rolled_back": False,
+            "project": project,
+            "repo": manifest.repo,
+            "reason": f"no GitHub token: set {TOKEN_ENV} in this unit's "
+            "environment. Closing an issue is a write like creating one.",
+        }
+
+    raw = body.get("cut_seq")
+    if raw is None:
+        cut = units.current_cut(store.units_path(project))
+        if cut is None:
+            return {
+                "rolled_back": False,
+                "project": project,
+                "repo": manifest.repo,
+                "reason": "no cut has been taken, and no cut_seq was given, "
+                "so there is nothing to name as the batch to withdraw.",
+            }
+        cut_seq = cut.seq
+    else:
+        try:
+            cut_seq = int(raw)
+        except (TypeError, ValueError):
+            return {
+                "rolled_back": False,
+                "project": project,
+                "repo": manifest.repo,
+                "reason": f"{raw!r} is not a cut sequence number",
+            }
+
+    if client is None:
+        client = github.GitHub(token)
+
+    result = emitting.rollback(
+        log_path=store.emissions_path(project),
+        repo=manifest.repo,
+        cut_seq=cut_seq,
+        client=client,
+        now_fn=now_fn,
+        on_progress=on_progress,
+    )
+    result["project"] = project
+    if events is not None and result.get("rolled_back"):
+        events.record(
+            "tickets_rolled_back",
+            project,
+            now_fn,
+            repo=manifest.repo,
+            cut_seq=cut_seq,
+            **result["counts"],
+        )
+    return result
+
+
 def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
     """How far an emission has got, and what earlier ones created.
 

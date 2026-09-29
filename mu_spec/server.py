@@ -975,6 +975,27 @@ def _actions() -> list[dict[str, Any]]:
             "path": "projects/{project}/emit",
             "input_schema": {"type": "object", "properties": {}},
         },
+        {
+            "name": "rollback_tickets",
+            "description": (
+                "Withdraw the issues a cut put on the repository: close every "
+                "one this unit created for it, as `not_planned` rather than "
+                "completed, and record the withdrawal so those units can be "
+                "emitted again. Closed, never deleted -- deletion is an "
+                "admin-only GraphQL mutation and is not reversible. Takes an "
+                "optional `cut_seq`; without one it withdraws the current "
+                "cut's, which is rarely what is wanted, because the reason to "
+                "withdraw a batch is usually that a newer cut has replaced "
+                "it. An issue GitHub refuses to close is reported and stays "
+                "un-emittable, so a stray issue is never duplicated."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/emit/rollback",
+            "input_schema": {
+                "type": "object",
+                "properties": {"cut_seq": {"type": "integer"}},
+            },
+        },
     ]
 
 
@@ -1034,6 +1055,7 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # Emitting, and watching it happen. A person triggers the POST; the GET is
     # how anyone -- a dashboard, an agent checking -- sees how far it got.
     ("POST", re.compile(rf"^/projects/{_P}/emit$"), "emit_tickets"),
+    ("POST", re.compile(rf"^/projects/{_P}/emit/rollback$"), "rollback_tickets"),
     ("GET", re.compile(rf"^/projects/{_P}/emit$"), "get_emission"),
     # Where this project's tickets go. One route, both methods: the write is a
     # deployment decision and is withheld from the tool manifest; the read is
@@ -1341,6 +1363,35 @@ def handle(
                     project,
                     lambda report: service.emit_tickets(
                         store, project, client=emit_client, events=events,
+                        now_fn=now_fn, on_progress=report,
+                    ),
+                )
+            except emitting.RunBusy as exc:
+                return 409, JSON, json.dumps({"error": str(exc)})
+            return 202, JSON, json.dumps(
+                {"project": project, "run_id": run.id, "started": True}
+            )
+
+        if name == "rollback_tickets":
+            # The same registry as emitting, which is what stops a rollback
+            # running while an emission is still creating: the two would race
+            # over the same log and the loser's writes would be invisible to
+            # the winner.
+            if runs is None:
+                result = service.rollback_tickets(
+                    store, project, body, client=emit_client, events=events,
+                    now_fn=now_fn,
+                )
+                return (
+                    (200 if result.get("rolled_back") else 409),
+                    JSON,
+                    json.dumps(result),
+                )
+            try:
+                run = runs.start(
+                    project,
+                    lambda report: service.rollback_tickets(
+                        store, project, body, client=emit_client, events=events,
                         now_fn=now_fn, on_progress=report,
                     ),
                 )
