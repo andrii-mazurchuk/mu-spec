@@ -256,8 +256,12 @@ class Run:
             # Never `phase`: that is this object's business, not the
             # worker's.
             for field in (
+                # `closed` is a rollback's; the rest are an emission's. One
+                # list because one registry runs both, and a field missing
+                # here is a counter that silently stays zero on the page
+                # while the work it counts is happening.
                 "step", "total", "processed", "created", "skipped",
-                "failed", "wired", "unwired",
+                "failed", "wired", "unwired", "closed",
             ):
                 if field in progress:
                     self._state[field] = progress[field]

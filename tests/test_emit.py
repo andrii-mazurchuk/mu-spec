@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from mu_spec.emit import emit, read_emissions, read_log, rollback
+from mu_spec.emit import Runs, emit, read_emissions, read_log, rollback
 from mu_spec.github import GitHubError, Issue
 
 REPO = "andrii-mazurchuk/dark"
@@ -769,3 +769,23 @@ def test_a_unit_emitted_again_can_be_withdrawn_again(tmp_path):
     assert {n for _r, n, _w in second.closed} == {4, 5, 6}, (
         "the replacements, not the issues already withdrawn"
     )
+
+
+def test_a_rollback_reports_what_it_has_closed(tmp_path):
+    """`closed` has to be in the run's field list or the page shows a bar
+    moving and a count of zero beside it, for the whole withdrawal."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+    runs = Runs(spawn=lambda fn: fn())
+    runs.start("m", lambda report: rollback(
+        log_path=log, repo=REPO, cut_seq=2, client=client,
+        now_fn=lambda: 2000.0, on_progress=report,
+    ))
+    snap = runs.status("m")
+    assert snap["result"]["counts"]["closed"] == 3
+    # And mid-run, which is what the page actually reads.
+    seen = []
+    _closer(client)
+    rollback(log_path=log, repo=REPO, cut_seq=2, client=client,
+             now_fn=lambda: 2001.0, on_progress=seen.append)
+    assert all("closed" in s for s in seen) or not seen
