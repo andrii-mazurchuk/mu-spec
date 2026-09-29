@@ -124,3 +124,43 @@ def test_reading_a_legacy_log_rewrites_nothing(tmp_path):
     before = path.read_bytes()
     read_log(path)
     assert path.read_bytes() == before
+
+
+# -- authored prose ----------------------------------------------------------
+
+
+def test_a_reference_in_an_authored_body_is_re_spelled_when_rendered():
+    """Bodies were written by sessions that predate the change and cite
+    identifiers inline. Showing a reader `S-76` in the block and `S·41` in the
+    prose invites exactly the question this change exists to remove."""
+    from mu_spec.render import _respell
+
+    assert _respell("Imports `Subspace` (S·41) and A·80.") == (
+        "Imports `Subspace` (S-41) and A-80."
+    )
+
+
+def test_a_fenced_block_is_left_exactly_as_written():
+    """A fence is code or data. Rewriting a character inside one changes a
+    program rather than a citation -- and both sample bodies from `dark` carry
+    a ```python block, so this is not hypothetical."""
+    from mu_spec.render import _respell
+
+    text = 'before S·34\n```python\nX = "S·41"\n```\nafter S·35'
+    out = _respell(text)
+    assert 'X = "S·41"' in out, "the code is untouched"
+    assert "before S-34" in out and "after S-35" in out
+
+
+def test_the_stored_entry_is_never_rewritten(tmp_path):
+    """Re-spelling happens as a ticket is rendered. The graph keeps the bytes
+    its author gave it, which is what append-only means."""
+    from mu_spec.graph import Entry
+    from mu_spec.storage import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    body = "cites S·41 inline"
+    store.append("m", [Entry(id=parse("I-01"), title="t", body=body)])
+    graph = store.load_graph("m")
+    assert graph.get(parse("I-01")).body == body

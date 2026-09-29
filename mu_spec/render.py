@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 
 from mu_spec.units import is_test_key
 
@@ -125,6 +126,32 @@ def _labels(unit: dict) -> tuple[str, ...]:
     return tuple(labels)
 
 
+# An identifier reference inside authored prose, in the old spelling. Bodies
+# were written by sessions that predate the change and say things like
+# "Imports `Subspace` (S·41)" -- the entry is stored exactly as written, and
+# rewriting the store would be editing an author's text. This re-spells the
+# REFERENCES as the ticket is rendered, so a reader is never shown two
+# spellings of one identifier and left wondering whether they are the same
+# thing. The graph keeps the bytes it was given.
+_LEGACY_REF = re.compile("([A-Z])\u00b7([0-9])")
+
+
+def _respell(text: str) -> str:
+    """Old-spelling identifier references, in the current spelling.
+
+    Fence-aware: a fenced block is code or data, and rewriting a character
+    inside one would change a program rather than a citation. Splitting on
+    ``` and rewriting only the odd-numbered pieces is the whole of it --
+    both sample bodies from `dark` carry a ```python block, which is how this
+    turned out to matter.
+    """
+    parts = text.split("```")
+    return "```".join(
+        piece if index % 2 else _LEGACY_REF.sub(r"\1-\2", piece)
+        for index, piece in enumerate(parts)
+    )
+
+
 def _machine(
     payload: dict, unit: dict, write_set: list[str],
     repo: str | None, cut_seq: int | None,
@@ -160,7 +187,7 @@ def _machine(
 
 
 def _entry_line(entry: dict) -> str:
-    return f"- `{entry.get('id')}` — {entry.get('title', '')}"
+    return f"- `{entry.get('id')}` — {_respell(entry.get('title', ''))}"
 
 
 def _bullets(lines) -> str:
@@ -215,7 +242,7 @@ def render(
             # not recoverable from what it checks.
             out.append(f"*Why this case:* {entry['purpose']}")
         if entry.get("body"):
-            out.append(entry["body"])
+            out.append(_respell(entry["body"]))
 
     # Scope, before anything explanatory. An agent that reads only the first
     # screen must still know what it may touch.
@@ -274,7 +301,7 @@ def render(
             if ancestor.get("body"):
                 out.append(_bullets(run))
                 run = []
-                out.append(ancestor["body"])
+                out.append(_respell(ancestor["body"]))
         if run:
             out.append(_bullets(run))
 
