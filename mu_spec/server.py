@@ -15,6 +15,7 @@ deliberately allowed to differ -- /health and /tools are never declared.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +23,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mu_spec import dashboard, docs, emit as emitting, lifecycle as lc, service
+from mu_spec import (
+    dashboard, docs, emit as emitting, github, lifecycle as lc, service,
+)
 from mu_spec.service import ServiceError
 from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES
 from mu_spec.inbox import Inbox, InboxError, TYPES
@@ -1155,6 +1158,7 @@ def handle(
     events: Lifecycle | None = None,
     runs: emitting.Runs | None = None,
     emit_client=None,
+    identity_client=None,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -1440,8 +1444,11 @@ def handle(
             )
 
         if name == "get_emission":
+            # The injected client answers the identity lookup too, so the
+            # suite never opens a socket to report who a token belongs to.
             return 200, JSON, json.dumps(
-                service.get_emission(store, project, runs)
+                service.get_emission(store, project, runs,
+                                     identity_client=identity_client)
             )
 
         if name == "set_labels":
@@ -1538,6 +1545,23 @@ def build_handler(
     # what a later request reads its progress from.
     runs = emitting.Runs()
 
+    # One client for this process, beside the run registry and for the same
+    # reason: process state, created where the process is. It remembers the
+    # identity it authenticates as, so a poll every 900ms costs one call in
+    # the life of the server rather than one per poll.
+    clients: dict[str, object] = {}
+
+    def github_client():
+        """The real client. A handler built by hand in a test gets none, which
+        is what keeps the suite off the network."""
+        token = os.environ.get(service.TOKEN_ENV, "").strip()
+        if not token:
+            return None
+        if clients.get("token") != token:
+            clients["token"] = token
+            clients["client"] = github.GitHub(token)
+        return clients["client"]
+
     class _Handler(BaseHTTPRequestHandler):
         def _respond(self, method: str) -> None:
             payload = None
@@ -1554,7 +1578,8 @@ def build_handler(
                     )
                     return
             status, content_type, body = handle(
-                method, self.path, store, prompts_dir, payload, runs=runs
+                method, self.path, store, prompts_dir, payload, runs=runs,
+                identity_client=github_client(),
             )
             self._write(status, content_type, body)
 

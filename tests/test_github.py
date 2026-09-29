@@ -336,3 +336,59 @@ def test_a_failed_close_raises_the_one_exception_type():
     with pytest.raises(GitHubError) as caught:
         gh.close_issue(REPO, 999)
     assert caught.value.status == 404
+
+
+def test_whoami_reads_the_account_the_token_belongs_to():
+    """Every issue is authored by this account, and a consumer may authorize
+    on the author -- a label needs only triage rights, an author cannot be
+    forged. So the identity has to be checkable rather than assumed."""
+    gh, recorder, _ = client(FakeResponse({"login": "andrii-mazurchuk",
+                                           "type": "User"}, status=200))
+    who = gh.whoami()
+    assert who == {"login": "andrii-mazurchuk", "type": "User"}
+    request = recorder.requests[0]
+    assert request.get_method() == "GET"
+    assert request.full_url.endswith("/user")
+
+
+def test_a_read_sends_no_body():
+    """urllib infers the method from `data` in some paths, so an empty object
+    would send a GET carrying a body, which GitHub answers inconsistently."""
+    gh, recorder, _ = client(FakeResponse({"login": "x", "type": "Bot"}, status=200))
+    gh.whoami()
+    assert recorder.requests[0].data is None
+
+
+def test_a_bot_identity_comes_back_verbatim():
+    """A GitHub App authors as `something[bot]` and the allowlist is a string
+    equality check, so the login is never cleaned up or prettified."""
+    gh, _r, _ = client(FakeResponse({"login": "mu-spec[bot]", "type": "Bot"},
+                                    status=200))
+    assert gh.whoami()["login"] == "mu-spec[bot]"
+
+
+def test_an_unusable_identity_response_does_not_invent_a_login():
+    gh, _r, _ = client(FakeResponse({}, status=200))
+    assert gh.whoami() == {"login": "", "type": ""}
+
+
+def test_the_identity_is_asked_for_once_per_client():
+    """The Ship panel polls every 900ms while a run is in flight. Asking
+    GitHub each time would spend rate limit on a constant that cannot change
+    under a token."""
+    gh, recorder, _ = client(FakeResponse({"login": "a", "type": "User"}, status=200))
+    assert gh.whoami()["login"] == "a"
+    assert gh.whoami()["login"] == "a"
+    assert gh.whoami()["login"] == "a"
+    assert len(recorder.requests) == 1
+
+
+def test_a_second_client_asks_again():
+    """Instance state, not module state. A module-level cache leaked between
+    tests -- a failing lookup returned an earlier test's answer -- and would
+    also survive a token being rotated to another account."""
+    first, _r1, _ = client(FakeResponse({"login": "a", "type": "User"}, status=200))
+    second, r2, _ = client(FakeResponse({"login": "b", "type": "User"}, status=200))
+    assert first.whoami()["login"] == "a"
+    assert second.whoami()["login"] == "b"
+    assert len(r2.requests) == 1

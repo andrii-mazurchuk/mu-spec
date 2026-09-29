@@ -2892,6 +2892,19 @@ function shipPre(r){
           the press. */
       preChip(r.token, r.token ? "token" : "no token",
         "set MU_SPEC_GITHUB_TOKEN in this unit's environment")}
+    ${/* WHO the issues will be authored by. Not a precondition -- a missing
+          answer blocks nothing -- but the fact a consumer authorizing on the
+          issue author has to be able to check rather than assume, and the one
+          that changes silently when a token is rotated to another account.
+          Rendered as a plain chip, never as met/unmet: this unit has no
+          opinion about which account is the right one. */
+      (STATE.emission && STATE.emission.identity)
+        ? `<span class="pill">authored by <b>${
+             esc(STATE.emission.identity.login)}</b></span>`
+        : (r.token
+             ? `<span class="pill quiet">author unknown — GitHub could not be
+                asked</span>`
+             : "")}
   </div>`;
 }
 

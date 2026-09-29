@@ -132,6 +132,7 @@ class GitHub:
         self._opener = opener
         self._sleep = sleep
         self._base = api_base.rstrip("/")
+        self._identity: dict | None = None
         self._attempts = max(1, attempts)
         self._pace = pace
         self._timeout = timeout
@@ -189,6 +190,33 @@ class GitHub:
             {"issue_id": int(blocker_id)},
         )
 
+    def whoami(self) -> dict:
+        """Who the token authenticates as. `{"login", "type"}`.
+
+        Every issue this unit creates is authored by this account, and a
+        consumer deciding whether to hand an issue to an agent that writes
+        code may reasonably authorize on the author -- a label can be applied
+        by anyone with triage rights, an author cannot be forged. So the
+        identity is a fact somebody has to be able to CHECK, not assume, and
+        a token quietly rotated to a different account must be visible rather
+        than silently breaking an allowlist.
+
+        The token itself never leaves this module. `login` is a public name
+        that appears on every issue the unit has ever created.
+        """
+        if self._identity is None:
+            # Remembered on the INSTANCE. An account does not change under a
+            # token, and the Ship panel polls every 900ms while a run is in
+            # flight -- asking GitHub each time would spend rate limit on a
+            # constant. A module-level cache would do the same job and leak
+            # between tests, which is how the first version of this failed.
+            raw = self._get("/user")
+            self._identity = {
+                "login": str(raw.get("login") or ""),
+                "type": str(raw.get("type") or ""),
+            }
+        return self._identity
+
     def close_issue(self, repo: str, number: int, reason: str = "not_planned") -> None:
         """Close one issue, as `not_planned` rather than `completed`.
 
@@ -210,16 +238,22 @@ class GitHub:
 
     # -- the transport ------------------------------------------------------
 
+    def _get(self, path: str) -> dict:
+        return self._request("GET", path, None)
+
     def _patch(self, path: str, payload: dict) -> dict:
         return self._request("PATCH", path, payload)
 
     def _post(self, path: str, payload: dict) -> dict:
         return self._request("POST", path, payload)
 
-    def _request(self, method: str, path: str, payload: dict) -> dict:
+    def _request(self, method: str, path: str, payload: dict | None) -> dict:
         request = urllib.request.Request(
             self._base + path,
-            data=json.dumps(payload).encode("utf-8"),
+            # A read carries no body. urllib decides GET vs POST from `data`
+            # in some paths, so passing an empty object would send a GET with
+            # a body, which GitHub answers inconsistently.
+            data=None if payload is None else json.dumps(payload).encode("utf-8"),
             method=method,
             headers={
                 "Authorization": f"Bearer {self._token}",

@@ -1633,6 +1633,28 @@ def emit_tickets(
     return result
 
 
+def emission_identity(token: str, client=None) -> dict | None:
+    """Who the issues will be authored by, or None if it cannot be determined.
+
+    Degrades to None like every other optional read in this unit: an
+    unreachable GitHub must not make the Ship panel unrenderable. None means
+    "not known", never "nobody" -- a consumer authorizing on the author should
+    read it that way.
+    """
+    if not token or client is None:
+        # No client, no lookup. This module never constructs one: the process
+        # that serves HTTP supplies it, so nothing in the suite can open a
+        # socket to answer who a token belongs to. Four tests were doing
+        # exactly that -- real 401s to api.github.com, visible only as the
+        # suite doubling in wall time.
+        return None
+    try:
+        who = client.whoami()
+    except Exception:  # noqa: BLE001 -- degrade, never raise, per the standard
+        return None
+    return who if who.get("login") else None
+
+
 def rollback_tickets(
     store: ProjectStore,
     project: str,
@@ -1725,7 +1747,9 @@ def rollback_tickets(
     return result
 
 
-def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
+def get_emission(
+    store: ProjectStore, project: str, runs=None, identity_client=None
+) -> dict:
     """How far an emission has got, and what earlier ones created.
 
     Two sources, because they answer different questions and only one of them
@@ -1780,6 +1804,13 @@ def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
         # data, so a fresh deploy looks completely ready and refuses on the
         # press. A boolean turns the last unknown into a known one.
         "token": bool(os.environ.get(TOKEN_ENV, "").strip()),
+        # Who every issue will be authored by. A boolean says a token exists;
+        # this says whose it is, which is the question a consumer authorizing
+        # on the issue author actually has to answer -- and the one that
+        # breaks silently when a token is rotated to another account.
+        "identity": emission_identity(
+            os.environ.get(TOKEN_ENV, "").strip(), client=identity_client
+        ),
         "emissions": [
             {
                 "seq": e.seq,

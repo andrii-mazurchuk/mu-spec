@@ -3708,3 +3708,69 @@ def test_the_preflight_count_agrees_with_what_a_press_does(store, prompts,
     _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
                client=fresh)
     assert fresh.n == emitted
+
+
+def test_the_identity_is_reported_so_a_consumer_can_authorize_on_it(
+    store, prompts, monkeypatch
+):
+    """A label can be applied by anyone with triage rights; an issue's author
+    cannot be forged. So a consumer deciding whether to hand an issue to an
+    agent that writes code may reasonably authorize on the author -- which
+    means the author has to be a fact it can CHECK, not assume."""
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+
+    class Identity(_Client):
+        def whoami(self):
+            return {"login": "andrii-mazurchuk", "type": "User"}
+
+    from mu_spec.server import handle
+    status, _ct, raw = handle("GET", "/projects/m/emit", store, prompts, None,
+                              now_fn=lambda: 7.0, identity_client=Identity())
+    payload = json.loads(raw)
+    assert status == 200
+    assert payload["identity"] == {"login": "andrii-mazurchuk", "type": "User"}
+
+
+def test_the_identity_never_carries_the_token(store, prompts, monkeypatch):
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "ghp_secretcanary")
+    _emit_ready(store, prompts)
+
+    class Identity(_Client):
+        def whoami(self):
+            return {"login": "someone", "type": "User"}
+
+    from mu_spec.server import handle
+    _s, _ct, raw = handle("GET", "/projects/m/emit", store, prompts, None,
+                          now_fn=lambda: 7.0, identity_client=Identity())
+    assert "ghp_secretcanary" not in raw
+    assert json.loads(raw)["token"] is True, "presence still reported"
+
+
+def test_an_unreachable_github_leaves_the_panel_renderable(store, prompts,
+                                                           monkeypatch):
+    """None means 'not known', never 'nobody'. Absence is normal everywhere in
+    this unit and a failed identity lookup must not break the page."""
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+
+    class Broken(_Client):
+        def whoami(self):
+            raise OSError("no route to host")
+
+    from mu_spec.server import handle
+    status, _ct, raw = handle("GET", "/projects/m/emit", store, prompts, None,
+                              now_fn=lambda: 7.0, identity_client=Broken())
+    assert status == 200
+    assert json.loads(raw)["identity"] is None
+
+
+def test_no_identity_lookup_ever_opens_a_socket_in_the_suite(store, prompts,
+                                                             monkeypatch):
+    """`service` never constructs a client -- the process that serves HTTP
+    supplies one. Four tests were quietly making real 401 calls to
+    api.github.com, visible only as the suite doubling in wall time."""
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    _s, payload = call(store, prompts, "GET", "/projects/m/emit")
+    assert payload["identity"] is None, "no client was injected, so no lookup"
