@@ -349,6 +349,54 @@ class Runs:
         return run.snapshot() if run else None
 
 
+def standing(
+    log_path: Path, cut_seq: int, repo: str
+) -> tuple[dict[str, dict], set[str]]:
+    """What is currently out: unit key -> issue, and the edges already wired.
+
+    The one place this is computed. It was two places for exactly as long as
+    it took to add rollbacks: `emit` learned to subtract a withdrawal and the
+    pre-flight count did not, so the panel said "0 new issues" while pressing
+    the button would have created 144. The comment on the copy even said it
+    was scoped "exactly as the skip in emit is", which is how a copy tells you
+    it wants to be a function.
+
+    Scoped to `(cut_seq, repo)`, which is what makes a re-run of one cut
+    create nothing while a fresh cut creates everything.
+
+    Withdrawals are subtracted by issue NUMBER, not by unit key: a unit
+    emitted, withdrawn and emitted again holds a live issue under a key that
+    also appears in a rollback, and dropping it by name would create a third
+    issue for work that already has one.
+    """
+    emissions, rollbacks = read_log(log_path)
+    known: dict[str, dict] = {}
+    wired: set[str] = set()
+    for emission in emissions:
+        if emission.cut_seq == cut_seq and emission.repo == repo:
+            known.update(emission.issues)
+            wired.update(emission.wired)
+
+    closed_numbers: set[int] = set()
+    for record in rollbacks:
+        if record.cut_seq == cut_seq and record.repo == repo:
+            closed_numbers.update(record.closed.values())
+    reopened = {
+        key for key, issue in known.items()
+        if issue.get("number") is not None
+        and int(issue["number"]) in closed_numbers
+    }
+    for key in reopened:
+        known.pop(key, None)
+    # The edges go with them: an edge between two issues that are now closed
+    # must be declared again between their replacements.
+    wired = {
+        pair for pair in wired
+        if not any(key in pair.split("<-") for key in reopened)
+    }
+    return known, wired
+
+
 def rollback(
     *,
     log_path: Path,
@@ -497,38 +545,8 @@ def emit(
     than taken from a store, so the loop is testable and so this module needs to
     know nothing about how a unit is assembled.
     """
-    previous, rollbacks = read_log(log_path)
-    known: dict[str, dict] = {}
-    wired_already: set[str] = set()
-    for emission in previous:
-        if emission.cut_seq == cut_seq and emission.repo == repo:
-            known.update(emission.issues)
-            wired_already.update(emission.wired)
-    # A withdrawn unit is emittable again -- that is the whole point of a
-    # rollback, and without this the guard would skip every unit whose issue
-    # is now closed and the re-emission would create nothing.
-    #
-    # Matched on the issue NUMBER the guard currently holds, not on the key: a
-    # unit emitted, withdrawn and emitted again has a live issue under a key
-    # that also appears in a rollback, and dropping it by name would create a
-    # third issue for work that already has one.
-    closed_numbers: set[int] = set()
-    for rollback in rollbacks:
-        if rollback.cut_seq == cut_seq and rollback.repo == repo:
-            closed_numbers.update(rollback.closed.values())
-    reopened = {
-        key for key, issue in known.items()
-        if issue.get("number") is not None
-        and int(issue["number"]) in closed_numbers
-    }
-    for key in reopened:
-        known.pop(key, None)
-    # The edges go with them: an edge wired between two issues that are now
-    # closed must be declared again between their replacements.
-    wired_already = {
-        pair for pair in wired_already
-        if not any(key in pair.split("<-") for key in reopened)
-    }
+    known, wired_already = standing(log_path, cut_seq, repo)
+    previous, _rollbacks = read_log(log_path)
 
     if not order:
         return {

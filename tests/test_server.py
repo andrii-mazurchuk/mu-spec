@@ -3670,3 +3670,41 @@ def test_the_emitted_body_carries_the_repo_and_cut_it_came_from(store, prompts,
     data = _json.loads(bodies[0][start:bodies[0].index("```", start)])
     assert data["repo"] == "owner/name"
     assert data["cut_seq"] == 1
+
+
+def test_the_preflight_count_agrees_with_what_a_press_does(store, prompts,
+                                                           monkeypatch):
+    """The panel's number and the button's behaviour come from one function.
+
+    They were two copies of one rule, and a withdrawal made them disagree: on
+    the live project the panel said 144 already out and 0 new, while pressing
+    Ship would have created all 144. Caught by driving the first real rollback,
+    not by this suite -- which is why the suite now has this.
+    """
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    client = _closing_client()
+    inline = lambda: Runs(spawn=lambda fn: fn())  # noqa: E731
+
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
+               client=client)
+    emitted = client.n
+    _s, before = _emit_call(store, prompts, "GET", "/projects/m/emit")
+    assert len(before["already"]) == emitted, "everything is out"
+
+    _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {},
+               runs=inline(), client=client)
+
+    _s, after = _emit_call(store, prompts, "GET", "/projects/m/emit")
+    assert after["already"] == {}, (
+        "a withdrawn unit is not still out -- the panel would promise a press "
+        "that creates nothing while the press creates everything"
+    )
+
+    # And the press really does create them again, which is the other half.
+    fresh = _closing_client()
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {}, runs=inline(),
+               client=fresh)
+    assert fresh.n == emitted

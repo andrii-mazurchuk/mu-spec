@@ -1759,9 +1759,11 @@ def get_emission(store: ProjectStore, project: str, runs=None) -> dict:
     repo = store.load_manifest(project).repo
     already: dict[str, dict] = {}
     if cut is not None and repo:
-        for emission in history:
-            if emission.cut_seq == cut.seq and emission.repo == repo:
-                already.update(emission.issues)
+        # The same function `emit` skips on, not a second copy of its rule.
+        # These were two copies until a withdrawal made them disagree.
+        already, _wired = emitting.standing(
+            store.emissions_path(project), cut.seq, repo
+        )
 
     return {
         "project": project,
