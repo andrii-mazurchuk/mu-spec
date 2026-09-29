@@ -1617,6 +1617,7 @@ def emit_tickets(
         fetch=lambda key: get_work_unit(store, project, key),
         client=client,
         now_fn=now_fn,
+        labels=manifest.labels,
         on_progress=on_progress,
     )
     result["project"] = project
@@ -1817,6 +1818,27 @@ def set_repo(store: ProjectStore, project: str, body: dict) -> dict:
         raise ServiceError("'repo' must be a string, or null to clear it")
     try:
         return {"project": project, "repo": store.set_repo(project, value)}
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+
+
+def get_labels(store: ProjectStore, project: str) -> dict:
+    return {"project": project, "labels": list(store.load_manifest(project).labels)}
+
+
+def set_labels(store: ProjectStore, project: str, body: dict) -> dict:
+    """Replace the labels added to every issue this project emits.
+
+    Reports what was stored rather than echoing what was sent: duplicates are
+    dropped and whitespace trimmed, and a caller assuming otherwise has no way
+    to notice.
+    """
+    if "labels" not in body:
+        raise ServiceError(
+            "'labels' is required: a list of label names, or [] to clear them"
+        )
+    try:
+        return {"project": project, "labels": list(store.set_labels(project, body["labels"]))}
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
 

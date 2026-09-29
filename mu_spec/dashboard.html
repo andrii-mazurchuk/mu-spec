@@ -784,6 +784,8 @@ const STATE = {
   repo:null,            // owner/name, or null -- where this project's tickets go
   emission:null,        // the run in flight, if any, and the durable log
   repoDraft:null,       // uncommitted, for the same reason rejectDraft is
+  labels:[],            // added to every issue this project emits
+  labelsDraft:null,
   shipFlash:null        // the outcome of the last press, outliving its reload
 };
 
@@ -798,7 +800,7 @@ async function loadProjects(){
 async function fetchProject(project){
   const base = "projects/" + enc(project);
   const [spine, gates, waves, insights, issues, inbox, modules, proposal, units,
-         repo, emission] =
+         repo, labels, emission] =
     await Promise.all([
     get(base + "/spine"),                               // the only hard requirement
     soft(base + "/gates", null),
@@ -810,6 +812,7 @@ async function fetchProject(project){
     soft(base + "/slicing/proposal", {status:"none"}),
     soft(base + "/units", {cut:null, drift:null, live:null}),
     soft(base + "/repo", {repo:null}),
+    soft(base + "/labels", {labels:[]}),
     soft(base + "/emit", {running:false, emissions:[]})
   ]);
 
@@ -880,6 +883,7 @@ async function fetchProject(project){
     proposal: proposal && proposal.status === "pending" ? proposal : null,
     units,
     repo: repo.repo || null,
+    labels: labels.labels || [],
     emission
   };
 }
@@ -914,10 +918,11 @@ function applyProject(d){
   // broken. Cleared here rather than in the switch handler so a poll, which
   // also lands here, cannot resurrect it either.
   if(STATE.project !== d.project){ STATE.cutFlash = null; STATE.shipFlash = null;
-                                   STATE.repoDraft = null; }
-  const draft = STATE.repoDraft;
+                                   STATE.repoDraft = null; STATE.labelsDraft = null; }
+  const draft = STATE.repoDraft, ldraft = STATE.labelsDraft;
   Object.assign(STATE, d, {bodies: STATE.bodies || {}, preview: false});
   STATE.repoDraft = draft;
+  STATE.labelsDraft = ldraft;
   /* Which slice each entry WOULD belong to if the proposal were ratified.
      Held beside the real membership rather than replacing it -- previewing a
      decision must never look like having taken it. */
@@ -3013,6 +3018,8 @@ function drawShip(){
   // argument for the checklist being here at all.
   const blocked = !(r.repo && r.cut && r.sound && r.fresh && r.token);
   const draft = STATE.repoDraft == null ? (STATE.repo || "") : STATE.repoDraft;
+  const labelDraft = STATE.labelsDraft == null
+    ? (STATE.labels || []).join(", ") : STATE.labelsDraft;
 
   const head = `<h3>Ship — work units become issues on a tracker</h3>
     <p class="muted" style="max-width:76ch">One issue per work unit, then the order between
@@ -3038,6 +3045,18 @@ function drawShip(){
         <p class="shiphelp">${STATE.repo
           ? `Issues go to <code>${esc(STATE.repo)}</code>. Paste a repository URL to change it.`
           : `Paste the repository's address — the owner and name are taken from it.`}</p>
+        <div class="shipbar" style="margin-top:8px">
+          <input id="labels-in" value="${esc(labelDraft)}" spellcheck="false"
+            placeholder="labels on every issue, comma separated — e.g. team:cto">
+          <button class="btn" id="labels-save">${
+            STATE.labels.length ? "Change" : "Set"}</button>
+        </div>
+        <p class="shiphelp">${STATE.labels.length
+          ? `Every issue also carries ${STATE.labels.map(l =>
+              `<code>${esc(l)}</code>`).join(" ")} — on top of the per-unit
+             anchor, kind and slice labels.`
+          : `Optional. A label on every issue, which is what lets a consumer
+             admit these and hand-filed issues by one rule.`}</p>
       </div>
       <div class="count">
         <div class="bignum ${pf.fresh ? "" : "zero"}">
@@ -3086,9 +3105,43 @@ function drawShip(){
 
   const save = $("repo-save"), input = $("repo-in");
   if(input) input.oninput = () => { STATE.repoDraft = input.value; };
+  const lsave = $("labels-save"), linput = $("labels-in");
+  if(linput) linput.oninput = () => { STATE.labelsDraft = linput.value; };
+  if(lsave) lsave.onclick = () => setLabels(linput.value);
   if(save) save.onclick = () => setRepo(input.value);
   const go = $("do-ship");
   if(go) go.onclick = shipTickets;
+}
+
+/* Project-wide labels. Split on commas rather than asking for JSON: this is a
+   field a person types into, and "team:cto, area:core" is how they will type
+   it. The unit trims and de-duplicates, and what was STORED comes back. */
+async function setLabels(value){
+  const btn = $("labels-save");
+  if(btn) btn.disabled = true;
+  const wanted = value.split(",").map(s => s.trim()).filter(Boolean);
+  try{
+    const res = await fetch("projects/" + enc(STATE.project) + "/labels", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({labels: wanted})
+    });
+    const text = await res.text();
+    let payload = null;
+    try{ payload = JSON.parse(text); }catch(_){}
+    if(!res.ok){
+      STATE.shipFlash = {kind:"bad", text: refusal(res, text, payload)};
+    } else {
+      STATE.labels = payload.labels || [];
+      STATE.labelsDraft = null;
+      STATE.shipFlash = {kind:"ok", text: STATE.labels.length
+        ? "Every issue will carry " + STATE.labels.join(", ")
+        : "No labels beyond the per-unit ones."};
+    }
+  }catch(err){
+    STATE.shipFlash = {kind:"bad", text:String(err)};
+  }
+  if(btn) btn.disabled = false;
+  drawShip();
 }
 
 /* Which repository several hundred issues land in is a deployment decision, so

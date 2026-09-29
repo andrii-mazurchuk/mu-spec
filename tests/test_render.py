@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from mu_spec.render import MAX_TITLE, render
+from mu_spec.render import MACHINE_FENCE, MACHINE_HEADING, MAX_TITLE, render
 
 IMPL = {
     "project": "dark",
@@ -262,3 +262,87 @@ def test_list_items_are_single_spaced():
     costs real bytes across 144 tickets with a 16 KB median."""
     body = render({**IMPL, "write_set": ["a.py", "b.py", "c.py"]}).body
     assert "- `a.py`\n- `b.py`\n- `c.py`" in body
+
+
+# -- the machine-readable block ----------------------------------------------
+
+
+def _block(body: str) -> dict:
+    """The JSON a consumer parses out of the body."""
+    import json as _json
+    start = body.index(MACHINE_FENCE) + len(MACHINE_FENCE)
+    end = body.index("```", start)
+    return _json.loads(body[start:end])
+
+
+def test_the_body_carries_a_machine_readable_block():
+    """A consumer that parsed `## Files you may write` with a regex is one
+    heading rename away from a disarmed path-guard. The block is the contract;
+    the prose is for the agent."""
+    ticket = render(IMPL, repo="owner/name", cut_seq=7)
+    data = _block(ticket.body)
+    assert data["key"] == "S·01"
+    assert data["kind"] == "implementation"
+    assert data["repo"] == "owner/name"
+    assert data["cut_seq"] == 7
+    assert data["write_set"] == ["dark/config/declare.py"]
+    assert data["blocked_by"] == ["S·01:T"]
+    assert data["mutex"] == ["S·02"]
+    assert data["slices"] == ["legibility"]
+
+
+def test_the_block_names_the_write_set_once():
+    """`audit.editable_paths` is the same list under a second name. Carrying
+    both would invite a consumer to wonder which one wins."""
+    data = _block(render(IMPL, repo="o/n", cut_seq=1).body)
+    assert "write_set" in data
+    assert "editable_paths" not in data
+    assert "audit" not in data
+
+
+def test_the_block_carries_file_scope_without_the_bodies():
+    """A machine deciding what may be touched does not need the other
+    contracts' text -- the agent does, and has it in full above."""
+    data = _block(render(IMPL, repo="o/n", cut_seq=1).body)
+    assert data["file_scope"] == {"dark/config/declare.py": ["S·02"]}
+
+
+def test_a_test_unit_says_so_in_the_block():
+    data = _block(render(_test_unit(), repo="o/n", cut_seq=1).body)
+    assert data["kind"] == "test"
+    assert data["anchor"] == "S·01"
+
+
+def test_the_block_is_last():
+    """The first screen belongs to the contract and the write set."""
+    body = render(IMPL, repo="o/n", cut_seq=1).body
+    assert body.index("## Contract") < body.index(MACHINE_HEADING)
+    assert body.index("## Files you may write") < body.index(MACHINE_HEADING)
+    assert body.rstrip().endswith("```")
+
+
+def test_the_block_is_valid_json_when_a_body_contains_a_fence():
+    """Entry bodies are prose written by people and may contain code fences.
+    The block is appended after them, so it must still be findable."""
+    fenced = dict(IMPL["entries"][0])
+    fenced["body"] = 'Use this:\n\n```json\n{"not": "the block"}\n```'
+    body = render({**IMPL, "entries": [fenced]}, repo="o/n", cut_seq=1).body
+    tail = body[body.index(MACHINE_HEADING):]
+    import json as _json
+    start = tail.index(MACHINE_FENCE) + len(MACHINE_FENCE)
+    assert _json.loads(tail[start:tail.index("```", start)])["key"] == "S·01"
+
+
+# -- project-wide labels -----------------------------------------------------
+
+
+def test_extra_labels_are_added_to_the_per_unit_ones():
+    ticket = render(IMPL, repo="o/n", cut_seq=1, extra_labels=("team:cto",))
+    assert "team:cto" in ticket.labels
+    assert "kind:implementation" in ticket.labels
+    assert "mu-spec:S·01" in ticket.labels
+
+
+def test_no_extra_labels_changes_nothing():
+    plain = render(IMPL, repo="o/n", cut_seq=1)
+    assert all(not l.startswith("team:") for l in plain.labels)

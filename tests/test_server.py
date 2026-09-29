@@ -1915,6 +1915,7 @@ def test_actions_declares_exactly_the_presses_a_person_makes(store, prompts):
         "set_repo",
         "emit_tickets",
         "rollback_tickets",
+        "set_labels",
     }
     assert all(a["method"] == "POST" for a in payload["actions"])
 
@@ -2050,6 +2051,10 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "reject_proposal": None,
         "stats": None,
         "get_repo": "get_repo",
+        "get_labels": "get_labels",
+        # Project-wide config, like set_repo: the read is offered so an agent
+        # can see what a project's issues will carry, the write is not.
+        "set_labels": None,
         # Which repository several hundred issues land in is a deployment
         # decision, so the write is withheld for the same reason cutting and
         # ratifying are. The read is offered: an agent confirming a project is
@@ -3583,3 +3588,85 @@ def test_rolling_back_is_not_offered_to_an_agent(store, prompts):
     _, payload = call(store, prompts, "GET", "/tools")
     names = {t["name"] for t in payload["tools"]}
     assert "rollback_tickets" not in names
+
+
+def test_project_labels_land_on_every_issue(store, prompts, monkeypatch):
+    """One label on every issue is what lets a consumer admit these and
+    hand-filed issues by a single rule, instead of two code paths."""
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/labels",
+                           {"labels": ["team:cto", " team:cto ", "area:core"]})
+    assert status == 200
+    assert payload["labels"] == ["team:cto", "area:core"], "trimmed, de-duplicated"
+
+    seen = []
+
+    class Client(_Client):
+        def create_issue(self, repo, title, body, labels=()):
+            seen.append(tuple(labels))
+            return super().create_issue(repo, title, body, labels)
+
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {},
+               runs=Runs(spawn=lambda fn: fn()), client=Client())
+    assert seen, "nothing was emitted"
+    for labels in seen:
+        assert "team:cto" in labels and "area:core" in labels
+        assert any(l.startswith("kind:") for l in labels), "per-unit labels remain"
+
+
+def test_labels_are_replaced_not_merged(store, prompts):
+    seed(store, prompts)
+    call(store, prompts, "POST", "/projects/m/labels", {"labels": ["a"]})
+    _s, payload = call(store, prompts, "POST", "/projects/m/labels", {"labels": ["b"]})
+    assert payload["labels"] == ["b"]
+    _s, cleared = call(store, prompts, "POST", "/projects/m/labels", {"labels": []})
+    assert cleared["labels"] == []
+
+
+def test_a_label_github_would_reject_is_refused_once(store, prompts):
+    """Refused where it is set, not once per issue: a 422 arriving several
+    hundred writes into an emission names the unit, not the configuration
+    that actually broke it."""
+    seed(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/labels",
+                           {"labels": ["x" * 51]})
+    assert status == 400
+    assert "50 characters" in payload["error"]
+    status, payload = call(store, prompts, "POST", "/projects/m/labels",
+                           {"labels": [""]})
+    assert status == 400
+
+
+def test_labels_survive_a_manifest_round_trip(store, prompts):
+    seed(store, prompts)
+    call(store, prompts, "POST", "/projects/m/labels", {"labels": ["team:cto"]})
+    _s, payload = call(store, prompts, "GET", "/projects/m/labels")
+    assert payload["labels"] == ["team:cto"]
+
+
+def test_the_emitted_body_carries_the_repo_and_cut_it_came_from(store, prompts,
+                                                                monkeypatch):
+    """A consumer must not have to infer which repo or cut an issue belongs to
+    from where it happened to land."""
+    import json as _json
+    from mu_spec.emit import Runs
+    from mu_spec.render import MACHINE_FENCE
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    bodies = []
+
+    class Client(_Client):
+        def create_issue(self, repo, title, body, labels=()):
+            bodies.append(body)
+            return super().create_issue(repo, title, body, labels)
+
+    _emit_call(store, prompts, "POST", "/projects/m/emit", {},
+               runs=Runs(spawn=lambda fn: fn()), client=Client())
+    start = bodies[0].index(MACHINE_FENCE) + len(MACHINE_FENCE)
+    data = _json.loads(bodies[0][start:bodies[0].index("```", start)])
+    assert data["repo"] == "owner/name"
+    assert data["cut_seq"] == 1

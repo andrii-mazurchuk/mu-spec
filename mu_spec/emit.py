@@ -483,6 +483,7 @@ def emit(
     fetch: Callable[[str], dict],
     client,
     now_fn: Callable[[], float],
+    labels: "tuple[str, ...] | list[str]" = (),
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
     """Create an issue per work unit, then wire the dependencies between them.
@@ -571,7 +572,9 @@ def emit(
             tick("creating", position)
             continue
         try:
-            ticket = render(fetch(key))
+            ticket = render(
+                fetch(key), repo=repo, cut_seq=cut_seq, extra_labels=labels,
+            )
         except (ValueError, KeyError) as exc:
             # An unsound graph refuses one unit at a time. One bad unit must
             # not cost the other hundred and forty-three.

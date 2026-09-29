@@ -267,6 +267,15 @@ class Manifest:
     # dashboard -- it comes from `os.environ`, as all config in this system
     # does. `None` is normal: every project predates this field.
     repo: str | None = None
+    # Labels added to every issue this project's work units become.
+    #
+    # Per PROJECT and deliberately not per unit: which team owns a piece of
+    # work is an operating decision, and the graph is append-only, so a team
+    # recorded against a unit would outlive the arrangement that put it there.
+    # One list beside the repo is the whole feature, and a person can apply
+    # the same label by hand to an issue this unit never generated -- which is
+    # what lets a consumer have ONE admission rule rather than two paths.
+    labels: tuple[str, ...] = ()
 
     def slice_of(self, identifier: Identifier) -> str | None:
         for name, sl in self.slices.items():
@@ -329,6 +338,7 @@ class Manifest:
                     for path, ids in sorted(self.modules.items())
                 },
                 "repo": self.repo,
+                "labels": list(self.labels),
             },
             indent=2,
         )
@@ -352,6 +362,7 @@ class Manifest:
                 for path, ids in raw.get("modules", {}).items()
             },
             repo=raw.get("repo") or None,
+            labels=tuple(raw.get("labels") or ()),
         )
 
 
@@ -414,6 +425,42 @@ class ProjectStore:
         manifest.repo = normalise_repo(repo) if repo is not None else None
         self.save_manifest(project, manifest)
         return manifest.repo
+
+    def set_labels(self, project: str, labels) -> tuple[str, ...]:
+        """Replace the labels added to every issue from this project.
+
+        Replaces rather than merges, and an empty list clears: set in error
+        and set to nothing are the same operation on one field, exactly as
+        with `repo`.
+
+        Validated, because a label GitHub rejects fails the issue it was
+        attached to and not the call that set it -- which would surface as a
+        422 several hundred writes into an emission, naming the unit rather
+        than the configuration that actually broke it.
+        """
+        if labels is None:
+            cleaned: tuple[str, ...] = ()
+        elif isinstance(labels, str) or not isinstance(labels, (list, tuple)):
+            raise ValueError("'labels' must be a list of strings")
+        else:
+            seen: list[str] = []
+            for raw in labels:
+                if not isinstance(raw, str):
+                    raise ValueError("'labels' must be a list of strings")
+                text = raw.strip()
+                if not text:
+                    raise ValueError("a label cannot be empty")
+                if len(text) > 50:
+                    # GitHub's ceiling. Refused here so it is refused once,
+                    # not once per issue.
+                    raise ValueError(f"{text!r} is longer than 50 characters")
+                if text not in seen:
+                    seen.append(text)
+            cleaned = tuple(seen)
+        manifest = self.load_manifest(project)
+        manifest.labels = cleaned
+        self.save_manifest(project, manifest)
+        return manifest.labels
 
     # -- identifier allocation ----------------------------------------------
 

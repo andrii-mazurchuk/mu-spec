@@ -709,6 +709,19 @@ def _tools() -> list[dict[str, Any]]:
             ("project",),
         ),
         tool(
+            "get_labels",
+            "The labels added to every issue this project's work units become "
+            "-- on top of the per-unit ones naming the anchor, the kind and "
+            "each slice. Project-wide operating config, typically naming the "
+            "team a consumer admits work for, and the reason a consumer can "
+            "have one admission rule covering both generated issues and ones "
+            "a person filed by hand.",
+            "GET",
+            "/projects/{project}/labels",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
             "get_repo",
             "The repository this project's work units become tickets in, as "
             "`owner/name`. `null` means none is configured, which is a normal "
@@ -962,6 +975,29 @@ def _actions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "set_labels",
+            "description": (
+                "Replace the labels added to every issue this project emits, "
+                "or clear them with an empty list. Project-wide rather than "
+                "per-unit on purpose: which team owns a piece of work is an "
+                "operating decision, and this graph is append-only, so a team "
+                "recorded against a unit would outlive the arrangement that "
+                "put it there. Because these are ordinary labels, the same "
+                "one can be applied by hand to an issue this unit never "
+                "generated -- which is what lets a consumer have one "
+                "admission rule instead of two paths."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/labels",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "labels": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["labels"],
+            },
+        },
+        {
             "name": "emit_tickets",
             "description": (
                 "Create a GitHub issue for every work unit of the current "
@@ -1062,6 +1098,8 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     # offered, because an agent checking a project is configured before
     # anything ships is the point.
     ("POST", re.compile(rf"^/projects/{_P}/repo$"), "set_repo"),
+    ("POST", re.compile(rf"^/projects/{_P}/labels$"), "set_labels"),
+    ("GET", re.compile(rf"^/projects/{_P}/labels$"), "get_labels"),
     ("GET", re.compile(rf"^/projects/{_P}/repo$"), "get_repo"),
     # Reads.
     ("GET", re.compile(r"^/projects$"), "list_projects"),
@@ -1405,6 +1443,12 @@ def handle(
             return 200, JSON, json.dumps(
                 service.get_emission(store, project, runs)
             )
+
+        if name == "set_labels":
+            return 200, JSON, json.dumps(service.set_labels(store, project, body))
+
+        if name == "get_labels":
+            return 200, JSON, json.dumps(service.get_labels(store, project))
 
         if name == "get_repo":
             return 200, JSON, json.dumps(service.get_repo(store, project))

@@ -29,6 +29,7 @@ so whoever creates the issues is the one that must notice `BODY_LIMIT`.
 from __future__ import annotations
 
 import dataclasses
+import json
 
 # GitHub allows 256. A title is a line in a list, not a manifest, and a unit
 # writing nine files does not earn nine paths in it.
@@ -48,6 +49,13 @@ TEST = "test"
 # a repository this unit does not own, and a bare `S·01` is the sort of thing
 # another tool invents too.
 LABEL_NAMESPACE = "mu-spec"
+
+# The heading and fence a machine reads. Named constants because a consumer's
+# path-guard matches on them: renaming a heading is then a change to a value
+# with a comment saying what it breaks, rather than an edit to a string
+# literal in the middle of prose.
+MACHINE_HEADING = "## Machine-readable"
+MACHINE_FENCE = "```json"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,6 +123,40 @@ def _labels(unit: dict) -> tuple[str, ...]:
     return tuple(labels)
 
 
+def _machine(
+    payload: dict, unit: dict, write_set: list[str],
+    repo: str | None, cut_seq: int | None,
+) -> dict:
+    """What a consumer reads instead of the markdown.
+
+    `write_set` is the authoritative list of paths this unit may modify, and
+    it is the ONLY name for it here. The payload also calls it
+    `audit.editable_paths`; the two are the same list and always have been, so
+    carrying both would invite a consumer to wonder which wins.
+
+    `file_scope` carries paths and entry identifiers only, never the other
+    contracts' bodies -- those are in the markdown, in full, because an agent
+    has to read them. A machine deciding what a unit may touch does not.
+    """
+    scope = {
+        path: [other.get("id") for other in others]
+        for path, others in (payload.get("file_scope") or {}).items()
+        if others
+    }
+    return {
+        "key": unit["key"],
+        "anchor": unit.get("anchor"),
+        "kind": TEST if unit["key"].endswith(":T") else IMPLEMENTATION,
+        "repo": repo,
+        "cut_seq": cut_seq,
+        "slices": list(unit.get("slices") or ()),
+        "write_set": write_set,
+        "blocked_by": list(payload.get("follows") or ()),
+        "mutex": list(payload.get("overlap") or ()),
+        "file_scope": scope,
+    }
+
+
 def _entry_line(entry: dict) -> str:
     return f"- `{entry.get('id')}` — {entry.get('title', '')}"
 
@@ -129,13 +171,25 @@ def _bullets(lines) -> str:
     return "\n".join(lines)
 
 
-def render(payload: dict) -> Ticket:
+def render(
+    payload: dict,
+    *,
+    repo: str | None = None,
+    cut_seq: int | None = None,
+    extra_labels: "tuple[str, ...] | list[str]" = (),
+) -> Ticket:
     """One work unit as a ticket.
 
     `payload` is what `get_work_unit` returns. An unissued payload is refused
     rather than rendered: it carries `reason` where a contract should be, and a
     ticket whose contract section is an error message is the kind of thing
     nobody notices until an agent tries to build from it.
+
+    `repo`, `cut_seq` and `extra_labels` are the three things a ticket cannot
+    derive from its own payload -- they belong to the project and the emission,
+    not to the unit -- so they are passed in rather than looked up. That keeps
+    this a pure function of its arguments, which is what lets a ticket be read
+    and argued about before any issue exists.
     """
     if not payload.get("issued"):
         raise ValueError(
@@ -250,10 +304,23 @@ def render(payload: dict) -> Ticket:
             _bullets(f"- `{identifier}`" for identifier in payload["tests_pending"])
         )
 
+    # Last, deliberately. The first screen belongs to the contract and the
+    # write set -- an agent that reads only that far must still know its
+    # scope -- and a machine finds a fenced block wherever it sits.
+    out.append(MACHINE_HEADING)
+    out.append(
+        "The same facts as above, for a consumer that should not parse prose. "
+        "A heading can be reworded; these field names are a contract."
+    )
+    out.append(MACHINE_FENCE + "\n" + json.dumps(
+        _machine(payload, unit, write_set, repo, cut_seq), indent=2,
+        ensure_ascii=False,
+    ) + "\n```")
+
     return Ticket(
         key=unit["key"],
         title=_title(unit["key"], write_set),
         body="\n\n".join(part for part in out if str(part).strip()),
-        labels=_labels(unit),
+        labels=_labels(unit) + tuple(extra_labels),
         blocked_by=tuple(payload.get("follows") or ()),
     )
