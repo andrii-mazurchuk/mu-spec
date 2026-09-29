@@ -90,7 +90,7 @@ Enforced, not documented. Violating one is a hard error, not a warning.
 ## Two settled decisions
 
 - **No vector search, no embeddings.** Retrieval is graph traversal:
-  deterministic, cheap, explainable. "I loaded `A·14` because `B·22` derives
+  deterministic, cheap, explainable. "I loaded `A-14` because `B-22` derives
   from it" is auditable; "the retriever ranked it 0.83" is not. This is why
   the unit has zero runtime dependencies.
 - **History is never loaded by default.** It exists for reconciliation and

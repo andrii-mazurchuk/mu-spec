@@ -23,7 +23,7 @@ from mu_spec.identifiers import ALL_LAYERS, InvalidIdentifier, parse, sort_key
 from mu_spec.storage import Manifest, ProjectStore, Slice
 from mu_spec.units import project
 
-ARCH = parse("A·01")
+ARCH = parse("A-01")
 
 
 def _spec(ident: str, depends_on: str = "") -> Entry:
@@ -69,8 +69,8 @@ def _seeded(tmp_path) -> ProjectStore:
     store = ProjectStore(tmp_path)
     store.create_project("p")
     store.append("p", [Entry(id=ARCH, title="arch")], slice_name="billing")
-    store.append("p", [_spec("S·01")], slice_name="billing")
-    store.append("p", [_test("T·01", "S·01", purpose="the empty cart case")])
+    store.append("p", [_spec("S-01")], slice_name="billing")
+    store.append("p", [_test("T-01", "S-01", purpose="the empty cart case")])
     return store
 
 
@@ -81,9 +81,9 @@ def test_a_test_identifier_parses_and_sorts_last():
     """T is a layer, so it parses like any other -- and it sits past spec, so
     a spine reads the chain in order and then the scenarios."""
     assert "T" in ALL_LAYERS
-    assert str(parse("T·07")) == "T·07"
+    assert str(parse("T-07")) == "T-07"
     ordered = sorted(
-        (parse(i) for i in ("T·01", "S·01", "I·01", "B·01", "A·01")), key=sort_key
+        (parse(i) for i in ("T-01", "S-01", "I-01", "B-01", "A-01")), key=sort_key
     )
     assert [i.layer for i in ordered] == ["I", "B", "A", "S", "T"]
 
@@ -93,28 +93,28 @@ def test_a_test_is_not_part_of_the_derivation_chain():
     would stop being the bottom of it and every untested spec entry would be
     reported UNSERVED -- a completeness finding about propagation, which is a
     different question with a different remedy."""
-    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    graph = _graph(_spec("S-01"), _test("T-01", "S-01"))
     # A*01 is a fixture root deriving from nothing, so it is the one expected
     # finding; the point is that neither S*01 nor T*01 contributes another.
-    assert _kinds(admission_gates(graph)) == [(ORPHAN, "A·01")]
+    assert _kinds(admission_gates(graph)) == [(ORPHAN, "A-01")]
 
-    bare = _graph(_spec("S·01"))
-    assert (UNSERVED, "S·01") not in _kinds(admission_gates(bare))
-    assert (UNTESTED, "S·01") in _kinds(admission_gates(bare))
+    bare = _graph(_spec("S-01"))
+    assert (UNSERVED, "S-01") not in _kinds(admission_gates(bare))
+    assert (UNTESTED, "S-01") in _kinds(admission_gates(bare))
 
 
 def test_a_test_is_never_reported_unserved():
     """Nothing derives from a test, ever. Asking the completeness question of
     one would report every scenario in the project, forever."""
-    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
-    assert (UNSERVED, "T·01") not in _kinds(admission_gates(graph))
+    graph = _graph(_spec("S-01"), _test("T-01", "S-01"))
+    assert (UNSERVED, "T-01") not in _kinds(admission_gates(graph))
 
 
 def test_no_layer_sits_past_a_test():
     """Which is why nothing can legally derive from one. The arithmetic gives
     it for free -- there is no rule asserting it anywhere."""
     with pytest.raises(InvalidIdentifier):
-        parse("U·01")
+        parse("U-01")
 
 
 # -- exactly one parent ------------------------------------------------------
@@ -124,16 +124,16 @@ def test_a_test_derives_from_exactly_one_spec_entry():
     """One scenario, one contract. A test citing two cannot say which one it
     falsifies when it fails, and the ordering rule would drag an unrelated
     implementation unit behind it for a scenario that never judged it."""
-    two = _graph(_spec("S·01"), _spec("S·02"), _test("T·01", "S·01 S·02"))
-    assert (ORPHAN, "T·01") in _kinds(admission_gates(two))
+    two = _graph(_spec("S-01"), _spec("S-02"), _test("T-01", "S-01 S-02"))
+    assert (ORPHAN, "T-01") in _kinds(admission_gates(two))
 
-    none = _graph(_spec("S·01"), _test("T·01", ""))
-    assert (ORPHAN, "T·01") in _kinds(admission_gates(none))
+    none = _graph(_spec("S-01"), _test("T-01", ""))
+    assert (ORPHAN, "T-01") in _kinds(admission_gates(none))
 
 
 def test_a_test_may_not_derive_from_the_layers_above_spec():
-    graph = _graph(_spec("S·01"), _test("T·01", "A·01"))
-    assert (ORPHAN, "T·01") in _kinds(admission_gates(graph))
+    graph = _graph(_spec("S-01"), _test("T-01", "A-01"))
+    assert (ORPHAN, "T-01") in _kinds(admission_gates(graph))
 
 
 def test_a_test_carries_no_horizontal_edge():
@@ -143,17 +143,17 @@ def test_a_test_carries_no_horizontal_edge():
     graph = Graph(
         [
             Entry(id=ARCH, title="arch"),
-            _spec("S·01"),
+            _spec("S-01"),
             Entry(
-                id=parse("T·01"),
-                derives_from=(parse("S·01"),),
-                depends_on=(parse("T·02"),),
+                id=parse("T-01"),
+                derives_from=(parse("S-01"),),
+                depends_on=(parse("T-02"),),
                 title="t1",
             ),
-            _test("T·02", "S·01"),
+            _test("T-02", "S-01"),
         ]
     )
-    assert ("bad_dependency", "T·01") in _kinds(admission_gates(graph))
+    assert ("bad_dependency", "T-01") in _kinds(admission_gates(graph))
 
 
 # -- coverage reports, never gates -------------------------------------------
@@ -163,8 +163,8 @@ def test_an_untested_spec_entry_is_reported_and_never_blocks():
     """Tests are written after the spec and before the code, so every spec
     entry is untested for the window between those two events. A gate here
     would refuse the project during the ordinary course of writing it."""
-    projection = project(_manifest({"a.py": "S·01"}), _graph(_spec("S·01")))
-    assert projection.untested == (parse("S·01"),)
+    projection = project(_manifest({"a.py": "S-01"}), _graph(_spec("S-01")))
+    assert projection.untested == (parse("S-01"),)
     assert len(projection.units) == 1
 
 
@@ -172,10 +172,10 @@ def test_a_test_with_no_module_is_reported_and_orders_nothing():
     """Specified but not built is not yet expected to pass. Ordering the
     implementation behind it would block work on a file nobody has written."""
     projection = project(
-        _manifest({"a.py": "S·01"}),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _manifest({"a.py": "S-01"}),
+        _graph(_spec("S-01"), _test("T-01", "S-01")),
     )
-    assert projection.unimplemented_tests == (parse("T·01"),)
+    assert projection.unimplemented_tests == (parse("T-01"),)
     assert projection.untested == ()
     impl = projection.units[0]
     assert projection.edges[impl.key] == ()
@@ -189,8 +189,8 @@ def test_a_test_module_and_an_implementation_module_are_different_units():
     entry, so they fall into different units -- different write sets,
     different branches, different agents. A property of the grouping."""
     projection = project(
-        _manifest({"a.py": "S·01", "test_a.py": "T·01"}),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _manifest({"a.py": "S-01", "test_a.py": "T-01"}),
+        _graph(_spec("S-01"), _test("T-01", "S-01")),
     )
     assert len(projection.units) == 2
     impl = next(u for u in projection.units if not u.tests)
@@ -202,8 +202,8 @@ def test_a_test_module_and_an_implementation_module_are_different_units():
 
 def test_the_implementation_unit_follows_the_test_unit():
     projection = project(
-        _manifest({"a.py": "S·01", "test_a.py": "T·01"}),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _manifest({"a.py": "S-01", "test_a.py": "T-01"}),
+        _graph(_spec("S-01"), _test("T-01", "S-01")),
     )
     impl = next(u for u in projection.units if not u.tests)
     tests = next(u for u in projection.units if u.tests)
@@ -223,28 +223,28 @@ def test_a_test_unit_is_shown_just_before_the_work_it_precedes():
     projection = project(
         _manifest(
             {
-                "a.py": "S·01",
-                "b.py": "S·02",
-                "c.py": "S·03",
-                "test_c.py": "T·01",
+                "a.py": "S-01",
+                "b.py": "S-02",
+                "c.py": "S-03",
+                "test_c.py": "T-01",
             }
         ),
         _graph(
-            _spec("S·01"),
-            _spec("S·02", depends_on="S·01"),
-            _spec("S·03", depends_on="S·02"),
-            _test("T·01", "S·03"),
+            _spec("S-01"),
+            _spec("S-02", depends_on="S-01"),
+            _spec("S-03", depends_on="S-02"),
+            _test("T-01", "S-03"),
         ),
     )
 
     assert projection.schedule.waves == (
-        ("S·01",),
-        ("S·02", "S·03:T"),
-        ("S·03",),
+        ("S-01",),
+        ("S-02", "S-03-T"),
+        ("S-03",),
     )
     # The contract is unchanged: it still waits on nothing.
-    assert projection.edges["S·03:T"] == ()
-    assert projection.edges["S·03"] == ("S·02", "S·03:T")
+    assert projection.edges["S-03-T"] == ()
+    assert projection.edges["S-03"] == ("S-02", "S-03-T")
     assert projection.schedule.unschedulable == ()
 
 
@@ -255,40 +255,40 @@ def test_a_shared_fixture_fans_out_and_merges_nothing():
     what anchoring at the entry rather than the module buys."""
     projection = project(
         _manifest(
-            {"a.py": "S·01", "b.py": "S·02", "test_shared.py": "T·01 T·02"}
+            {"a.py": "S-01", "b.py": "S-02", "test_shared.py": "T-01 T-02"}
         ),
         _graph(
-            _spec("S·01"),
-            _spec("S·02"),
-            _test("T·01", "S·01"),
-            _test("T·02", "S·02"),
+            _spec("S-01"),
+            _spec("S-02"),
+            _test("T-01", "S-01"),
+            _test("T-02", "S-02"),
         ),
     )
     by_entry = projection.unit_of()
-    a = by_entry[parse("S·01")]
-    b = by_entry[parse("S·02")]
+    a = by_entry[parse("S-01")]
+    b = by_entry[parse("S-02")]
 
     assert a != b, "one test module must not merge two implementation units"
     # The fixture lands in BOTH test units, anchored to the spec entry each
     # scenario judges. It is a member of two write sets rather than a bridge
     # between them, which is what stops it gluing anything together.
-    assert by_entry[parse("T·01")] == "S·01:T"
-    assert by_entry[parse("T·02")] == "S·02:T"
-    assert projection.edges[a] == ("S·01:T",)
-    assert projection.edges[b] == ("S·02:T",)
-    assert projection.overlap["S·01:T"] == ("S·02:T",)
+    assert by_entry[parse("T-01")] == "S-01-T"
+    assert by_entry[parse("T-02")] == "S-02-T"
+    assert projection.edges[a] == ("S-01-T",)
+    assert projection.edges[b] == ("S-02-T",)
+    assert projection.overlap["S-01-T"] == ("S-02-T",)
 
 
 def test_a_test_unit_nothing_follows_is_reported():
     """Ordinary while tests run ahead of code. Worth seeing anyway: a test
     unit that stays unfollowed judges a contract nobody is building."""
     projection = project(
-        _manifest({"test_a.py": "T·01"}),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _manifest({"test_a.py": "T-01"}),
+        _graph(_spec("S-01"), _test("T-01", "S-01")),
     )
     tests = next(u for u in projection.units if u.tests)
     assert projection.unfollowed_tests == (tests.key,)
-    assert projection.unimplemented == (parse("S·01"),)
+    assert projection.unimplemented == (parse("S-01"),)
 
 
 def test_a_test_unit_reports_the_slice_it_tests():
@@ -296,9 +296,9 @@ def test_a_test_unit_reports_the_slice_it_tests():
     spec entries and the tests follow without anything being rewritten."""
     projection = project(
         _manifest(
-            {"a.py": "S·01", "test_a.py": "T·01"}, slices={"billing": "S·01"}
+            {"a.py": "S-01", "test_a.py": "T-01"}, slices={"billing": "S-01"}
         ),
-        _graph(_spec("S·01"), _test("T·01", "S·01")),
+        _graph(_spec("S-01"), _test("T-01", "S-01")),
     )
     tests = next(u for u in projection.units if u.tests)
     assert tests.slices == ("billing",)
@@ -313,16 +313,16 @@ def test_a_module_may_not_claim_spec_and_test_entries_together(tmp_path):
     'the implementer may never write the tests' quietly stops being
     structural and becomes an honour-system rule."""
     store = _seeded(tmp_path)
-    store.set_module("p", "a.py", ["S·01"])
-    store.set_module("p", "test_a.py", ["T·01"])
+    store.set_module("p", "a.py", ["S-01"])
+    store.set_module("p", "test_a.py", ["T-01"])
     with pytest.raises(ValueError, match="both spec and test"):
-        store.set_module("p", "mixed.py", ["S·01", "T·01"])
+        store.set_module("p", "mixed.py", ["S-01", "T-01"])
 
 
 def test_a_module_may_not_claim_a_layer_above_spec(tmp_path):
     store = _seeded(tmp_path)
     with pytest.raises(ValueError, match="architecture"):
-        store.set_module("p", "a.py", ["A·01"])
+        store.set_module("p", "a.py", ["A-01"])
 
 
 # -- storage -----------------------------------------------------------------
@@ -335,11 +335,11 @@ def test_tests_are_stored_flat_and_join_no_slice(tmp_path):
 
     assert (tmp_path / "p" / "tests.jsonl").exists()
     manifest = store.load_manifest("p")
-    assert parse("T·01") not in manifest.slices["billing"].members
+    assert parse("T-01") not in manifest.slices["billing"].members
 
-    reloaded = store.load_graph("p").get(parse("T·01"))
+    reloaded = store.load_graph("p").get(parse("T-01"))
     assert reloaded.purpose == "the empty cart case"
-    assert reloaded.derives_from == (parse("S·01"),)
+    assert reloaded.derives_from == (parse("S-01"),)
 
 
 def test_a_project_without_tests_loads_unchanged(tmp_path):
@@ -350,7 +350,7 @@ def test_a_project_without_tests_loads_unchanged(tmp_path):
     (tmp_path / "p" / "tests.jsonl").unlink()
     store.append("p", [Entry(id=ARCH, title="arch")], slice_name="billing")
 
-    assert [str(e.id) for e in store.load_graph("p").entries()] == ["A·01"]
+    assert [str(e.id) for e in store.load_graph("p").entries()] == ["A-01"]
 
 
 # -- the module map's projections --------------------------------------------
@@ -363,10 +363,10 @@ def test_a_module_reaches_its_slices_most_represented_first(tmp_path):
     from mu_spec.units import module_slices
 
     manifest = _manifest(
-        {"wide.py": "S·01 S·02 S·03"},
-        slices={"capture": "S·01", "platform": "S·02 S·03"},
+        {"wide.py": "S-01 S-02 S-03"},
+        slices={"capture": "S-01", "platform": "S-02 S-03"},
     )
-    graph = _graph(_spec("S·01"), _spec("S·02"), _spec("S·03"))
+    graph = _graph(_spec("S-01"), _spec("S-02"), _spec("S-03"))
     assert module_slices(manifest, graph, "wide.py") == ("platform", "capture")
 
 
@@ -378,10 +378,10 @@ def test_a_tie_between_slices_stays_a_tie(tmp_path):
     from mu_spec.units import module_slices
 
     manifest = _manifest(
-        {"even.py": "S·01 S·02"},
-        slices={"capture": "S·01", "platform": "S·02"},
+        {"even.py": "S-01 S-02"},
+        slices={"capture": "S-01", "platform": "S-02"},
     )
-    graph = _graph(_spec("S·01"), _spec("S·02"))
+    graph = _graph(_spec("S-01"), _spec("S-02"))
     assert module_slices(manifest, graph, "even.py") == ("capture", "platform")
 
 
@@ -392,9 +392,9 @@ def test_a_test_module_reaches_the_slice_of_what_it_judges(tmp_path):
     from mu_spec.units import module_slices
 
     manifest = _manifest(
-        {"tests/t.py": "T·01"}, slices={"capture": "S·01"}
+        {"tests/t.py": "T-01"}, slices={"capture": "S-01"}
     )
-    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    graph = _graph(_spec("S-01"), _test("T-01", "S-01"))
     assert module_slices(manifest, graph, "tests/t.py") == ("capture",)
 
 
@@ -405,8 +405,8 @@ def test_the_link_between_test_and_code_is_computed_both_ways():
     moves both directions at once because there is no second thing."""
     from mu_spec.units import covers, covered_by
 
-    manifest = _manifest({"db.py": "S·01", "tests/test_db.py": "T·01"})
-    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    manifest = _manifest({"db.py": "S-01", "tests/test_db.py": "T-01"})
+    graph = _graph(_spec("S-01"), _test("T-01", "S-01"))
 
     assert covers(manifest, graph, "tests/test_db.py") == ("db.py",)
     assert covered_by(manifest, graph, "db.py") == ("tests/test_db.py",)
@@ -418,8 +418,8 @@ def test_a_test_module_covering_nothing_is_visible_not_an_error():
     and never refused."""
     from mu_spec.units import covers
 
-    manifest = _manifest({"tests/test_db.py": "T·01"})
-    graph = _graph(_spec("S·01"), _test("T·01", "S·01"))
+    manifest = _manifest({"tests/test_db.py": "T-01"})
+    graph = _graph(_spec("S-01"), _test("T-01", "S-01"))
     assert covers(manifest, graph, "tests/test_db.py") == ()
 
 
@@ -428,12 +428,12 @@ def test_a_shared_fixture_covers_every_file_it_judges():
     from mu_spec.units import covers
 
     manifest = _manifest(
-        {"a.py": "S·01", "b.py": "S·02",
-         "tests/shared.py": "T·01 T·02"}
+        {"a.py": "S-01", "b.py": "S-02",
+         "tests/shared.py": "T-01 T-02"}
     )
     graph = _graph(
-        _spec("S·01"), _spec("S·02"),
-        _test("T·01", "S·01"), _test("T·02", "S·02"),
+        _spec("S-01"), _spec("S-02"),
+        _test("T-01", "S-01"), _test("T-02", "S-02"),
     )
     assert covers(manifest, graph, "tests/shared.py") == ("a.py", "b.py")
 
@@ -447,10 +447,10 @@ def test_a_cut_records_what_verification_looked_like(tmp_path):
     graph has moved on by the time anyone asks."""
     from mu_spec.units import append_cut, current_cut, project
 
-    manifest = _manifest({"a.py": "S·01", "tests/t.py": "T·02"})
+    manifest = _manifest({"a.py": "S-01", "tests/t.py": "T-02"})
     graph = _graph(
-        _spec("S·01"), _spec("S·02"),
-        _test("T·01", "S·01"), _test("T·02", "S·02"),
+        _spec("S-01"), _spec("S-02"),
+        _test("T-01", "S-01"), _test("T-02", "S-02"),
     )
     path = tmp_path / "units.jsonl"
     proj = project(manifest, graph)
@@ -470,14 +470,14 @@ def test_a_cut_records_an_order_it_could_not_draw(tmp_path):
     was missing at the moment work went out."""
     from mu_spec.units import append_cut, current_cut, project
 
-    manifest = _manifest({"a.py": "S·01"})
-    graph = _graph(_spec("S·01", depends_on="S·09"), _spec("S·09"))
+    manifest = _manifest({"a.py": "S-01"})
+    graph = _graph(_spec("S-01", depends_on="S-09"), _spec("S-09"))
     path = tmp_path / "units.jsonl"
     proj = project(manifest, graph)
-    assert proj.dangling == (parse("S·09"),)
+    assert proj.dangling == (parse("S-09"),)
 
     append_cut(path, proj, now_fn=lambda: 1.0)
-    assert current_cut(path).dangling == (parse("S·09"),)
+    assert current_cut(path).dangling == (parse("S-09"),)
 
 
 def test_a_cut_written_before_this_reloads_as_unsaid(tmp_path):
@@ -501,27 +501,27 @@ def test_a_cut_written_before_this_reloads_as_unsaid(tmp_path):
 def _sound(tmp_path) -> ProjectStore:
     """A whole derivation chain, so the gates pass and a unit is issuable.
 
-    `_seeded` stops at architecture, which leaves `A·01` deriving from
+    `_seeded` stops at architecture, which leaves `A-01` deriving from
     nothing -- an orphan, so the graph is unsound and every unit is refused
     before anything else can be tested.
     """
     store = ProjectStore(tmp_path)
     store.create_project("p")
-    store.append("p", [Entry(id=parse("I·01"), title="intent")])
-    store.append("p", [Entry(id=parse("B·01"), derives_from=(parse("I·01"),),
+    store.append("p", [Entry(id=parse("I-01"), title="intent")])
+    store.append("p", [Entry(id=parse("B-01"), derives_from=(parse("I-01"),),
                              title="behaviour")], slice_name="billing")
-    store.append("p", [Entry(id=ARCH, derives_from=(parse("B·01"),),
+    store.append("p", [Entry(id=ARCH, derives_from=(parse("B-01"),),
                              title="arch")], slice_name="billing")
-    store.append("p", [_spec("S·01")], slice_name="billing")
-    store.append("p", [_test("T·01", "S·01", purpose="the empty cart case")])
+    store.append("p", [_spec("S-01")], slice_name="billing")
+    store.append("p", [_test("T-01", "S-01", purpose="the empty cart case")])
     return store
 
 
 def test_a_unit_is_reachable_by_the_key_the_projection_hands_out(tmp_path):
     """`get_units` returns keys; `get_work_unit` took entry identifiers. For
-    an implementation unit the two coincide -- `S·01` is both the key and a
+    an implementation unit the two coincide -- `S-01` is both the key and a
     member -- so the asymmetry was invisible until the first TEST unit, whose
-    key `S·01:T` names no entry at all and answered "not found".
+    key `S-01-T` names no entry at all and answered "not found".
 
     Half of all units are test units (72 of 144 on `dark`), so a consumer
     iterating the projection's own keys failed on half its input -- and the
@@ -530,16 +530,16 @@ def test_a_unit_is_reachable_by_the_key_the_projection_hands_out(tmp_path):
     from mu_spec import service
 
     store = _sound(tmp_path)
-    store.set_module("p", "app/cart.py", ["S·01"])
-    store.set_module("p", "tests/test_cart.py", ["T·01"])
+    store.set_module("p", "app/cart.py", ["S-01"])
+    store.set_module("p", "tests/test_cart.py", ["T-01"])
 
-    by_entry = service.get_work_unit(store, "p", "T·01")
-    assert by_entry["unit"]["key"] == "S·01:T"
-    assert service.get_work_unit(store, "p", "S·01:T") == by_entry
+    by_entry = service.get_work_unit(store, "p", "T-01")
+    assert by_entry["unit"]["key"] == "S-01-T"
+    assert service.get_work_unit(store, "p", "S-01-T") == by_entry
 
     # The coinciding case keeps working, and still means the implementation
     # unit rather than the test one.
-    assert service.get_work_unit(store, "p", "S·01")["unit"]["key"] == "S·01"
+    assert service.get_work_unit(store, "p", "S-01")["unit"]["key"] == "S-01"
 
 
 def test_every_entry_in_a_test_unit_shares_one_ancestry(tmp_path):
@@ -548,7 +548,7 @@ def test_every_entry_in_a_test_unit_shares_one_ancestry(tmp_path):
 
     A scenario derives from exactly one spec entry, and a test unit is
     anchored on that entry, so its scenarios cannot disagree about their
-    ancestry. On `dark`'s `S·01:T` the per-entry map returned fifteen rows for
+    ancestry. On `dark`'s `S-01-T` the per-entry map returned fifteen rows for
     five distinct ancestors and the anchor's full body three times.
 
     This is the guard for the collapse. If the grain ever admits a unit whose
@@ -558,14 +558,14 @@ def test_every_entry_in_a_test_unit_shares_one_ancestry(tmp_path):
     from mu_spec import service
 
     store = _sound(tmp_path)
-    store.append("p", [_test("T·02", "S·01", purpose="a second case")])
-    store.append("p", [_test("T·03", "S·01", purpose="a third case")])
-    store.set_module("p", "app/cart.py", ["S·01"])
-    store.set_module("p", "tests/test_cart.py", ["T·01", "T·02", "T·03"])
+    store.append("p", [_test("T-02", "S-01", purpose="a second case")])
+    store.append("p", [_test("T-03", "S-01", purpose="a third case")])
+    store.set_module("p", "app/cart.py", ["S-01"])
+    store.set_module("p", "tests/test_cart.py", ["T-01", "T-02", "T-03"])
 
     graph = store.load_graph("p")
     manifest = store.load_manifest("p")
-    unit = project(manifest, graph).by_key()["S·01:T"]
+    unit = project(manifest, graph).by_key()["S-01-T"]
     assert len(unit.entries) == 3
 
     chains = {
@@ -573,8 +573,8 @@ def test_every_entry_in_a_test_unit_shares_one_ancestry(tmp_path):
     }
     assert len(chains) == 1, f"scenarios disagree about ancestry: {chains}"
 
-    payload = service.get_work_unit(store, "p", "S·01:T")
+    payload = service.get_work_unit(store, "p", "S-01-T")
     assert isinstance(payload["justification"], list)
     assert [e["id"] for e in payload["justification"]] == list(chains.pop())
     # The anchor appears once, with its body, not once per scenario.
-    assert [e["id"] for e in payload["justification"]].count("S·01") == 1
+    assert [e["id"] for e in payload["justification"]].count("S-01") == 1

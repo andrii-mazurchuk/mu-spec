@@ -34,11 +34,11 @@ def test_a_well_formed_graph_produces_no_findings():
     finding like any other."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("A·01", "B·01"),
-            _entry("S·01", "A·01"),
-            _entry("T·01", "S·01"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("A-01", "B-01"),
+            _entry("S-01", "A-01"),
+            _entry("T-01", "S-01"),
         ]
     )
     assert admission_gates(graph) == []
@@ -46,10 +46,10 @@ def test_a_well_formed_graph_produces_no_findings():
 
 def test_intent_entries_are_never_orphans():
     """Intent is the top layer -- it derives from nothing by definition, and
-    flagging it would make every graph permanently red. B·01 is reported
+    flagging it would make every graph permanently red. B-01 is reported
     unserved here, which is a completeness finding, not a soundness one:
     nothing has been derived from it yet."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01")])
     assert [f for f in admission_gates(graph) if f.kind == ORPHAN] == []
 
 
@@ -58,11 +58,11 @@ def test_spec_entries_are_never_unserved():
     is tracked by module backlinks rather than by entries here."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("A·01", "B·01"),
-            _entry("S·01", "A·01"),
-            _entry("T·01", "S·01"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("A-01", "B-01"),
+            _entry("S-01", "A-01"),
+            _entry("T-01", "S-01"),
         ]
     )
     assert admission_gates(graph) == []
@@ -72,21 +72,21 @@ def test_spec_entries_are_never_unserved():
 
 
 def test_an_entry_with_no_derives_from_is_an_orphan():
-    graph = Graph([_entry("I·01"), _entry("B·01")])
+    graph = Graph([_entry("I-01"), _entry("B-01")])
     assert _kinds(admission_gates(graph)) == [
-        (ORPHAN, "B·01"),
-        (UNSERVED, "B·01"),
-        (UNSERVED, "I·01"),
+        (ORPHAN, "B-01"),
+        (UNSERVED, "B-01"),
+        (UNSERVED, "I-01"),
     ]
 
 
 def test_an_entry_deriving_from_a_missing_identifier_is_an_orphan():
     """A dangling edge is exactly as broken as no edge at all, and much
     easier to miss by eye."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·99")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-99")])
     findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
-    assert [str(f.id) for f in findings] == ["B·01"]
-    assert "I·99" in findings[0].detail
+    assert [str(f.id) for f in findings] == ["B-01"]
+    assert "I-99" in findings[0].detail
 
 
 def test_an_entry_deriving_downward_is_an_orphan():
@@ -94,30 +94,30 @@ def test_an_entry_deriving_downward_is_an_orphan():
     derive from a spec entry has the pipeline upside down."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("A·01", "S·01"),
-            _entry("S·01", "A·01"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("A-01", "S-01"),
+            _entry("S-01", "A-01"),
         ]
     )
     findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
-    assert [str(f.id) for f in findings] == ["A·01"]
+    assert [str(f.id) for f in findings] == ["A-01"]
     assert "directly above" in findings[0].detail
 
 
 def test_an_entry_deriving_sideways_within_its_own_layer_is_an_orphan():
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _entry("B·02", "B·01")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01"), _entry("B-02", "B-01")])
     findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
-    assert [str(f.id) for f in findings] == ["B·02"]
+    assert [str(f.id) for f in findings] == ["B-02"]
 
 
 def test_one_valid_parent_is_enough_but_a_bad_edge_is_still_reported():
     """An entry with a good parent and a dangling one is not an orphan -- it
     traces to something above -- but the dangling edge is still a defect
     someone has to fix, so it must not vanish."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01 I·99")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01 I-99")])
     findings = [f for f in admission_gates(graph) if f.kind == ORPHAN]
-    assert [str(f.id) for f in findings] == ["B·01"]
+    assert [str(f.id) for f in findings] == ["B-01"]
 
 
 # -- unserved: something above with nothing below ---------------------------
@@ -125,22 +125,22 @@ def test_one_valid_parent_is_enough_but_a_bad_edge_is_still_reported():
 
 def test_an_entry_nothing_derives_from_is_unserved():
     """A requirement no lower layer serves is a requirement nobody built."""
-    graph = Graph([_entry("I·01"), _entry("I·02"), _entry("B·01", "I·01")])
+    graph = Graph([_entry("I-01"), _entry("I-02"), _entry("B-01", "I-01")])
     findings = [f for f in admission_gates(graph) if f.kind == UNSERVED]
-    # I·02 has nothing under it at all; B·01 has not been carried down to
+    # I-02 has nothing under it at all; B-01 has not been carried down to
     # architecture yet. Both are real outstanding work.
-    assert [str(f.id) for f in findings] == ["I·02", "B·01"]
+    assert [str(f.id) for f in findings] == ["I-02", "B-01"]
 
 
 def test_serving_must_come_from_the_adjacent_layer():
     """A spec entry cannot serve intent directly. The edge is illegal, so the
     spec entry is an orphan and the intent entry is still unserved -- there is
     no way to satisfy a requirement by jumping the layers that explain how."""
-    graph = Graph([_entry("I·01"), _entry("S·01", "I·01")])
+    graph = Graph([_entry("I-01"), _entry("S-01", "I-01")])
     assert _kinds(admission_gates(graph)) == [
-        (ORPHAN, "S·01"),
-        (UNSERVED, "I·01"),
-        (UNTESTED, "S·01"),
+        (ORPHAN, "S-01"),
+        (UNSERVED, "I-01"),
+        (UNTESTED, "S-01"),
     ]
 
 
@@ -152,14 +152,14 @@ def test_a_superseded_entry_is_not_reported_as_unserved():
     permanently dirty the gate."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("B·02", "I·01", supersedes=parse("B·01")),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("B-02", "I-01", supersedes=parse("B-01")),
         ]
     )
     unserved_ids = [str(f.id) for f in admission_gates(graph) if f.kind == UNSERVED]
-    assert "B·01" not in unserved_ids
-    assert unserved_ids == ["B·02"]
+    assert "B-01" not in unserved_ids
+    assert unserved_ids == ["B-02"]
 
 
 def test_deriving_from_a_superseded_entry_is_stranded_not_orphaned():
@@ -174,16 +174,16 @@ def test_deriving_from_a_superseded_entry_is_stranded_not_orphaned():
     the complaint."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("B·02", "I·01", supersedes=parse("B·01")),
-            _entry("A·01", "B·01"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("B-02", "I-01", supersedes=parse("B-01")),
+            _entry("A-01", "B-01"),
         ]
     )
     findings = admission_gates(graph)
     stranded = [f for f in findings if f.kind == STRANDED]
-    assert [str(f.id) for f in stranded] == ["A·01"]
-    assert "B·02" in stranded[0].detail, "the successor is not named"
+    assert [str(f.id) for f in stranded] == ["A-01"]
+    assert "B-02" in stranded[0].detail, "the successor is not named"
     assert not [f for f in findings if f.kind == ORPHAN]
 
 
@@ -194,18 +194,18 @@ def test_a_real_defect_alongside_a_retirement_outranks_it():
     instead of the to-be-fixed one."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _entry("B·02", "I·01", supersedes=parse("B·01")),
-            _entry("A·01", "B·01 B·99"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _entry("B-02", "I-01", supersedes=parse("B-01")),
+            _entry("A-01", "B-01 B-99"),
         ]
     )
     findings = admission_gates(graph)
     kinds = [f.kind for f in findings
-             if f.id == parse("A·01") and f.kind in (ORPHAN, STRANDED)]
+             if f.id == parse("A-01") and f.kind in (ORPHAN, STRANDED)]
     assert kinds == [ORPHAN]
-    detail = next(f for f in findings if f.id == parse("A·01")).detail
-    assert "B·99" in detail and "superseded" in detail, (
+    detail = next(f for f in findings if f.id == parse("A-01")).detail
+    assert "B-99" in detail and "superseded" in detail, (
         "both objections must survive into the one finding"
     )
 
@@ -216,18 +216,18 @@ def test_a_real_defect_alongside_a_retirement_outranks_it():
 def test_findings_are_sorted_in_spine_order():
     """The human sees only failures, so the list is the entire report. Spine
     order means it reads top-down like the graph does."""
-    graph = Graph([_entry("S·01"), _entry("B·01")])
+    graph = Graph([_entry("S-01"), _entry("B-01")])
     assert _kinds(admission_gates(graph)) == [
-        (ORPHAN, "B·01"),
-        (ORPHAN, "S·01"),
-        (UNSERVED, "B·01"),
-        (UNTESTED, "S·01"),
+        (ORPHAN, "B-01"),
+        (ORPHAN, "S-01"),
+        (UNSERVED, "B-01"),
+        (UNTESTED, "S-01"),
     ]
     assert [str(f.id) for f in admission_gates(graph)] == [
-        "B·01",
-        "B·01",
-        "S·01",
-        "S·01",
+        "B-01",
+        "B-01",
+        "S-01",
+        "S-01",
     ]
 
 
@@ -246,14 +246,14 @@ def _dep(ident: str, derives_from: str = "", depends_on: str = "") -> Entry:
 def test_a_valid_same_layer_dependency_is_clean():
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _dep("A·01", "B·01"),
-            _dep("A·02", "B·01", depends_on="A·01"),
-            _entry("S·01", "A·01"),
-            _entry("S·02", "A·02"),
-            _entry("T·01", "S·01"),
-            _entry("T·02", "S·02"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _dep("A-01", "B-01"),
+            _dep("A-02", "B-01", depends_on="A-01"),
+            _entry("S-01", "A-01"),
+            _entry("S-02", "A-02"),
+            _entry("T-01", "S-01"),
+            _entry("T-02", "S-02"),
         ]
     )
     assert admission_gates(graph) == []
@@ -263,14 +263,14 @@ def test_depending_on_another_layer_is_a_bad_dependency():
     """depends_on is horizontal by definition. An architecture entry that
     depends on a behaviour entry is claiming a derivation, and it should have
     said so with derives_from where the orphan gate can see it."""
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "B·01")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01"), _dep("A-01", "B-01", "B-01")])
     findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
-    assert [str(f.id) for f in findings] == ["A·01"]
+    assert [str(f.id) for f in findings] == ["A-01"]
     assert "same layer" in findings[0].detail
 
 
 def test_depending_on_something_that_does_not_exist_is_a_bad_dependency():
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "A·99")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01"), _dep("A-01", "B-01", "A-99")])
     findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
     assert "does not exist" in findings[0].detail
 
@@ -280,20 +280,20 @@ def test_depending_on_a_superseded_entry_is_a_bad_dependency():
     horizontal edge exists to make visible."""
     graph = Graph(
         [
-            _entry("I·01"),
-            _entry("B·01", "I·01"),
-            _dep("A·01", "B·01"),
-            _dep("A·02", "B·01", depends_on="A·01"),
-            _dep("A·03", "B·01"),
+            _entry("I-01"),
+            _entry("B-01", "I-01"),
+            _dep("A-01", "B-01"),
+            _dep("A-02", "B-01", depends_on="A-01"),
+            _dep("A-03", "B-01"),
         ]
-        + [Entry(id=parse("A·04"), derives_from=(parse("B·01"),), title="x", supersedes=parse("A·01"))]
+        + [Entry(id=parse("A-04"), derives_from=(parse("B-01"),), title="x", supersedes=parse("A-01"))]
     )
     findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
-    assert [str(f.id) for f in findings] == ["A·02"]
+    assert [str(f.id) for f in findings] == ["A-02"]
     assert "superseded" in findings[0].detail
 
 
 def test_an_entry_depending_on_itself_is_a_bad_dependency():
-    graph = Graph([_entry("I·01"), _entry("B·01", "I·01"), _dep("A·01", "B·01", "A·01")])
+    graph = Graph([_entry("I-01"), _entry("B-01", "I-01"), _dep("A-01", "B-01", "A-01")])
     findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
     assert "itself" in findings[0].detail

@@ -20,10 +20,10 @@ from mu_spec.github import GitHubError, Issue
 
 REPO = "andrii-mazurchuk/dark"
 
-# S·01 follows its own test unit; S·02 follows S·01. So the order is
-# S·01:T, S·01, S·02 and the wiring is two edges.
-ORDER = ["S·01:T", "S·01", "S·02"]
-EDGES = {"S·01": ("S·01:T",), "S·02": ("S·01",)}
+# S-01 follows its own test unit; S-02 follows S-01. So the order is
+# S-01-T, S-01, S-02 and the wiring is two edges.
+ORDER = ["S-01-T", "S-01", "S-02"]
+EDGES = {"S-01": ("S-01-T",), "S-02": ("S-01",)}
 
 
 def payload(key: str, follows=()) -> dict:
@@ -108,8 +108,8 @@ def test_issues_are_created_in_dependency_order(tmp_path):
 
 
 def test_a_dependency_is_wired_with_the_blockers_id_and_the_blocked_number(tmp_path):
-    """The trap the client exists to avoid, checked end to end: S·01 is issue
-    number 2 and is blocked by S·01:T, which is issue number 1 with id 1001."""
+    """The trap the client exists to avoid, checked end to end: S-01 is issue
+    number 2 and is blocked by S-01-T, which is issue number 1 with id 1001."""
     _, client, _ = run(tmp_path)
     assert (REPO, 2, 1001) in client.wired
 
@@ -119,7 +119,7 @@ def test_the_result_names_every_issue_it_made(tmp_path):
     pass/fail list, not inferred from a count."""
     result, _, _ = run(tmp_path)
     first = result["created"][0]
-    assert first["key"] == "S·01:T"
+    assert first["key"] == "S-01-T"
     assert first["number"] == 1
     assert first["url"].endswith("/issues/1")
     assert first["title"]
@@ -138,7 +138,7 @@ def test_the_emission_is_recorded_so_the_issues_can_be_found_again(tmp_path):
     assert len(stored) == 1
     assert stored[0].cut_seq == 2
     assert stored[0].repo == REPO
-    assert stored[0].issues["S·01"]["number"] == 2
+    assert stored[0].issues["S-01"]["number"] == 2
 
 
 def test_running_again_creates_nothing_and_says_why(tmp_path):
@@ -155,16 +155,16 @@ def test_running_again_creates_nothing_and_says_why(tmp_path):
 
 
 def test_a_partial_run_is_finished_by_running_again(tmp_path):
-    """Pass one fails for S·02 only. The re-run creates S·02 and nothing else,
+    """Pass one fails for S-02 only. The re-run creates S-02 and nothing else,
     and wires the edge that could not be wired the first time."""
-    first, client, log = run(tmp_path, client=FakeClient(fail_on={"S·02"}))
-    assert [f["key"] for f in first["failed"]] == ["S·02"]
+    first, client, log = run(tmp_path, client=FakeClient(fail_on={"S-02"}))
+    assert [f["key"] for f in first["failed"]] == ["S-02"]
     assert len(client.created) == 2
 
     second, client2, _ = run(tmp_path)
-    assert [c["key"] for c in second["created"]] == ["S·02"]
-    assert [s["key"] for s in second["skipped"]] == ["S·01:T", "S·01"]
-    assert (REPO, 1, 1002) in client2.wired, "S·02 blocked by S·01"
+    assert [c["key"] for c in second["created"]] == ["S-02"]
+    assert [s["key"] for s in second["skipped"]] == ["S-01-T", "S-01"]
+    assert (REPO, 1, 1002) in client2.wired, "S-02 blocked by S-01"
 
 
 def test_a_dependency_already_wired_is_not_wired_twice(tmp_path):
@@ -189,7 +189,7 @@ def test_a_unit_that_cannot_be_rendered_is_reported_and_the_rest_continue(tmp_pa
     """An unsound graph refuses `get_work_unit` per unit. One bad unit must not
     cost the other hundred and forty-three."""
     def fetch(key):
-        if key == "S·01":
+        if key == "S-01":
             return {"issued": False, "reason": "graph is unsound"}
         return payload(key, EDGES.get(key, ()))
 
@@ -198,7 +198,7 @@ def test_a_unit_that_cannot_be_rendered_is_reported_and_the_rest_continue(tmp_pa
         log_path=tmp_path / "e.jsonl", repo=REPO, cut_seq=2, order=ORDER,
         edges=EDGES, fetch=fetch, client=client, now_fn=lambda: 1.0,
     )
-    assert [f["key"] for f in result["failed"]] == ["S·01"]
+    assert [f["key"] for f in result["failed"]] == ["S-01"]
     assert "unsound" in result["failed"][0]["reason"]
     assert len(result["created"]) == 2
 
@@ -211,7 +211,7 @@ def test_an_oversized_ticket_is_skipped_rather_than_sent_to_be_refused(tmp_path)
 
     def fetch(key):
         p = payload(key, EDGES.get(key, ()))
-        if key == "S·02":
+        if key == "S-02":
             p["entries"][0]["body"] = "x" * (BODY_LIMIT + 10)
         return p
 
@@ -220,7 +220,7 @@ def test_an_oversized_ticket_is_skipped_rather_than_sent_to_be_refused(tmp_path)
         log_path=tmp_path / "e.jsonl", repo=REPO, cut_seq=2, order=ORDER,
         edges=EDGES, fetch=fetch, client=client, now_fn=lambda: 1.0,
     )
-    assert [s["key"] for s in result["skipped"]] == ["S·02"]
+    assert [s["key"] for s in result["skipped"]] == ["S-02"]
     assert "too large" in result["skipped"][0]["reason"]
     assert len(client.created) == 2
 
@@ -228,24 +228,24 @@ def test_an_oversized_ticket_is_skipped_rather_than_sent_to_be_refused(tmp_path)
 def test_an_edge_whose_blocker_never_got_created_is_reported_unwired(tmp_path):
     """Order is the point of the whole feature, so an order that silently did
     not happen is the worst available outcome."""
-    result, _, _ = run(tmp_path, client=FakeClient(fail_on={"S·01:T"}))
-    assert [u["blocked"] for u in result["unwired"]] == ["S·01"]
-    assert "S·01:T" in result["unwired"][0]["reason"]
+    result, _, _ = run(tmp_path, client=FakeClient(fail_on={"S-01-T"}))
+    assert [u["blocked"] for u in result["unwired"]] == ["S-01"]
+    assert "S-01-T" in result["unwired"][0]["reason"]
 
 
 def test_a_failed_wiring_call_is_reported_and_the_rest_continue(tmp_path):
     result, client, _ = run(tmp_path, client=FakeClient(fail_wiring={(2, 1001)}))
     assert len(result["created"]) == 3
-    assert [u["blocked"] for u in result["unwired"]] == ["S·01"]
+    assert [u["blocked"] for u in result["unwired"]] == ["S-01"]
     assert result["counts"]["wired"] == 1
 
 
 def test_what_was_created_is_recorded_even_when_the_run_went_badly(tmp_path):
     """Otherwise a re-run duplicates the issues that DID land, which is the one
     thing a duplicate guard exists to stop."""
-    _, _, log = run(tmp_path, client=FakeClient(fail_on={"S·02"}))
+    _, _, log = run(tmp_path, client=FakeClient(fail_on={"S-02"}))
     stored = read_emissions(log)
-    assert set(stored[0].issues) == {"S·01:T", "S·01"}
+    assert set(stored[0].issues) == {"S-01-T", "S-01"}
 
 
 def test_an_unreadable_log_is_a_hard_error_not_an_empty_one(tmp_path):
@@ -269,18 +269,18 @@ def _project(tmp_path):
 
     store = ProjectStore(tmp_path)
     store.create_project("p")
-    store.append("p", [Entry(id=parse("I·01"), title="intent")])
-    store.append("p", [Entry(id=parse("B·01"), derives_from=(parse("I·01"),),
+    store.append("p", [Entry(id=parse("I-01"), title="intent")])
+    store.append("p", [Entry(id=parse("B-01"), derives_from=(parse("I-01"),),
                              title="behaviour")], slice_name="core")
-    store.append("p", [Entry(id=parse("A·01"), derives_from=(parse("B·01"),),
+    store.append("p", [Entry(id=parse("A-01"), derives_from=(parse("B-01"),),
                              title="arch")], slice_name="core")
-    store.append("p", [Entry(id=parse("S·01"), derives_from=(parse("A·01"),),
+    store.append("p", [Entry(id=parse("S-01"), derives_from=(parse("A-01"),),
                              title="the contract", body="build it")],
                  slice_name="core")
-    store.append("p", [Entry(id=parse("T·01"), derives_from=(parse("S·01"),),
+    store.append("p", [Entry(id=parse("T-01"), derives_from=(parse("S-01"),),
                              title="the case", purpose="why")])
-    store.set_module("p", "app/thing.py", ["S·01"])
-    store.set_module("p", "tests/test_thing.py", ["T·01"])
+    store.set_module("p", "app/thing.py", ["S-01"])
+    store.set_module("p", "tests/test_thing.py", ["T-01"])
     return store
 
 
@@ -340,9 +340,9 @@ def test_emitting_a_cut_the_graph_has_moved_past_refuses(tmp_path, monkeypatch):
     _cut(store)
     monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
 
-    store.append("p", [Entry(id=parse("S·02"), derives_from=(parse("A·01"),),
+    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
                              title="another")], slice_name="core")
-    store.set_module("p", "app/other.py", ["S·02"])
+    store.set_module("p", "app/other.py", ["S-02"])
 
     result = service.emit_tickets(store, "p", client=FakeClient())
     assert result["emitted"] is False
@@ -361,11 +361,11 @@ def test_a_sound_project_emits_its_units_with_the_test_unit_first(tmp_path, monk
     client = FakeClient()
     result = service.emit_tickets(store, "p", client=client)
     assert result["emitted"] is True
-    assert [c["key"] for c in result["created"]] == ["S·01:T", "S·01"]
-    # And the order was declared: S·01 is blocked by its scenarios.
+    assert [c["key"] for c in result["created"]] == ["S-01-T", "S-01"]
+    # And the order was declared: S-01 is blocked by its scenarios.
     assert result["counts"]["wired"] == 1
     assert result["wired"][0] == {
-        "blocked": "S·01", "blocker": "S·01:T",
+        "blocked": "S-01", "blocker": "S-01-T",
         "blocked_number": 2, "blocker_id": 1001,
     }
 
@@ -381,7 +381,7 @@ def test_the_run_is_recorded_against_the_project(tmp_path, monkeypatch):
 
     stored = read_emissions(store.emissions_path("p"))
     assert len(stored) == 1
-    assert set(stored[0].issues) == {"S·01", "S·01:T"}
+    assert set(stored[0].issues) == {"S-01", "S-01-T"}
 
 
 # -- tracking a run in flight -----------------------------------------------
@@ -565,8 +565,8 @@ def test_the_emission_status_says_which_units_are_already_out(tmp_path, monkeypa
 
     service.emit_tickets(store, "p", client=FakeClient())
     after = service.get_emission(store, "p")
-    assert set(after["already"]) == {"S·01", "S·01:T"}
-    assert after["already"]["S·01"]["number"] == 2
+    assert set(after["already"]) == {"S-01", "S-01-T"}
+    assert after["already"]["S-01"]["number"] == 2
 
 
 def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monkeypatch):
@@ -581,9 +581,9 @@ def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monk
     service.emit_tickets(store, "p", client=FakeClient())
 
     # The graph moves, and a fresh cut is taken.
-    store.append("p", [Entry(id=parse("S·02"), derives_from=(parse("A·01"),),
+    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
                              title="another")], slice_name="core")
-    store.set_module("p", "app/other.py", ["S·02"])
+    store.set_module("p", "app/other.py", ["S-02"])
     _cut(store)
 
     status = service.get_emission(store, "p")
@@ -692,7 +692,7 @@ def test_an_issue_that_would_not_close_is_not_recreated(tmp_path):
     assert out["failed"][0]["number"] == 2
     again, _c, _l = run(tmp_path, client=FakeClient())
     assert again["counts"]["created"] == 2
-    assert [s["key"] for s in again["skipped"]] == ["S·01"], (
+    assert [s["key"] for s in again["skipped"]] == ["S-01"], (
         "the one still open on GitHub stays skipped"
     )
 
@@ -707,7 +707,7 @@ def test_a_rollback_is_appended_and_erases_nothing(tmp_path):
     assert len(emissions) == 1, "the emission is still there"
     assert len(rollbacks) == 1
     assert rollbacks[0].undone == (emissions[0].seq,)
-    assert rollbacks[0].closed == {"S·01:T": 1, "S·01": 2, "S·02": 3}
+    assert rollbacks[0].closed == {"S-01-T": 1, "S-01": 2, "S-02": 3}
     # One sequence across both kinds.
     assert rollbacks[0].seq == emissions[0].seq + 1
 
@@ -739,7 +739,7 @@ def test_a_rollback_leaves_another_cut_alone(tmp_path):
     """Scoped by (cut_seq, repo), exactly as the duplicate guard is."""
     _result, client, log = run(tmp_path)
     _closer(client)
-    emit(log_path=log, repo=REPO, cut_seq=9, order=["S·09"], edges={},
+    emit(log_path=log, repo=REPO, cut_seq=9, order=["S-09"], edges={},
          fetch=lambda key: payload(key), client=client, now_fn=lambda: 1500.0)
     before = len(client.created)
     out = _rollback(log, client)

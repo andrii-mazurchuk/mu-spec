@@ -212,13 +212,13 @@ def main(argv=None) -> int:
                 "title": "A buyer can search sellers by keyword",
                 "body": "Given a query, return sellers whose profile matches, "
                 "ranked by relevance. Empty query returns nothing.",
-                "derives_from": ["I·01"],
+                "derives_from": ["I-01"],
             },
             {
                 "layer": "B",
                 "title": "A buyer can filter results by delivery region",
                 "body": "Filters narrow an existing result set; they never widen it.",
-                "derives_from": ["I·01"],
+                "derives_from": ["I-01"],
             },
         ],
     )
@@ -231,7 +231,7 @@ def main(argv=None) -> int:
                 "title": "A seller is paid once delivery is confirmed",
                 "body": "Payment is released within 24h of confirmation. "
                 "A disputed delivery holds payment.",
-                "derives_from": ["I·02"],
+                "derives_from": ["I-02"],
             }
         ],
     )
@@ -246,7 +246,7 @@ def main(argv=None) -> int:
         "POST",
         f"/projects/{P}/slicing/proposal",
         {
-            "proposal": {"discovery": ["B·01", "B·02"], "payouts": ["B·03"]},
+            "proposal": {"discovery": ["B-01", "B-02"], "payouts": ["B-03"]},
             "note": "grouped by the domain object each behaviour reads and writes",
         },
     )
@@ -269,11 +269,11 @@ def main(argv=None) -> int:
         P,
         init,
         [
-            {"layer": "A", "title": "legitimate", "derives_from": ["B·01"]},
+            {"layer": "A", "title": "legitimate", "derives_from": ["B-01"]},
             {
                 "layer": "A",
                 "title": "derives from nothing real",
-                "derives_from": ["B·99"],
+                "derives_from": ["B-99"],
             },
         ],
         slice_name="discovery",
@@ -291,15 +291,15 @@ def main(argv=None) -> int:
                 "layer": "A",
                 "title": "Search runs against an inverted keyword index",
                 "body": "A scan over sellers cannot meet the latency implied by "
-                "B·01. An index is rebuilt on profile write.",
-                "derives_from": ["B·01"],
+                "B-01. An index is rebuilt on profile write.",
+                "derives_from": ["B-01"],
             },
             {
                 "layer": "A",
                 "title": "Region filtering happens after ranking, in memory",
                 "body": "Result sets are small once ranked, so filtering does not "
                 "need its own index.",
-                "derives_from": ["B·02"],
+                "derives_from": ["B-02"],
             },
         ],
         slice_name="discovery",
@@ -312,7 +312,7 @@ def main(argv=None) -> int:
                 "layer": "A",
                 "title": "Payouts are driven by a delivery-confirmed event",
                 "body": "Polling would breach the 24h window at scale.",
-                "derives_from": ["B·03"],
+                "derives_from": ["B-03"],
             }
         ],
         slice_name="payouts",
@@ -326,14 +326,14 @@ def main(argv=None) -> int:
                 "title": "search/index.py builds and queries the inverted index",
                 "body": "Module search/index.py. build(sellers) -> Index; "
                 "Index.query(text, limit) -> list[SellerId]. Stdlib only.",
-                "derives_from": ["A·01"],
+                "derives_from": ["A-01"],
             },
             {
                 "layer": "S",
                 "title": "search/filters.py applies region filtering",
                 "body": "Module search/filters.py. by_region(results, region) -> "
                 "list[SellerId]. Pure function, no I/O.",
-                "derives_from": ["A·02"],
+                "derives_from": ["A-02"],
             },
         ],
         slice_name="discovery",
@@ -349,8 +349,8 @@ def main(argv=None) -> int:
                 "Payment | None. Returns None while a dispute is open. Resolves "
                 "the seller through search/index.py rather than keeping its own "
                 "lookup.",
-                "derives_from": ["A·03"],
-                "depends_on": ["S·01"],
+                "derives_from": ["A-03"],
+                "depends_on": ["S-01"],
             }
         ],
         slice_name="payouts",
@@ -364,7 +364,7 @@ def main(argv=None) -> int:
         "comment",
         "Is an inverted index overkill before we have 10k sellers?",
         project=P,
-        targets=["A·01"],
+        targets=["A-01"],
         origin="andrey",
     )
     status, wp = call("GET", f"/projects/{P}/slice-context?slice=discovery")
@@ -387,7 +387,7 @@ def main(argv=None) -> int:
     print("\n  SLICE DEPENDENCIES (projected from the entries, never authored)")
     for name, deps in _m.dependency_graph(store.load_graph(P)).items():
         print(f"    {name:12} -> {', '.join(deps) or '(nothing)'}")
-    print("    Nothing in the manifest says this. S·03 depends on S·01, so")
+    print("    Nothing in the manifest says this. S-03 depends on S-01, so")
     print("    payouts depends on discovery -- and the manifest has no field")
     print("    to disagree with the entries in.")
     print("\n  Note what is NOT here: the payouts slice. A reader of this")
@@ -460,7 +460,7 @@ def main(argv=None) -> int:
                 "layer": "S",
                 "title": "search/index.py records every query it serves",
                 "body": "Calls audit.record on each query. Nothing is read back.",
-                "derives_from": ["A·01"],
+                "derives_from": ["A-01"],
                 "emits_into": [audit_spec],
             }
         ],
@@ -482,7 +482,7 @@ def main(argv=None) -> int:
             {
                 "layer": "S",
                 "title": "search/index.py asks the audit log a question",
-                "derives_from": ["A·01"],
+                "derives_from": ["A-01"],
                 "depends_on": [audit_spec],
             }
         ],
@@ -519,9 +519,9 @@ def main(argv=None) -> int:
     print("  gone. It files issues against the artifact and proceeds on a")
     print("  stated assumption.\n")
     for target, kind, claim, by in (
-        ("S·01", "additive", "no way to ask the index for its size", "payouts"),
-        ("S·01", "additive", "no way to page through results", "payouts"),
-        ("S·01", "semantic", "the index returns ids where it said names",
+        ("S-01", "additive", "no way to ask the index for its size", "payouts"),
+        ("S-01", "additive", "no way to page through results", "payouts"),
+        ("S-01", "semantic", "the index returns ids where it said names",
          "discovery"),
     ):
         status, iss = call(
@@ -562,7 +562,7 @@ def main(argv=None) -> int:
         "POST",
         f"/projects/{P}/issues",
         {
-            "target": "S·01",
+            "target": "S-01",
             "kind": "semantic",
             "claim": "the index means something else entirely",
             "raised_by": "payouts",
@@ -579,9 +579,9 @@ def main(argv=None) -> int:
     print("  entries they implement, and that backlink is the only thing")
     print("  tying a file to the reasoning that produced it.\n")
     for path, implements in (
-        ("search/index.py", ["S·01"]),
-        ("search/filters.py", ["S·02"]),
-        ("payouts/release.py", ["S·03"]),
+        ("search/index.py", ["S-01"]),
+        ("search/filters.py", ["S-02"]),
+        ("payouts/release.py", ["S-03"]),
     ):
         status, m = call(
             "POST", f"/projects/{P}/modules",
@@ -658,13 +658,13 @@ def main(argv=None) -> int:
                 "title": "an empty query returns everything, not nothing",
                 "purpose": "the boundary the spec is silent about",
                 "body": "Given no query text, the index returns all listings.",
-                "derives_from": ["S·01"],
+                "derives_from": ["S-01"],
             }
         ],
     )
     status, m = call(
         "POST", f"/projects/{P}/modules",
-        {"path": "tests/test_index.py", "implements": ["T·01"]},
+        {"path": "tests/test_index.py", "implements": ["T-01"]},
     )
     print(f"  declare_module -> {status} tests/test_index.py implements "
           f"{m.get('implements')}")
@@ -672,12 +672,12 @@ def main(argv=None) -> int:
     print("  A module implements spec entries OR test entries, never both.")
     _, refused = call(
         "POST", f"/projects/{P}/modules",
-        {"path": "mixed.py", "implements": ["S·01", "T·01"]},
+        {"path": "mixed.py", "implements": ["S-01", "T-01"]},
     )
     print(f"    mixed.py -> refused: {refused.get('error', '')[:64]}...")
 
-    _, impl = call("GET", f"/projects/{P}/units/S·01")
-    _, tunit = call("GET", f"/projects/{P}/units/T·01")
+    _, impl = call("GET", f"/projects/{P}/units/S-01")
+    _, tunit = call("GET", f"/projects/{P}/units/T-01")
     if impl.get("issued") and tunit.get("issued"):
         print()
         print("  The two land in different work units, so the write sets are")
@@ -727,8 +727,8 @@ def main(argv=None) -> int:
             {
                 "layer": "S",
                 "title": "just sort the results differently",
-                "derives_from": ["A·01"],
-                "supersedes": "S·01",
+                "derives_from": ["A-01"],
+                "supersedes": "S-01",
             }
         ],
         slice_name="discovery",
@@ -746,15 +746,15 @@ def main(argv=None) -> int:
                 "layer": "B",
                 "title": "A buyer can search sellers by keyword, ranked by rating",
                 "body": "Relevance is keyword match, tie-broken by seller rating.",
-                "derives_from": ["I·01"],
-                "supersedes": "B·01",
+                "derives_from": ["I-01"],
+                "supersedes": "B-01",
             }
         ],
         slice_name="discovery",
     )
     show("blast radius (must be re-derived)", result.get("blast_radius"))
     gates(P)
-    print("\n  A·01 now points at a retired entry, so the graph is UNSOUND.")
+    print("\n  A-01 now points at a retired entry, so the graph is UNSOUND.")
     print("  The stale reference is visible instead of silently rotting.")
 
     status, wp2 = call("GET", f"/projects/{P}/slice-context?slice=discovery")
@@ -775,7 +775,7 @@ def main(argv=None) -> int:
     show("discovery members before", sorted(str(m) for m in before.slices["discovery"].members))
     from mu_spec.identifiers import parse as pid
 
-    store.split_slice(P, "discovery", "filtering", {pid("B·02"), pid("A·02"), pid("S·02")})
+    store.split_slice(P, "discovery", "filtering", {pid("B-02"), pid("A-02"), pid("S-02")})
     after_m = store.load_manifest(P)
     show("discovery members after ", sorted(str(m) for m in after_m.slices["discovery"].members))
     show("filtering members       ", sorted(str(m) for m in after_m.slices["filtering"].members))

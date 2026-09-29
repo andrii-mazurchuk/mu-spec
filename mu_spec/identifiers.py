@@ -1,8 +1,8 @@
 """Entry identifiers: parsing, formatting, and the layer ordering that
 gives "upward" its meaning.
 
-An identifier is a layer prefix, a separator, and a flat number -- `B·14`,
-`A·07`, `S·31`. Two rules from the design doc govern everything here, and
+An identifier is a layer prefix, a separator, and a flat number -- `B-14`,
+`A-07`, `S-31`. Two rules from the design doc govern everything here, and
 both are the reason this module exists rather than the format being an
 f-string at the call site:
 
@@ -51,12 +51,31 @@ LAYER_NAMES = {
     "T": "test",
 }
 
-# U+00B7 MIDDLE DOT, the form the design doc is written in.
-SEPARATOR = "·"
+# ASCII HYPHEN-MINUS. It was U+00B7 MIDDLE DOT, which the design doc is
+# written in and which read beautifully, and that is the whole of the case
+# for it. Against it: an identifier is not only displayed. It is a label on a
+# GitHub issue, a git branch name, a path segment, a shell argument, a dict
+# key crossing a process boundary -- and every one of those is a place a
+# non-ASCII character can be mangled by something with a different default
+# encoding, silently, inside a comparison rather than a print. A separator is
+# not a design choice worth defending; it is a hazard surface, and the
+# smallest one available is a hyphen.
+#
+# Changing the SPELLING renumbers nothing. An identifier is a layer and a
+# number, and `S-31` and `S-31` are the same identifier written twice --
+# which is why the permanence rule above is untouched by this.
+SEPARATOR = "-"
 
-_PATTERN = re.compile(rf"^([A-Z])\{SEPARATOR}([0-9]+)$")
+# The middle dot is still PARSED, forever, and never written. Three live
+# projects and every history file in them hold it, and those files are
+# append-only: rewriting an audit trail to change a separator is exactly the
+# edit-in-place this unit refuses everywhere else. So old data reads, new
+# data is written in ASCII, and the two are the same identifier.
+LEGACY_SEPARATOR = "·"
 
-# Rendered width of the number. Purely cosmetic -- `A·07` is how the design
+_PATTERN = re.compile(rf"^([A-Z])[{SEPARATOR}{LEGACY_SEPARATOR}]([0-9]+)$")
+
+# Rendered width of the number. Purely cosmetic -- `A-07` is how the design
 # doc writes it, and spines are read by humans -- and never used for parsing
 # or comparison, both of which are numeric.
 _PAD = 2
@@ -134,5 +153,5 @@ def derives_legally(source: Identifier, target: Identifier) -> bool:
 
 def sort_key(identifier: Identifier) -> tuple[int, int]:
     """Layer depth, then number *numerically*. Sorting the rendered strings
-    would put B·10 before B·09 and quietly scramble every spine."""
+    would put B-10 before B-09 and quietly scramble every spine."""
     return (identifier.depth, identifier.number)

@@ -21,9 +21,9 @@ IMPL = {
     "project": "dark",
     "issued": True,
     "unit": {
-        "key": "S·01",
-        "anchor": "S·01",
-        "entries": ["S·01"],
+        "key": "S-01",
+        "anchor": "S-01",
+        "entries": ["S-01"],
         "modules": ["dark/config/declare.py"],
         "slices": ["legibility"],
         "size": {"entries": 1, "modules": 1, "body_bytes": 2649},
@@ -31,29 +31,29 @@ IMPL = {
     "write_set": ["dark/config/declare.py"],
     "entries": [
         {
-            "id": "S·01",
+            "id": "S-01",
             "layer": "spec",
             "title": "`declare.py` is the declaration primitive",
             "body": "Module: `dark/config/declare.py`. Stdlib only.",
         }
     ],
     "justification": [
-        {"id": "I·12", "title": "Every artifact must be intelligible"},
-        {"id": "A·02", "title": "A setting's meaning is declared where it is",
+        {"id": "I-12", "title": "Every artifact must be intelligible"},
+        {"id": "A-02", "title": "A setting's meaning is declared where it is",
          "body": "the full parent body"},
     ],
     "read_set": [],
     "cross_cutting": [],
     "file_scope": {
         "dark/config/declare.py": [
-            {"id": "S·02", "title": "`Provisional` is a declaration-site attribute"}
+            {"id": "S-02", "title": "`Provisional` is a declaration-site attribute"}
         ]
     },
-    "follows": ["S·01:T"],
+    "follows": ["S-01-T"],
     "followed_by": [],
-    "overlap": ["S·02"],
+    "overlap": ["S-02"],
     "tests": [
-        {"id": "T·30", "title": "A setting without its description is not constructible"}
+        {"id": "T-30", "title": "A setting without its description is not constructible"}
     ],
     "tests_pending": [],
     "audit": {
@@ -68,13 +68,13 @@ def _test_unit() -> dict:
     """The same unit's scenarios: a test unit, which follows nothing."""
     return {
         **IMPL,
-        "unit": {**IMPL["unit"], "key": "S·01:T", "entries": ["T·30", "T·31"],
+        "unit": {**IMPL["unit"], "key": "S-01-T", "entries": ["T-30", "T-31"],
                  "modules": ["tests/test_config.py"]},
         "write_set": ["tests/test_config.py"],
         "entries": [
-            {"id": "T·30", "layer": "test", "title": "not constructible",
+            {"id": "T-30", "layer": "test", "title": "not constructible",
              "purpose": "the omitted-description case", "body": "Declare a setting."},
-            {"id": "T·31", "layer": "test", "title": "blank is rejected",
+            {"id": "T-31", "layer": "test", "title": "blank is rejected",
              "purpose": "the whitespace case", "body": "Declare with spaces."},
         ],
         "follows": [],
@@ -90,12 +90,12 @@ def test_the_title_is_the_key_and_what_the_unit_writes():
     """Computable, which it was not under the old grain. A unit held several
     entries then, so `a12837b4` ruled naming was judgement. A unit is now one
     entry and its modules, and the module paths name the work better than the
-    entry's title does -- `S·01`'s title is a 150-character sentence."""
-    assert render(IMPL).title == "S·01 — dark/config/declare.py"
+    entry's title does -- `S-01`'s title is a 150-character sentence."""
+    assert render(IMPL).title == "S-01 — dark/config/declare.py"
 
 
 def test_the_title_stays_short_when_a_unit_writes_many_files():
-    """`dark/S·73` writes five files. A title is a line in a list, not a
+    """`dark/S-73` writes five files. A title is a line in a list, not a
     manifest, and GitHub allows 256 characters -- neither is a reason to spend
     them."""
     many = {
@@ -104,14 +104,14 @@ def test_the_title_stays_short_when_a_unit_writes_many_files():
     }
     title = render(many).title
     assert len(title) <= MAX_TITLE
-    assert title.startswith("S·01 — a/very/long/path/number_0.py")
+    assert title.startswith("S-01 — a/very/long/path/number_0.py")
     assert "more" in title
 
 
 def test_a_unit_writing_nothing_still_gets_a_usable_title():
     """Degradation: a module map mid-edit can leave a unit with no paths, and
     a ticket with an empty title is worse than an unhelpful one."""
-    assert render({**IMPL, "write_set": []}).title == "S·01"
+    assert render({**IMPL, "write_set": []}).title == "S-01"
 
 
 # -- labels -----------------------------------------------------------------
@@ -119,7 +119,7 @@ def test_a_unit_writing_nothing_still_gets_a_usable_title():
 
 def test_labels_carry_the_anchor_the_slice_and_the_kind():
     assert render(IMPL).labels == (
-        "mu-spec:S·01", "kind:implementation", "slice:legibility",
+        "mu-spec:S-01", "kind:implementation", "slice:legibility",
     )
 
 
@@ -141,7 +141,7 @@ def test_a_unit_straddling_slices_gets_one_label_each():
 def test_blocked_by_is_unit_keys_and_never_issue_numbers():
     """Issue numbers do not exist until the issues do. Rendering is decided by
     the graph alone, so it can be reviewed before anything is created."""
-    assert render(IMPL).blocked_by == ("S·01:T",)
+    assert render(IMPL).blocked_by == ("S-01-T",)
     assert render(_test_unit()).blocked_by == ()
 
 
@@ -171,7 +171,7 @@ def test_overlap_is_stated_as_not_at_the_same_time_never_as_an_order():
     """The one thing a reader must not conclude from `overlap` is a direction.
     Neither unit waits for the other."""
     body = render(IMPL).body
-    assert "S·02" in body
+    assert "S-02" in body
     assert "same time" in body.lower()
 
 
@@ -182,7 +182,7 @@ def test_file_scope_names_the_other_contracts_a_file_must_serve():
 
 def test_empty_sections_are_omitted_rather_than_rendered_blank():
     """An empty heading reads as "nothing to say here", which is a claim. On
-    `S·01` three of the nine sections are empty."""
+    `S-01` three of the nine sections are empty."""
     body = render(IMPL).body
     assert "Read-only context" not in body
     assert "not yet implemented" not in body
@@ -191,11 +191,11 @@ def test_empty_sections_are_omitted_rather_than_rendered_blank():
 def test_a_section_appears_as_soon_as_it_has_content():
     with_reads = {
         **IMPL,
-        "read_set": [{"id": "S·09", "title": "the ledger reads the index"}],
-        "tests_pending": ["T·44"],
+        "read_set": [{"id": "S-09", "title": "the ledger reads the index"}],
+        "tests_pending": ["T-44"],
     }
     body = render(with_reads).body
-    assert "S·09" in body and "T·44" in body
+    assert "S-09" in body and "T-44" in body
 
 
 def test_the_sections_come_in_a_fixed_order():
@@ -281,13 +281,13 @@ def test_the_body_carries_a_machine_readable_block():
     the prose is for the agent."""
     ticket = render(IMPL, repo="owner/name", cut_seq=7)
     data = _block(ticket.body)
-    assert data["key"] == "S·01"
+    assert data["key"] == "S-01"
     assert data["kind"] == "implementation"
     assert data["repo"] == "owner/name"
     assert data["cut_seq"] == 7
     assert data["write_set"] == ["dark/config/declare.py"]
-    assert data["blocked_by"] == ["S·01:T"]
-    assert data["mutex"] == ["S·02"]
+    assert data["blocked_by"] == ["S-01-T"]
+    assert data["mutex"] == ["S-02"]
     assert data["slices"] == ["legibility"]
 
 
@@ -304,13 +304,13 @@ def test_the_block_carries_file_scope_without_the_bodies():
     """A machine deciding what may be touched does not need the other
     contracts' text -- the agent does, and has it in full above."""
     data = _block(render(IMPL, repo="o/n", cut_seq=1).body)
-    assert data["file_scope"] == {"dark/config/declare.py": ["S·02"]}
+    assert data["file_scope"] == {"dark/config/declare.py": ["S-02"]}
 
 
 def test_a_test_unit_says_so_in_the_block():
     data = _block(render(_test_unit(), repo="o/n", cut_seq=1).body)
     assert data["kind"] == "test"
-    assert data["anchor"] == "S·01"
+    assert data["anchor"] == "S-01"
 
 
 def test_the_block_is_last():
@@ -330,7 +330,7 @@ def test_the_block_is_valid_json_when_a_body_contains_a_fence():
     tail = body[body.index(MACHINE_HEADING):]
     import json as _json
     start = tail.index(MACHINE_FENCE) + len(MACHINE_FENCE)
-    assert _json.loads(tail[start:tail.index("```", start)])["key"] == "S·01"
+    assert _json.loads(tail[start:tail.index("```", start)])["key"] == "S-01"
 
 
 # -- project-wide labels -----------------------------------------------------
@@ -340,7 +340,7 @@ def test_extra_labels_are_added_to_the_per_unit_ones():
     ticket = render(IMPL, repo="o/n", cut_seq=1, extra_labels=("team:cto",))
     assert "team:cto" in ticket.labels
     assert "kind:implementation" in ticket.labels
-    assert "mu-spec:S·01" in ticket.labels
+    assert "mu-spec:S-01" in ticket.labels
 
 
 def test_no_extra_labels_changes_nothing():

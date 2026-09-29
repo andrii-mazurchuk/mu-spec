@@ -102,14 +102,14 @@ def test_creating_an_issue_returns_both_the_id_and_the_number():
     gh, rec, _ = client(FakeResponse(
         {"id": 3141592653, "number": 42, "html_url": "https://github.com/x/y/issues/42"}
     ))
-    issue = gh.create_issue(REPO, "S·01 — declare.py", "the body", ["kind:test"])
+    issue = gh.create_issue(REPO, "S-01 — declare.py", "the body", ["kind:test"])
     assert issue == Issue(id=3141592653, number=42,
                           url="https://github.com/x/y/issues/42")
     assert rec.requests[0].full_url == (
         f"https://api.github.com/repos/{REPO}/issues"
     )
     assert rec.bodies[0] == {
-        "title": "S·01 — declare.py", "body": "the body", "labels": ["kind:test"],
+        "title": "S-01 — declare.py", "body": "the body", "labels": ["kind:test"],
     }
 
 

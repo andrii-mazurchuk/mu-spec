@@ -498,7 +498,7 @@ class ProjectStore:
         and so are always different units -- different branch, different
         agent. What that buys is only as good as the separation of their
         write sets. One mixed file lands in both, and the agent building
-        `S·13` is handed a path the agent building `S·13:T` owns; a
+        `S-13` is handed a path the agent building `S-13-T` owns; a
         structural guarantee quietly degrades into an honour-system rule.
         Overlap between two implementation units is ordinary and expected
         (§4a); overlap across the kinds is the thing this refusal prevents.

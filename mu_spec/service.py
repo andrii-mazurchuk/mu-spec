@@ -463,7 +463,13 @@ def submit_amendment(
 
     spec_type = TYPES[message.type]
     already = (message.resolution or {}).get("produced", [])
-    is_origination = not any(a[:1] in ALL_LAYERS and "·" in a for a in already)
+    # "Has this message already produced an entry?" -- asked by PARSING, not
+    # by sniffing for the separator. This line used to test `"·" in a`, which
+    # silently answered "no, nothing yet" for every message the moment the
+    # separator became a hyphen, so every amendment after the first was
+    # refused as a second origination. A separator inside a comparison is the
+    # exact hazard that made this change worth doing.
+    is_origination = not any(_is_identifier(a) for a in already)
     if is_origination:
         if not spec_type.originates_at:
             raise ServiceError(
@@ -1253,10 +1259,10 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
 
     # A unit key is accepted as well as a member entry, because the listing
     # this route pairs with hands out keys and nothing else. For an
-    # implementation unit the two spellings coincide -- `S·01` is both the
+    # implementation unit the two spellings coincide -- `S-01` is both the
     # key and a member -- which is exactly what hid the asymmetry: a caller
     # iterating the projection's keys worked on every implementation unit and
-    # answered "not found" for every test unit, whose key `S·01:T` names no
+    # answered "not found" for every test unit, whose key `S-01-T` names no
     # entry at all. Half of all units are test units.
     if entry in by_key:
         key = entry
@@ -1286,7 +1292,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     # only that entry; a test unit holds scenarios, and a scenario derives
     # from exactly one spec entry -- this unit's anchor. So every entry in a
     # unit has the same ancestry, always, and keying the chain by entry
-    # returned it once per entry. Measured on `dark`'s `S·01:T`: fifteen rows
+    # returned it once per entry. Measured on `dark`'s `S-01-T`: fifteen rows
     # for five distinct ancestors, the anchor's full body three times over,
     # 11.6 KB where 3.9 KB says the same thing. It is the section a builder
     # most needs to trust, and two thirds of it was the same paragraph again.
@@ -1874,6 +1880,16 @@ def set_labels(store: ProjectStore, project: str, body: dict) -> dict:
         return {"project": project, "labels": list(store.set_labels(project, body["labels"]))}
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
+
+
+def _is_identifier(text) -> bool:
+    """Whether a recorded string names an entry. Both spellings, because a
+    resolution written before the separator changed holds the old one."""
+    try:
+        parse(str(text))
+    except InvalidIdentifier:
+        return False
+    return True
 
 
 def declare_module(store: ProjectStore, project: str, body: dict) -> dict:

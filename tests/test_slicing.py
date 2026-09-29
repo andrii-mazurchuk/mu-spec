@@ -9,18 +9,18 @@ from mu_spec.storage import CROSS_CUTTING, Manifest
 
 
 def _behaviour() -> Graph:
-    """Three behaviours under two intent entries: B·01 and B·02 share I·01,
-    B·03 sits under I·02, and B·04 hangs off both."""
+    """Three behaviours under two intent entries: B-01 and B-02 share I-01,
+    B-03 sits under I-02, and B-04 hangs off both."""
     return Graph(
         [
-            Entry(id=parse("I·01"), title="buyers find sellers"),
-            Entry(id=parse("I·02"), title="sellers get paid"),
-            Entry(id=parse("B·01"), derives_from=(parse("I·01"),), title="search"),
-            Entry(id=parse("B·02"), derives_from=(parse("I·01"),), title="filter"),
-            Entry(id=parse("B·03"), derives_from=(parse("I·02"),), title="payout"),
+            Entry(id=parse("I-01"), title="buyers find sellers"),
+            Entry(id=parse("I-02"), title="sellers get paid"),
+            Entry(id=parse("B-01"), derives_from=(parse("I-01"),), title="search"),
+            Entry(id=parse("B-02"), derives_from=(parse("I-01"),), title="filter"),
+            Entry(id=parse("B-03"), derives_from=(parse("I-02"),), title="payout"),
             Entry(
-                id=parse("B·04"),
-                derives_from=(parse("I·01"), parse("I·02")),
+                id=parse("B-04"),
+                derives_from=(parse("I-01"), parse("I-02")),
                 title="receipts",
             ),
         ]
@@ -30,9 +30,9 @@ def _behaviour() -> Graph:
 def _spec() -> Graph:
     return Graph(
         [
-            Entry(id=parse("S·01"), title="index"),
-            Entry(id=parse("S·02"), title="ledger", depends_on=(parse("S·01"),)),
-            Entry(id=parse("S·03"), title="audit"),
+            Entry(id=parse("S-01"), title="index"),
+            Entry(id=parse("S-02"), title="ledger", depends_on=(parse("S-01"),)),
+            Entry(id=parse("S-03"), title="audit"),
         ]
     )
 
@@ -44,8 +44,8 @@ def test_shared_parentage_is_reported_pairwise():
     """The strongest ex-ante signal, and free -- the edge is already there."""
     result = candidates(_behaviour())
     top = result["shared_parentage"][0]
-    assert top["pair"] == ["B·01", "B·02"]
-    assert top["shared_parents"] == ["I·01"]
+    assert top["pair"] == ["B-01", "B-02"]
+    assert top["shared_parents"] == ["I-01"]
 
 
 def test_a_parent_reports_how_far_it_spreads():
@@ -53,8 +53,8 @@ def test_a_parent_reports_how_far_it_spreads():
     a cut running across the grain. Which is exactly why it is reported and
     not acted on."""
     parents = {p["id"]: p for p in candidates(_behaviour())["parents"]}
-    assert parents["I·01"]["fan_out"] == 3
-    assert parents["I·02"]["fan_out"] == 2
+    assert parents["I-01"]["fan_out"] == 3
+    assert parents["I-02"]["fan_out"] == 2
 
 
 def test_candidates_never_look_inside_a_body():
@@ -77,7 +77,7 @@ def test_a_legal_proposal_scores_clean():
     result = score(
         Manifest(project="m"),
         _spec(),
-        {"discovery": ["S·01"], "payouts": ["S·02"], "audit": ["S·03"]},
+        {"discovery": ["S-01"], "payouts": ["S-02"], "audit": ["S-03"]},
     )
     assert result["legal"] is True
     assert result["slice_findings"] == []
@@ -87,7 +87,7 @@ def test_scoring_commits_nothing():
     """The whole point: trial a cut without creating slices, because slices
     split and never merge."""
     manifest = Manifest(project="m")
-    score(manifest, _spec(), {"a": ["S·01"], "b": ["S·02"]})
+    score(manifest, _spec(), {"a": ["S-01"], "b": ["S-02"]})
     assert manifest.slices == {}
 
 
@@ -96,11 +96,11 @@ def test_a_proposal_that_would_cycle_is_reported_before_it_exists():
     costs a split."""
     graph = Graph(
         [
-            Entry(id=parse("S·01"), title="a", depends_on=(parse("S·02"),)),
-            Entry(id=parse("S·02"), title="b", depends_on=(parse("S·01"),)),
+            Entry(id=parse("S-01"), title="a", depends_on=(parse("S-02"),)),
+            Entry(id=parse("S-02"), title="b", depends_on=(parse("S-01"),)),
         ]
     )
-    result = score(Manifest(project="m"), graph, {"a": ["S·01"], "b": ["S·02"]})
+    result = score(Manifest(project="m"), graph, {"a": ["S-01"], "b": ["S-02"]})
     assert result["legal"] is False
     assert result["slice_findings"][0]["kind"] == "dependency_cycle"
 
@@ -110,12 +110,12 @@ def test_the_same_entries_cut_differently_score_differently():
     is what trialling a slicing actually means."""
     graph = Graph(
         [
-            Entry(id=parse("S·01"), title="a"),
-            Entry(id=parse("S·02"), title="b", depends_on=(parse("S·01"),)),
+            Entry(id=parse("S-01"), title="a"),
+            Entry(id=parse("S-02"), title="b", depends_on=(parse("S-01"),)),
         ]
     )
-    apart = score(Manifest(project="m"), graph, {"a": ["S·01"], "b": ["S·02"]})
-    together = score(Manifest(project="m"), graph, {"one": ["S·01", "S·02"]})
+    apart = score(Manifest(project="m"), graph, {"a": ["S-01"], "b": ["S-02"]})
+    together = score(Manifest(project="m"), graph, {"one": ["S-01", "S-02"]})
     assert apart["slices"][1]["outbound_edges"] == 1
     assert together["slices"][0]["outbound_edges"] == 0
     assert together["slices"][0]["cohesion"] == 1.0
@@ -123,17 +123,17 @@ def test_the_same_entries_cut_differently_score_differently():
 
 def test_an_entry_in_two_proposed_slices_is_refused():
     with pytest.raises(ValueError, match="exactly one slice"):
-        score(Manifest(project="m"), _spec(), {"a": ["S·01"], "b": ["S·01"]})
+        score(Manifest(project="m"), _spec(), {"a": ["S-01"], "b": ["S-01"]})
 
 
 def test_a_proposal_naming_something_that_does_not_exist_is_refused():
     with pytest.raises(ValueError, match="does not exist"):
-        score(Manifest(project="m"), _spec(), {"a": ["S·99"]})
+        score(Manifest(project="m"), _spec(), {"a": ["S-99"]})
 
 
 def test_entries_left_out_of_every_slice_are_reported():
-    result = score(Manifest(project="m"), _spec(), {"a": ["S·01"]})
-    assert result["unassigned"] == ["S·02", "S·03"]
+    result = score(Manifest(project="m"), _spec(), {"a": ["S-01"]})
+    assert result["unassigned"] == ["S-02", "S-03"]
     assert any("nowhere to live" in w for w in result["warnings"])
 
 
@@ -150,16 +150,16 @@ def test_scenarios_are_not_counted_as_entries_with_nowhere_to_live():
     defect, and loud enough to bury the real warnings under it."""
     graph = Graph(
         [
-            Entry(id=parse("I\u00b701"), title="an intent"),
-            Entry(id=parse("S\u00b701"), title="index"),
-            Entry(id=parse("S\u00b702"), title="ledger"),
-            Entry(id=parse("T\u00b701"), title="a scenario",
-                  derives_from=(parse("S\u00b701"),)),
-            Entry(id=parse("T\u00b702"), title="another",
-                  derives_from=(parse("S\u00b701"),)),
+            Entry(id=parse("I-01"), title="an intent"),
+            Entry(id=parse("S-01"), title="index"),
+            Entry(id=parse("S-02"), title="ledger"),
+            Entry(id=parse("T-01"), title="a scenario",
+                  derives_from=(parse("S-01"),)),
+            Entry(id=parse("T-02"), title="another",
+                  derives_from=(parse("S-01"),)),
         ]
     )
-    result = score(Manifest(project="m"), graph, {"a": ["S\u00b701"], "b": ["S\u00b702"]})
+    result = score(Manifest(project="m"), graph, {"a": ["S-01"], "b": ["S-02"]})
     assert result["unassigned"] == []
     assert not any("nowhere to live" in w for w in result["warnings"])
 
@@ -169,19 +169,19 @@ def test_a_spec_entry_left_out_is_still_reported_when_scenarios_exist():
     A contract in no slice really does have nowhere to live."""
     graph = Graph(
         [
-            Entry(id=parse("S\u00b701"), title="index"),
-            Entry(id=parse("S\u00b702"), title="ledger"),
-            Entry(id=parse("T\u00b701"), title="a scenario",
-                  derives_from=(parse("S\u00b701"),)),
+            Entry(id=parse("S-01"), title="index"),
+            Entry(id=parse("S-02"), title="ledger"),
+            Entry(id=parse("T-01"), title="a scenario",
+                  derives_from=(parse("S-01"),)),
         ]
     )
-    result = score(Manifest(project="m"), graph, {"a": ["S\u00b701"]})
-    assert result["unassigned"] == ["S\u00b702"]
+    result = score(Manifest(project="m"), graph, {"a": ["S-01"]})
+    assert result["unassigned"] == ["S-02"]
     assert any("nowhere to live" in w for w in result["warnings"])
 
 
 def test_a_one_entry_slice_is_warned_about_not_refused():
-    result = score(Manifest(project="m"), _spec(), {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]})
+    result = score(Manifest(project="m"), _spec(), {"a": ["S-01"], "b": ["S-02"], "c": ["S-03"]})
     assert result["legal"] is True
     assert any("probably not a slice" in w for w in result["warnings"])
 
@@ -189,13 +189,13 @@ def test_a_one_entry_slice_is_warned_about_not_refused():
 def test_a_chain_is_warned_about():
     graph = Graph(
         [
-            Entry(id=parse("S·01"), title="a"),
-            Entry(id=parse("S·02"), title="b", depends_on=(parse("S·01"),)),
-            Entry(id=parse("S·03"), title="c", depends_on=(parse("S·02"),)),
+            Entry(id=parse("S-01"), title="a"),
+            Entry(id=parse("S-02"), title="b", depends_on=(parse("S-01"),)),
+            Entry(id=parse("S-03"), title="c", depends_on=(parse("S-02"),)),
         ]
     )
     result = score(
-        Manifest(project="m"), graph, {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]}
+        Manifest(project="m"), graph, {"a": ["S-01"], "b": ["S-02"], "c": ["S-03"]}
     )
     assert result["chain"] is True
     assert any("parallel" in w for w in result["warnings"])
@@ -206,14 +206,14 @@ def test_a_proposed_cross_cutting_slice_is_checked_as_one():
     while the classification is still a proposal."""
     graph = Graph(
         [
-            Entry(id=parse("S·01"), title="a"),
-            Entry(id=parse("S·03"), title="audit", depends_on=(parse("S·01"),)),
+            Entry(id=parse("S-01"), title="a"),
+            Entry(id=parse("S-03"), title="audit", depends_on=(parse("S-01"),)),
         ]
     )
     result = score(
         Manifest(project="m"),
         graph,
-        {"a": ["S·01"], "audit": ["S·03"]},
+        {"a": ["S-01"], "audit": ["S-03"]},
         types={"audit": CROSS_CUTTING},
     )
     assert result["legal"] is False
@@ -221,7 +221,7 @@ def test_a_proposed_cross_cutting_slice_is_checked_as_one():
 
 
 def test_scoring_returns_inputs_not_a_verdict():
-    result = score(Manifest(project="m"), _spec(), {"a": ["S·01", "S·02", "S·03"]})
+    result = score(Manifest(project="m"), _spec(), {"a": ["S-01", "S-02", "S-03"]})
     assert "verdict" not in result
     assert "good is not" in result["note"]
 
@@ -232,11 +232,11 @@ def test_a_superseded_entry_is_still_a_legitimate_member():
     slicing the moment it had taken one correction."""
     graph = Graph(
         [
-            Entry(id=parse("S·01"), title="old"),
-            Entry(id=parse("S·02"), title="new", supersedes=parse("S·01")),
+            Entry(id=parse("S-01"), title="old"),
+            Entry(id=parse("S-02"), title="new", supersedes=parse("S-01")),
         ]
     )
-    result = score(Manifest(project="m"), graph, {"a": ["S·01", "S·02"]})
+    result = score(Manifest(project="m"), graph, {"a": ["S-01", "S-02"]})
     assert result["legal"] is True
     assert result["slices"][0]["size"] == 2
 
@@ -256,7 +256,7 @@ def _seed_behaviour(store, n=4):
     from mu_spec.graph import Entry
     from mu_spec.identifiers import parse
 
-    store.append("m", [Entry(id=parse(f"B·0{i}"), title=f"b{i}") for i in range(1, n + 1)])
+    store.append("m", [Entry(id=parse(f"B-0{i}"), title=f"b{i}") for i in range(1, n + 1)])
 
 
 def test_a_proposal_is_stored_and_read_back(tmp_path):
@@ -267,11 +267,11 @@ def test_a_proposal_is_stored_and_read_back(tmp_path):
 
     store = _store(tmp_path)
     _seed_behaviour(store)
-    body = {"proposal": {"capture": ["B·01", "B·02"], "reporting": ["B·03", "B·04"]},
+    body = {"proposal": {"capture": ["B-01", "B-02"], "reporting": ["B-03", "B-04"]},
             "note": "grouped by what they are about"}
     out = service.propose(store, "m", body)
     assert out["status"] == "pending"
-    assert service.get_proposal(store, "m")["proposal"]["capture"] == ["B·01", "B·02"]
+    assert service.get_proposal(store, "m")["proposal"]["capture"] == ["B-01", "B-02"]
 
 
 def test_ratifying_creates_the_slices(tmp_path):
@@ -279,14 +279,14 @@ def test_ratifying_creates_the_slices(tmp_path):
 
     store = _store(tmp_path)
     _seed_behaviour(store)
-    service.propose(store, "m", {"proposal": {"capture": ["B·01", "B·02"],
-                                              "reporting": ["B·03", "B·04"]},
+    service.propose(store, "m", {"proposal": {"capture": ["B-01", "B-02"],
+                                              "reporting": ["B-03", "B-04"]},
                                  "types": {"capture": "slice"}})
     out = service.ratify(store, "m", {})
     assert out["ratified"] is True
     slices = store.load_manifest("m").slices
     assert set(slices) == {"capture", "reporting"}
-    assert {str(i) for i in slices["capture"].members} == {"B·01", "B·02"}
+    assert {str(i) for i in slices["capture"].members} == {"B-01", "B-02"}
     assert service.get_proposal(store, "m")["status"] == "none"
 
 
@@ -301,8 +301,8 @@ def test_ratifying_an_overlapping_proposal_is_refused(tmp_path):
     store = _store(tmp_path)
     _seed_behaviour(store)
     with pytest.raises(ServiceError, match="exactly one slice"):
-        service.propose(store, "m", {"proposal": {"a": ["B·01", "B·02"],
-                                                  "b": ["B·02", "B·03"]}})
+        service.propose(store, "m", {"proposal": {"a": ["B-01", "B-02"],
+                                                  "b": ["B-02", "B-03"]}})
     assert store.load_manifest("m").slices == {}
     assert service.get_proposal(store, "m")["status"] == "none"
 
@@ -312,7 +312,7 @@ def test_rejecting_clears_the_proposal_and_keeps_the_reason(tmp_path):
 
     store = _store(tmp_path)
     _seed_behaviour(store)
-    service.propose(store, "m", {"proposal": {"a": ["B·01", "B·02", "B·03", "B·04"]}})
+    service.propose(store, "m", {"proposal": {"a": ["B-01", "B-02", "B-03", "B-04"]}})
     out = service.reject_proposal(store, "m", {"note": "entitlement should split"})
     assert out["rejected"] is True
     state = service.get_proposal(store, "m")

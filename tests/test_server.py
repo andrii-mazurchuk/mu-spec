@@ -84,9 +84,9 @@ def seed(store, prompts):
     )
     register_slice(store, "listings")
     for layer, title, parent in (
-        ("B", "A buyer can search listings", "I·01"),
-        ("A", "Search runs through an index", "B·01"),
-        ("S", "Use the stdlib index module", "A·01"),
+        ("B", "A buyer can search listings", "I-01"),
+        ("A", "Search runs through an index", "B-01"),
+        ("S", "Use the stdlib index module", "A-01"),
     ):
         call(
             store,
@@ -288,11 +288,11 @@ def test_a_target_is_accepted_as_a_hint_when_the_asker_does_know(store, prompts)
             "type": "comment",
             "project": "m",
             "title": "why an index?",
-            "targets": ["A·01"],
+            "targets": ["A-01"],
         },
     )
     _, msg = call(store, prompts, "GET", f"/inbox/{payload['message_id']}")
-    assert msg["targets"] == ["A·01"]
+    assert msg["targets"] == ["A-01"]
 
 
 def test_the_queue_can_be_filtered_by_status(store, prompts):
@@ -311,11 +311,11 @@ def test_a_request_is_resolved_with_what_it_produced(store, prompts):
         prompts,
         "POST",
         f"/inbox/{msg['message_id']}/resolve",
-        {"status": "accepted", "note": "shipped", "produced": ["I·02"]},
+        {"status": "accepted", "note": "shipped", "produced": ["I-02"]},
     )
     assert status == 200
     assert payload["status"] == "accepted"
-    assert payload["resolution"]["produced"] == ["I·02"]
+    assert payload["resolution"]["produced"] == ["I-02"]
 
 
 def test_a_request_cannot_be_resolved_twice(store, prompts):
@@ -392,7 +392,7 @@ def test_a_feature_may_originate_at_intent(store, prompts):
         },
     )
     assert status == 200
-    assert payload["created"] == ["I·02"]
+    assert payload["created"] == ["I-02"]
 
 
 def test_a_feature_may_not_originate_at_behaviour(store, prompts):
@@ -409,7 +409,7 @@ def test_a_feature_may_not_originate_at_behaviour(store, prompts):
             "slice": "listings",
             "in_response_to": msg["message_id"],
             "entries": [
-                {"layer": "B", "title": "sneaking in", "derives_from": ["I·01"]}
+                {"layer": "B", "title": "sneaking in", "derives_from": ["I-01"]}
             ],
         },
     )
@@ -432,14 +432,14 @@ def test_a_correction_may_originate_at_behaviour(store, prompts):
                 {
                     "layer": "B",
                     "title": "search results are ranked by rating",
-                    "derives_from": ["I·01"],
-                    "supersedes": "B·01",
+                    "derives_from": ["I-01"],
+                    "supersedes": "B-01",
                 }
             ],
         },
     )
     assert status == 200
-    assert payload["created"] == ["B·02"]
+    assert payload["created"] == ["B-02"]
 
 
 def test_a_correction_may_not_originate_at_spec(store, prompts):
@@ -459,8 +459,8 @@ def test_a_correction_may_not_originate_at_spec(store, prompts):
                 {
                     "layer": "S",
                     "title": "use a different module",
-                    "derives_from": ["A·01"],
-                    "supersedes": "S·01",
+                    "derives_from": ["A-01"],
+                    "supersedes": "S-01",
                 }
             ],
         },
@@ -471,7 +471,7 @@ def test_a_correction_may_not_originate_at_spec(store, prompts):
 
 def test_a_comment_may_never_create_entries(store, prompts):
     seed(store, prompts)
-    _, msg = post(store, prompts, "comment", "an observation", targets=["A·01"])
+    _, msg = post(store, prompts, "comment", "an observation", targets=["A-01"])
     status, payload = call(
         store,
         prompts,
@@ -512,13 +512,13 @@ def test_propagation_below_the_origin_is_unrestricted(store, prompts):
                 {
                     "layer": "B",
                     "title": "a buyer saves a search",
-                    "derives_from": ["I·02"],
+                    "derives_from": ["I-02"],
                 }
             ],
         },
     )
     assert status == 200
-    assert payload["created"] == ["B·02"]
+    assert payload["created"] == ["B-02"]
 
 
 def test_amendments_record_what_they_produced_against_the_request(store, prompts):
@@ -533,7 +533,7 @@ def test_amendments_record_what_they_produced_against_the_request(store, prompts
         {"in_response_to": mid, "entries": [{"layer": "I", "title": "save searches"}]},
     )
     _, message = call(store, prompts, "GET", f"/inbox/{mid}")
-    assert message["resolution"]["produced"] == ["I·02"]
+    assert message["resolution"]["produced"] == ["I-02"]
 
 
 # -- the propagation write path ---------------------------------------------
@@ -551,15 +551,15 @@ def test_an_amendment_that_would_orphan_an_entry_is_refused_whole(store, prompts
             "slice": "listings",
             "in_response_to": mid,
             "entries": [
-                {"layer": "A", "title": "good", "derives_from": ["B·01"]},
-                {"layer": "A", "title": "bad", "derives_from": ["B·99"]},
+                {"layer": "A", "title": "good", "derives_from": ["B-01"]},
+                {"layer": "A", "title": "bad", "derives_from": ["B-99"]},
             ],
         },
     )
     assert status == 409
     assert payload["admitted"] is False
     _, spine = call(store, prompts, "GET", "/projects/m/spine?layer=A")
-    assert [r["id"] for r in spine["spine"]] == ["A·01"]
+    assert [r["id"] for r in spine["spine"]] == ["A-01"]
 
 
 def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
@@ -572,7 +572,7 @@ def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
         {
             "slice": "listings",
             "in_response_to": mid,
-            "entries": [{"layer": "A", "title": "bad", "derives_from": ["B·99"]}],
+            "entries": [{"layer": "A", "title": "bad", "derives_from": ["B-99"]}],
         },
     )
     _, ok = call(
@@ -583,10 +583,10 @@ def test_a_rejected_amendment_does_not_burn_identifiers(store, prompts):
         {
             "slice": "listings",
             "in_response_to": mid,
-            "entries": [{"layer": "A", "title": "good", "derives_from": ["B·01"]}],
+            "entries": [{"layer": "A", "title": "good", "derives_from": ["B-01"]}],
         },
     )
-    assert ok["created"] == ["A·02"]
+    assert ok["created"] == ["A-02"]
 
 
 def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompts):
@@ -618,13 +618,13 @@ def test_an_amendment_leaving_something_unserved_is_still_admitted(store, prompt
             "slice": "listings",
             "in_response_to": mid,
             "entries": [
-                {"layer": "B", "title": "search", "derives_from": ["I·01"]}
+                {"layer": "B", "title": "search", "derives_from": ["I-01"]}
             ],
         },
     )
     assert status == 200
     assert payload["admitted"] is True
-    assert [f["id"] for f in payload["gates"]["findings"]] == ["B·01"]
+    assert [f["id"] for f in payload["gates"]["findings"]] == ["B-01"]
 
 
 # -- 5. retrieve the final layer --------------------------------------------
@@ -637,7 +637,7 @@ def test_slice_context_carries_the_write_set_with_full_bodies(store, prompts):
     )
     assert status == 200
     assert payload["issued"] is True
-    assert [e["id"] for e in payload["entries"]] == ["S·01"]
+    assert [e["id"] for e in payload["entries"]] == ["S-01"]
     assert payload["entries"][0]["body"]
 
 
@@ -648,10 +648,10 @@ def test_slice_context_justification_is_full_for_the_parent_and_spine_above(
     to know the behaviour and intent above it exist."""
     seed(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
-    chain = {e["id"]: e for e in payload["justification"]["S·01"]}
-    assert "body" in chain["A·01"]
-    assert "body" not in chain["B·01"]
-    assert "body" not in chain["I·01"]
+    chain = {e["id"]: e for e in payload["justification"]["S-01"]}
+    assert "body" in chain["A-01"]
+    assert "body" not in chain["B-01"]
+    assert "body" not in chain["I-01"]
 
 
 def test_slice_context_grants_no_edit_permission(store, prompts):
@@ -662,7 +662,7 @@ def test_slice_context_grants_no_edit_permission(store, prompts):
     seed(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert "audit" not in payload
-    assert [e["id"] for e in payload["entries"]] == ["S·01"]
+    assert [e["id"] for e in payload["entries"]] == ["S-01"]
 
 
 def test_deriving_from_an_already_retired_parent_is_refused(store, prompts):
@@ -685,8 +685,8 @@ def test_deriving_from_an_already_retired_parent_is_refused(store, prompts):
             "entries": [{
                 "layer": "B",
                 "title": "ranked by rating",
-                "derives_from": ["I\u00b701"],
-                "supersedes": "B\u00b701",
+                "derives_from": ["I-01"],
+                "supersedes": "B-01",
             }],
         },
     )
@@ -704,7 +704,7 @@ def test_deriving_from_an_already_retired_parent_is_refused(store, prompts):
             "entries": [{
                 "layer": "A",
                 "title": "a fresh architecture citing the retired behaviour",
-                "derives_from": ["B\u00b701"],
+                "derives_from": ["B-01"],
             }],
         },
     )
@@ -715,7 +715,7 @@ def test_deriving_from_an_already_retired_parent_is_refused(store, prompts):
 
 
 def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
-    """The realistic path to unsound: a correction retires B·01, and A·01
+    """The realistic path to unsound: a correction retires B-01, and A-01
     is left pointing at a retired entry. The architecture is now a stale
     reference, so no code may be produced from the spec beneath it until it
     is re-derived."""
@@ -733,8 +733,8 @@ def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
                 {
                     "layer": "B",
                     "title": "ranked by rating",
-                    "derives_from": ["I·01"],
-                    "supersedes": "B·01",
+                    "derives_from": ["I-01"],
+                    "supersedes": "B-01",
                 }
             ],
         },
@@ -751,7 +751,7 @@ def test_slice_context_is_refused_when_the_graph_is_unsound(store, prompts):
     # exists to prevent.
     assert [
         f["id"] for f in payload["gates"]["findings"] if f["kind"] == "stranded"
-    ] == ["A·01"]
+    ] == ["A-01"]
 
 
 def test_slice_context_is_still_issued_while_another_branch_is_incomplete(
@@ -799,16 +799,16 @@ def test_review_shows_entries_with_their_justification_and_what_serves_them(
     status, payload = call(store, prompts, "GET", "/projects/m/review?layer=A")
     row = payload["entries"][0]
     assert status == 200
-    assert row["id"] == "A·01"
+    assert row["id"] == "A-01"
     assert row["derives_from_titles"] == [
-        {"id": "B·01", "title": "A buyer can search listings"}
+        {"id": "B-01", "title": "A buyer can search listings"}
     ]
-    assert row["served_by"] == ["S·01"]
+    assert row["served_by"] == ["S-01"]
 
 
 def test_review_attaches_comments_to_the_entry_they_target(store, prompts):
     seed(store, prompts)
-    post(store, prompts, "comment", "why an index?", targets=["A·01"])
+    post(store, prompts, "comment", "why an index?", targets=["A-01"])
     _, payload = call(store, prompts, "GET", "/projects/m/review?layer=A")
     assert payload["entries"][0]["comments"][0]["title"] == "why an index?"
 
@@ -824,7 +824,7 @@ def test_review_needs_a_layer(store, prompts):
 def test_spine_carries_no_bodies(store, prompts):
     seed(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/spine")
-    assert [r["id"] for r in payload["spine"]] == ["I·01", "B·01", "A·01", "S·01"]
+    assert [r["id"] for r in payload["spine"]] == ["I-01", "B-01", "A-01", "S-01"]
     assert all("body" not in row for row in payload["spine"])
 
 
@@ -832,27 +832,27 @@ def test_spine_reports_which_slice_each_entry_belongs_to(store, prompts):
     seed(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/spine")
     slices = {r["id"]: r["slice"] for r in payload["spine"]}
-    assert slices["S·01"] == "listings"
-    assert slices["I·01"] is None  # intent is not sliced
+    assert slices["S-01"] == "listings"
+    assert slices["I-01"] is None  # intent is not sliced
 
 
 def test_spine_can_be_filtered_to_one_layer(store, prompts):
     seed(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/spine?layer=S")
-    assert [r["id"] for r in payload["spine"]] == ["S·01"]
+    assert [r["id"] for r in payload["spine"]] == ["S-01"]
 
 
 def test_get_entry_returns_the_body_and_both_directions(store, prompts):
     seed(store, prompts)
-    _, payload = call(store, prompts, "GET", "/projects/m/entries/A·01")
-    assert payload["derives_from"] == ["B·01"]
-    assert payload["children"] == ["S·01"]
+    _, payload = call(store, prompts, "GET", "/projects/m/entries/A-01")
+    assert payload["derives_from"] == ["B-01"]
+    assert payload["children"] == ["S-01"]
     assert payload["body"]
 
 
 def test_get_entry_for_a_missing_identifier_is_refused(store, prompts):
     seed(store, prompts)
-    assert call(store, prompts, "GET", "/projects/m/entries/A·99")[0] == 400
+    assert call(store, prompts, "GET", "/projects/m/entries/A-99")[0] == 400
 
 
 # -- same-layer dependencies, end to end -------------------------------------
@@ -863,9 +863,9 @@ def _second_slice(store, prompts, mid, depends_on=None):
     the first slice's spec."""
     register_slice(store, "payouts")
     for layer, title, parent in (
-        ("B", "A seller is paid out", "I·01"),
-        ("A", "Payouts run nightly", "B·02"),
-        ("S", "Use the ledger module", "A·02"),
+        ("B", "A seller is paid out", "I-01"),
+        ("A", "Payouts run nightly", "B-02"),
+        ("S", "Use the ledger module", "A-02"),
     ):
         entry = {
             "layer": layer,
@@ -886,21 +886,21 @@ def _second_slice(store, prompts, mid, depends_on=None):
 
 def test_the_spine_shows_both_edge_kinds(store, prompts):
     mid = seed(store, prompts)
-    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    _second_slice(store, prompts, mid, depends_on=["S-01"])
     _, payload = call(store, prompts, "GET", "/projects/m/spine?layer=S")
     rows = {r["id"]: r for r in payload["spine"]}
-    assert rows["S·02"]["derives_from"] == ["A·02"]
-    assert rows["S·02"]["depends_on"] == ["S·01"]
+    assert rows["S-02"]["derives_from"] == ["A-02"]
+    assert rows["S-02"]["depends_on"] == ["S-01"]
 
 
 def test_the_read_set_follows_a_dependency_nobody_declared(store, prompts):
     """The manifest has no field to declare a slice dependency in. payouts
     lands in discovery's read set purely because an entry said so."""
     mid = seed(store, prompts)
-    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    _second_slice(store, prompts, mid, depends_on=["S-01"])
     _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=payouts")
     assert wp["issued"] is True
-    assert [(e["id"], e["slice"]) for e in wp["read_set"]] == [("S·01", "listings")]
+    assert [(e["id"], e["slice"]) for e in wp["read_set"]] == [("S-01", "listings")]
     assert "body" not in wp["read_set"][0]
 
 
@@ -928,8 +928,8 @@ def test_an_amendment_depending_across_layers_is_refused(store, prompts):
                 {
                     "layer": "B",
                     "title": "A seller is paid out",
-                    "derives_from": ["I·01"],
-                    "depends_on": ["A·01"],
+                    "derives_from": ["I-01"],
+                    "depends_on": ["A-01"],
                 }
             ],
         },
@@ -954,8 +954,8 @@ def test_an_amendment_depending_on_nothing_that_exists_is_refused(store, prompts
                 {
                     "layer": "B",
                     "title": "A seller is paid out",
-                    "derives_from": ["I·01"],
-                    "depends_on": ["B·99"],
+                    "derives_from": ["I-01"],
+                    "depends_on": ["B-99"],
                 }
             ],
         },
@@ -965,11 +965,11 @@ def test_an_amendment_depending_on_nothing_that_exists_is_refused(store, prompts
 
 
 def test_no_slice_context_is_issued_while_a_dependency_is_stale(store, prompts):
-    """Superseding S·01 leaves payouts holding the old meaning. The graph is
+    """Superseding S-01 leaves payouts holding the old meaning. The graph is
     unsound until payouts re-derives, and no executor is handed a package
     built on it."""
     mid = seed(store, prompts)
-    _second_slice(store, prompts, mid, depends_on=["S·01"])
+    _second_slice(store, prompts, mid, depends_on=["S-01"])
     call(
         store,
         prompts,
@@ -982,8 +982,8 @@ def test_no_slice_context_is_issued_while_a_dependency_is_stale(store, prompts):
                 {
                     "layer": "S",
                     "title": "Use a different index module",
-                    "derives_from": ["A·01"],
-                    "supersedes": "S·01",
+                    "derives_from": ["A-01"],
+                    "supersedes": "S-01",
                 }
             ],
         },
@@ -1004,9 +1004,9 @@ def test_cross_cutting_entries_arrive_undeclared(store, prompts):
     mid = seed(store, prompts)
     register_slice(store, "audit")
     for layer, title, parent in (
-        ("B", "Every state change is recorded", "I·01"),
-        ("A", "An append-only event log", "B·02"),
-        ("S", "audit/log.py appends a record", "A·02"),
+        ("B", "Every state change is recorded", "I-01"),
+        ("A", "An append-only event log", "B-02"),
+        ("S", "audit/log.py appends a record", "A-02"),
     ):
         call(
             store,
@@ -1029,7 +1029,7 @@ def test_cross_cutting_entries_arrive_undeclared(store, prompts):
 
     _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert wp["read_set"] == []
-    assert [(e["id"], e["slice"]) for e in wp["cross_cutting"]] == [("S·02", "audit")]
+    assert [(e["id"], e["slice"]) for e in wp["cross_cutting"]] == [("S-02", "audit")]
     assert "body" not in wp["cross_cutting"][0]
 
 
@@ -1046,7 +1046,7 @@ def test_a_cross_cutting_slice_does_not_read_itself(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "Every state change is recorded",
-                 "derives_from": ["I·01"]},
+                 "derives_from": ["I-01"]},
             ],
         },
     )
@@ -1075,7 +1075,7 @@ def test_several_slices_can_be_cross_cutting_at_once(store, prompts):
                 "in_response_to": mid,
                 "entries": [
                     {"layer": "B", "title": f"{name} everywhere",
-                     "derives_from": ["I·01"]}
+                     "derives_from": ["I-01"]}
                 ],
             },
         )
@@ -1113,13 +1113,13 @@ def _spec_in(store, prompts, mid, slice_name, title, parent, depends_on=None):
 
 
 def _two_columns(store, prompts):
-    """listings (S·01) and payouts (S·02), no dependency between them yet."""
+    """listings (S-01) and payouts (S-02), no dependency between them yet."""
     mid = seed(store, prompts)
     register_slice(store, "payouts")
     for layer, title, parent in (
-        ("B", "A seller is paid out", "I·01"),
-        ("A", "Payouts run nightly", "B·02"),
-        ("S", "Use the ledger module", "A·02"),
+        ("B", "A seller is paid out", "I-01"),
+        ("A", "Payouts run nightly", "B-02"),
+        ("S", "Use the ledger module", "A-02"),
     ):
         call(
             store,
@@ -1141,11 +1141,11 @@ def test_an_amendment_closing_a_slice_cycle_is_refused(store, prompts):
     """payouts already depends on listings. A listings entry that depends
     back on payouts would leave neither derivable first."""
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     status, payload = _spec_in(
-        store, prompts, mid, "listings", "index reads the ledger", "A·01",
-        depends_on=["S·02"],
+        store, prompts, mid, "listings", "index reads the ledger", "A-01",
+        depends_on=["S-02"],
     )
     assert (status, payload["admitted"]) == (409, False)
     finding = payload["slice_findings"][0]
@@ -1157,8 +1157,8 @@ def test_an_amendment_closing_a_slice_cycle_is_refused(store, prompts):
 def test_a_one_way_dependency_between_slices_is_admitted(store, prompts):
     mid = _two_columns(store, prompts)
     status, payload = _spec_in(
-        store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-        depends_on=["S·01"],
+        store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+        depends_on=["S-01"],
     )
     assert (status, payload["admitted"]) == (200, True)
     assert payload["gates"]["slice_findings"] == []
@@ -1168,8 +1168,8 @@ def test_a_cross_cutting_slice_reaching_into_a_feature_slice_is_refused(store, p
     mid = seed(store, prompts)
     register_slice(store, "audit")
     for layer, title, parent in (
-        ("B", "Every state change is recorded", "I·01"),
-        ("A", "An append-only event log", "B·02"),
+        ("B", "Every state change is recorded", "I-01"),
+        ("A", "An append-only event log", "B-02"),
     ):
         call(
             store,
@@ -1187,8 +1187,8 @@ def test_a_cross_cutting_slice_reaching_into_a_feature_slice_is_refused(store, p
     call(store, prompts, "POST", "/projects/m/slices/audit/type",
          {"type": "cross_cutting"})
     status, payload = _spec_in(
-        store, prompts, mid, "audit", "audit/log.py reads the listing", "A·02",
-        depends_on=["S·01"],
+        store, prompts, mid, "audit", "audit/log.py reads the listing", "A-02",
+        depends_on=["S-01"],
     )
     assert (status, payload["admitted"]) == (409, False)
     assert payload["slice_findings"][0]["kind"] == "cross_cutting_outbound"
@@ -1198,8 +1198,8 @@ def test_classifying_a_slice_that_already_reaches_out_is_refused(store, prompts)
     """The same rule, through the other door. payouts depends on listings, so
     it cannot be declared cross-cutting after the fact."""
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     status, payload = call(
         store, prompts, "POST", "/projects/m/slices/payouts/type",
         {"type": "cross_cutting"},
@@ -1211,16 +1211,16 @@ def test_classifying_a_slice_that_already_reaches_out_is_refused(store, prompts)
 
 def test_no_slice_context_is_issued_while_slices_cycle(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     # Build the cycle behind the gate's back, the way a bad import would.
     from mu_spec.graph import Entry
     from mu_spec.identifiers import parse as pid
 
     store.append(
         "m",
-        [Entry(id=pid("S·09"), derives_from=(pid("A·01"),), title="back-edge",
-               depends_on=(pid("S·02"),))],
+        [Entry(id=pid("S-09"), derives_from=(pid("A-01"),), title="back-edge",
+               depends_on=(pid("S-02"),))],
         slice_name="listings",
     )
     _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
@@ -1235,9 +1235,9 @@ def _audit_column(store, prompts, mid):
     """A cross-cutting slice with a full column, classified as one."""
     register_slice(store, "audit")
     for layer, title, parent in (
-        ("B", "Every state change is recorded", "I·01"),
-        ("A", "An append-only event log", "B·02"),
-        ("S", "audit/log.py appends a record", "A·02"),
+        ("B", "Every state change is recorded", "I-01"),
+        ("A", "An append-only event log", "B-02"),
+        ("S", "audit/log.py appends a record", "A-02"),
     ):
         call(
             store,
@@ -1271,16 +1271,16 @@ def test_a_slice_may_emit_into_a_cross_cutting_slice(store, prompts):
                 {
                     "layer": "S",
                     "title": "search/index.py records every query",
-                    "derives_from": ["A·01"],
-                    "emits_into": ["S·02"],
+                    "derives_from": ["A-01"],
+                    "emits_into": ["S-02"],
                 }
             ],
         },
     )
     assert (status, payload["admitted"]) == (200, True)
     _, spine = call(store, prompts, "GET", "/projects/m/spine?layer=S")
-    row = [r for r in spine["spine"] if r["id"] == "S·03"][0]
-    assert row["emits_into"] == ["S·02"]
+    row = [r for r in spine["spine"] if r["id"] == "S-03"][0]
+    assert row["emits_into"] == ["S-02"]
     assert row["depends_on"] == []
 
 
@@ -1301,8 +1301,8 @@ def test_an_emission_imposes_no_order_on_the_concern(store, prompts):
                 {
                     "layer": "S",
                     "title": "search/index.py records every query",
-                    "derives_from": ["A·01"],
-                    "emits_into": ["S·02"],
+                    "derives_from": ["A-01"],
+                    "emits_into": ["S-02"],
                 }
             ],
         },
@@ -1311,7 +1311,7 @@ def test_an_emission_imposes_no_order_on_the_concern(store, prompts):
     assert manifest.dependency_graph(store.load_graph("m"))["listings"] == ()
     _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
     assert wp["read_set"] == []
-    assert [e["id"] for e in wp["cross_cutting"]] == ["S·02"]
+    assert [e["id"] for e in wp["cross_cutting"]] == ["S-02"]
 
 
 def test_depending_on_a_cross_cutting_slice_is_refused_end_to_end(store, prompts):
@@ -1329,8 +1329,8 @@ def test_depending_on_a_cross_cutting_slice_is_refused_end_to_end(store, prompts
                 {
                     "layer": "S",
                     "title": "search/index.py asks the log",
-                    "derives_from": ["A·01"],
-                    "depends_on": ["S·02"],
+                    "derives_from": ["A-01"],
+                    "depends_on": ["S-02"],
                 }
             ],
         },
@@ -1360,8 +1360,8 @@ def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):
                 {
                     "layer": "S",
                     "title": "search/index.py publishes to payouts",
-                    "derives_from": ["A·01"],
-                    "emits_into": ["S·02"],
+                    "derives_from": ["A-01"],
+                    "emits_into": ["S-02"],
                 }
             ],
         },
@@ -1375,8 +1375,8 @@ def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):
 
 def test_waves_are_computed_from_the_dependency_graph(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     _, payload = call(store, prompts, "GET", "/projects/m/waves")
     assert payload["waves"] == [
         {"wave": 0, "slices": ["listings"], "width": 1},
@@ -1427,7 +1427,7 @@ def test_an_issue_resolves_its_target_slice_when_filed(store, prompts):
     """Resolved at filing time, so grouping later cannot be thrown off by
     membership that has since moved."""
     _two_columns(store, prompts)
-    status, payload = _issue(store, prompts, "S·01", "additive", "needs a size")
+    status, payload = _issue(store, prompts, "S-01", "additive", "needs a size")
     assert status == 201
     assert payload["target_slice"] == "listings"
     assert payload["status"] == "open"
@@ -1442,11 +1442,11 @@ def test_an_issue_against_a_malformed_target_is_a_caller_error(store, prompts):
 
 def test_reconciliation_groups_open_issues_by_target_slice(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
-    _issue(store, prompts, "S·01", "additive", "needs a size", "payouts")
-    _issue(store, prompts, "S·01", "additive", "needs a count", "payouts")
-    _issue(store, prompts, "S·02", "additive", "needs a total", "listings")
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
+    _issue(store, prompts, "S-01", "additive", "needs a size", "payouts")
+    _issue(store, prompts, "S-01", "additive", "needs a count", "payouts")
+    _issue(store, prompts, "S-02", "additive", "needs a total", "listings")
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     assert [(b["slice"], b["wave"], len(b["issues"])) for b in payload["batches"]] == [
         ("listings", 0, 2),
@@ -1457,19 +1457,19 @@ def test_reconciliation_groups_open_issues_by_target_slice(store, prompts):
 
 def test_a_batch_carries_the_rerun_scope_of_its_semantic_issues(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
-    _issue(store, prompts, "S·01", "semantic", "it returns ids not names",
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
+    _issue(store, prompts, "S-01", "semantic", "it returns ids not names",
            "listings")
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
-    assert payload["batches"][0]["rerun"] == ["S·03"]
+    assert payload["batches"][0]["rerun"] == ["S-03"]
 
 
 def test_an_additive_issue_leaves_the_rerun_scope_empty(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
-    _issue(store, prompts, "S·01", "additive", "needs a size", "listings")
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
+    _issue(store, prompts, "S-01", "additive", "needs a size", "listings")
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     assert payload["batches"][0]["rerun"] == []
 
@@ -1478,7 +1478,7 @@ def test_the_router_sees_headers_not_assumptions(store, prompts):
     """Roughly thirty tokens an issue. The assumption is stored and readable,
     but never in what the router loads."""
     _two_columns(store, prompts)
-    _issue(store, prompts, "S·01", "additive", "needs a size")
+    _issue(store, prompts, "S-01", "additive", "needs a size")
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     header = payload["batches"][0]["issues"][0]
     assert "assumption" not in header
@@ -1491,9 +1491,9 @@ def test_the_router_sees_headers_not_assumptions(store, prompts):
 
 def test_a_semantic_issue_reaching_back_a_wave_is_escalated(store, prompts):
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
-    _issue(store, prompts, "S·01", "semantic", "it means something else",
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
+    _issue(store, prompts, "S-01", "semantic", "it means something else",
            "payouts")
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     assert payload["batches"] == []
@@ -1502,20 +1502,20 @@ def test_a_semantic_issue_reaching_back_a_wave_is_escalated(store, prompts):
 
 def test_an_issue_past_the_round_cap_is_escalated(store, prompts):
     _two_columns(store, prompts)
-    _issue(store, prompts, "S·01", "additive", "again", "payouts", round=3)
+    _issue(store, prompts, "S-01", "additive", "again", "payouts", round=3)
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     assert payload["escalations"][0]["reason"] == "round_cap"
 
 
 def test_a_closed_issue_leaves_the_queue(store, prompts):
     _two_columns(store, prompts)
-    _issue(store, prompts, "S·01", "additive", "needs a size")
+    _issue(store, prompts, "S-01", "additive", "needs a size")
     call(store, prompts, "POST", "/projects/m/issues/iss-0001/close",
-         {"status": "resolved", "note": "added", "produced": ["S·09"]})
+         {"status": "resolved", "note": "added", "produced": ["S-09"]})
     _, payload = call(store, prompts, "GET", "/projects/m/reconcile")
     assert payload["batches"] == []
     _, listed = call(store, prompts, "GET", "/projects/m/issues?status=resolved")
-    assert listed["issues"][0]["resolution"]["produced"] == ["S·09"]
+    assert listed["issues"][0]["resolution"]["produced"] == ["S-09"]
 
 
 def test_issues_are_kept_apart_from_the_inbox(store, prompts):
@@ -1523,7 +1523,7 @@ def test_issues_are_kept_apart_from_the_inbox(store, prompts):
     part of the pipeline needs from another. Conflating them would put a
     request nobody outside ever made into the queue a human reads."""
     _two_columns(store, prompts)
-    _issue(store, prompts, "S·01", "additive", "needs a size")
+    _issue(store, prompts, "S-01", "additive", "needs a size")
     _, messages = call(store, prompts, "GET", "/inbox")
     assert not any("needs a size" in m["title"] for m in messages["messages"])
 
@@ -1532,22 +1532,22 @@ def test_issues_are_kept_apart_from_the_inbox(store, prompts):
 
 
 def _implemented(store, prompts):
-    """The seeded project with S·01 implemented by a module."""
+    """The seeded project with S-01 implemented by a module."""
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "search/index.py", "implements": ["S·01"]})
+         {"path": "search/index.py", "implements": ["S-01"]})
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "payouts/ledger.py", "implements": ["S·03"]})
+         {"path": "payouts/ledger.py", "implements": ["S-03"]})
     return mid
 
 
 def test_a_module_declares_what_it_implements(store, prompts):
     _two_columns(store, prompts)
     status, payload = call(store, prompts, "POST", "/projects/m/modules",
-                           {"path": "search/index.py", "implements": ["S·01"]})
-    assert (status, payload["implements"]) == (200, ["S·01"])
+                           {"path": "search/index.py", "implements": ["S-01"]})
+    assert (status, payload["implements"]) == (200, ["S-01"])
 
 
 def test_spec_entries_nothing_implements_are_listed(store, prompts):
@@ -1560,17 +1560,17 @@ def test_spec_entries_nothing_implements_are_listed(store, prompts):
     """
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "search/index.py", "implements": ["S·01"]})
+         {"path": "search/index.py", "implements": ["S-01"]})
     _, payload = call(store, prompts, "GET", "/projects/m/modules")
     assert "unimplemented" not in payload
     _, live = call(store, prompts, "GET", "/projects/m/units")
-    assert live["live"]["unimplemented"] == ["S·02"]
+    assert live["live"]["unimplemented"] == ["S-02"]
 
 
 def test_a_module_claiming_a_layer_above_spec_is_refused(store, prompts):
     _two_columns(store, prompts)
     status, payload = call(store, prompts, "POST", "/projects/m/modules",
-                           {"path": "search/index.py", "implements": ["A·01"]})
+                           {"path": "search/index.py", "implements": ["A-01"]})
     assert status == 400
     assert "implements spec entries" in payload["error"]
 
@@ -1579,13 +1579,13 @@ def test_the_first_plan_is_the_whole_spec_layer(store, prompts):
     _implemented(store, prompts)
     _, payload = call(store, prompts, "GET", "/projects/m/plan")
     assert payload["issued"] is True
-    assert payload["diff"]["added"] == ["S·01", "S·02", "S·03"]
+    assert payload["diff"]["added"] == ["S-01", "S-02", "S-03"]
     assert payload["mark"] == 3
 
 
 def test_a_supersession_produces_a_write_set_and_a_read_set(store, prompts):
-    """search/index.py implemented S·01 and must change. payouts/ledger.py
-    consumed S·01's meaning through S·03 and is read-only context."""
+    """search/index.py implemented S-01 and must change. payouts/ledger.py
+    consumed S-01's meaning through S-03 and is read-only context."""
     mid = _implemented(store, prompts)
     call(
         store,
@@ -1599,13 +1599,13 @@ def test_a_supersession_produces_a_write_set_and_a_read_set(store, prompts):
                 {
                     "layer": "S",
                     "title": "a different index module",
-                    "derives_from": ["A·01"],
-                    "supersedes": "S·01",
+                    "derives_from": ["A-01"],
+                    "supersedes": "S-01",
                 }
             ],
         },
     )
-    # S·03 still points at retired S·01, so re-derive it before planning.
+    # S-03 still points at retired S-01, so re-derive it before planning.
     call(
         store,
         prompts,
@@ -1618,17 +1618,17 @@ def test_a_supersession_produces_a_write_set_and_a_read_set(store, prompts):
                 {
                     "layer": "S",
                     "title": "ledger reads the new index",
-                    "derives_from": ["A·02"],
-                    "depends_on": ["S·04"],
-                    "supersedes": "S·03",
+                    "derives_from": ["A-02"],
+                    "depends_on": ["S-04"],
+                    "supersedes": "S-03",
                 }
             ],
         },
     )
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "payouts/ledger.py", "implements": ["S·05"]})
+         {"path": "payouts/ledger.py", "implements": ["S-05"]})
     _, payload = call(store, prompts, "GET", "/projects/m/plan?since=3")
-    assert payload["diff"]["retired"] == ["S·01", "S·03"]
+    assert payload["diff"]["retired"] == ["S-01", "S-03"]
     assert [r["path"] for r in payload["write_set"]] == [
         "payouts/ledger.py",
         "search/index.py",
@@ -1650,8 +1650,8 @@ def test_planning_is_refused_while_the_graph_is_unsound(store, prompts):
                 {
                     "layer": "S",
                     "title": "a different index module",
-                    "derives_from": ["A·01"],
-                    "supersedes": "S·01",
+                    "derives_from": ["A-01"],
+                    "supersedes": "S-01",
                 }
             ],
         },
@@ -1718,15 +1718,15 @@ def test_a_correction_records_the_layer_it_entered_at(store, prompts):
                 {
                     "layer": "B",
                     "title": "ranked by recency, not relevance",
-                    "derives_from": ["I·01"],
-                    "supersedes": "B·01",
+                    "derives_from": ["I-01"],
+                    "supersedes": "B-01",
                 }
             ],
         },
     )
     _, payload = call(store, prompts, "GET", "/projects/m/events?kind=correction")
     assert payload["events"][0]["facts"]["entered_at"] == "behaviour"
-    assert payload["events"][0]["refs"] == ["B·01"]
+    assert payload["events"][0]["refs"] == ["B-01"]
 
 
 def test_a_refusal_is_recorded_even_though_it_changed_nothing(store, prompts):
@@ -1742,7 +1742,7 @@ def test_a_refusal_is_recorded_even_though_it_changed_nothing(store, prompts):
             "slice": "listings",
             "in_response_to": mid,
             "entries": [
-                {"layer": "A", "title": "orphan", "derives_from": ["B·99"]}
+                {"layer": "A", "title": "orphan", "derives_from": ["B-99"]}
             ],
         },
     )
@@ -1754,7 +1754,7 @@ def test_an_assumption_is_kept_where_analysis_can_find_it(store, prompts):
     """§6 calls declaring what you could not derive the thing that makes
     gates real. Across projects these map where the pipeline is too thin."""
     _two_columns(store, prompts)
-    _issue(store, prompts, "S·01", "additive", "no way to ask for its size")
+    _issue(store, prompts, "S-01", "additive", "no way to ask for its size")
     _, payload = call(store, prompts, "GET", "/projects/m/events?kind=issue_raised")
     assert payload["events"][0]["facts"]["assumption"] == "assumed the old shape holds"
 
@@ -1792,12 +1792,12 @@ def test_candidates_expose_shared_parentage(store, prompts):
             "slice": "listings",
             "in_response_to": mid,
             "entries": [
-                {"layer": "B", "title": "filter", "derives_from": ["I·01"]}
+                {"layer": "B", "title": "filter", "derives_from": ["I-01"]}
             ],
         },
     )
     _, payload = call(store, prompts, "GET", "/projects/m/slicing/candidates")
-    assert payload["shared_parentage"][0]["pair"] == ["B·01", "B·02"]
+    assert payload["shared_parentage"][0]["pair"] == ["B-01", "B-02"]
 
 
 def test_a_proposal_can_be_scored_without_creating_it(store, prompts):
@@ -1808,7 +1808,7 @@ def test_a_proposal_can_be_scored_without_creating_it(store, prompts):
         prompts,
         "POST",
         "/projects/m/slicing/score",
-        {"proposal": {"everything": ["S·01", "S·02"]}},
+        {"proposal": {"everything": ["S-01", "S-02"]}},
     )
     assert (status, payload["legal"]) == (200, True)
     assert set(store.load_manifest("m").slices) == before
@@ -1818,14 +1818,14 @@ def test_a_proposal_that_would_be_illegal_says_so_without_refusing(store, prompt
     """Scoring never gates. It reports that the cut is illegal and returns
     200 -- refusing would make trialling impossible."""
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     status, payload = call(
         store,
         prompts,
         "POST",
         "/projects/m/slicing/score",
-        {"proposal": {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]}},
+        {"proposal": {"a": ["S-01"], "b": ["S-02"], "c": ["S-03"]}},
     )
     assert status == 200
     assert any("probably not a slice" in w for w in payload["warnings"])
@@ -1845,7 +1845,7 @@ def test_a_pending_proposal_comes_back_already_scored(store, prompts):
         prompts,
         "POST",
         "/projects/m/slicing/proposal",
-        {"proposal": {"a": ["S·01"], "b": ["S·02"]}, "note": "split by subject"},
+        {"proposal": {"a": ["S-01"], "b": ["S-02"]}, "note": "split by subject"},
     )
     status, payload = call(store, prompts, "GET", "/projects/m/slicing/proposal")
     assert (status, payload["status"]) == (200, "pending")
@@ -1875,14 +1875,14 @@ def test_an_illegal_pending_proposal_is_still_described(store, prompts):
     to do.
     """
     mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A·02",
-             depends_on=["S·01"])
+    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
+             depends_on=["S-01"])
     call(
         store,
         prompts,
         "POST",
         "/projects/m/slicing/proposal",
-        {"proposal": {"a": ["S·01"], "b": ["S·02"], "c": ["S·03"]}},
+        {"proposal": {"a": ["S-01"], "b": ["S-02"], "c": ["S-03"]}},
     )
     _, payload = call(store, prompts, "GET", "/projects/m/slicing/proposal")
     assert payload["status"] == "pending"
@@ -1986,7 +1986,7 @@ def test_every_declared_tool_path_actually_routes(store, prompts):
         # accept, then check some route of that method matches.
         # `id` and `entry` both name an identifier, and the route
         # patterns for those match [A-Z]·[0-9]+ rather than any word.
-        concrete = _re.sub(r"\{(id|entry)\}", "S·01", tool["path"])
+        concrete = _re.sub(r"\{(id|entry)\}", "S-01", tool["path"])
         concrete = _re.sub(r"\{[a-z_]+\}", "sample", concrete)
         if not any(
             method == tool["method"] and pattern.match(concrete)
@@ -2091,7 +2091,7 @@ def test_a_percent_encoded_identifier_resolves(store, prompts):
     identifier, one of this unit's core operations -- unreachable over HTTP
     for every entry that has ever existed."""
     seed(store, prompts)
-    raw = call(store, prompts, "GET", "/projects/m/entries/I·01")
+    raw = call(store, prompts, "GET", "/projects/m/entries/I-01")
     encoded = call(store, prompts, "GET", "/projects/m/entries/I%C2%B701")
     assert raw[0] == 200
     assert encoded == raw
@@ -2100,7 +2100,7 @@ def test_a_percent_encoded_identifier_resolves(store, prompts):
 def test_a_refused_amendment_burns_no_identifiers(store, prompts):
     """`allocate` ran before `append`, so an amendment that `append` then
     rejected had already committed the high-water mark. The first live
-    derivation session permanently burned B·01-B·04 that way and filed an
+    derivation session permanently burned B-01-B-04 that way and filed an
     issue about it -- the code comment two lines above the bug says a
     rejected amendment does not burn identifiers."""
     mid = seed(store, prompts)
@@ -2109,20 +2109,20 @@ def test_a_refused_amendment_burns_no_identifiers(store, prompts):
         store, prompts, "POST", "/projects/m/amendments",
         {"in_response_to": mid,
          "entries": [{"layer": "A", "title": "no slice given",
-                      "derives_from": ["B·01"]}]},
+                      "derives_from": ["B-01"]}]},
     )
     assert status >= 400
 
-    # The next architecture entry must be A·02 -- A·01 already existed from
-    # the seed, and the refused one must not have consumed A·03.
+    # The next architecture entry must be A-02 -- A-01 already existed from
+    # the seed, and the refused one must not have consumed A-03.
     status, payload = call(
         store, prompts, "POST", "/projects/m/amendments",
         {"slice": "listings", "in_response_to": mid,
          "entries": [{"layer": "A", "title": "a real one",
-                      "derives_from": ["B·01"]}]},
+                      "derives_from": ["B-01"]}]},
     )
     assert status == 200, payload
-    assert payload["created"] == ["A·02"]
+    assert payload["created"] == ["A-02"]
 
 
 def test_the_documented_tool_count_matches_the_manifest(store, prompts):
@@ -2149,8 +2149,8 @@ def test_the_documented_tool_count_matches_the_manifest(store, prompts):
 
 
 def test_an_amendment_may_only_write_one_layer(store, prompts):
-    """One session writes one layer. A repair session wrote B·25 and then
-    A·07 deriving from it in the same amendment -- so the architecture entry
+    """One session writes one layer. A repair session wrote B-25 and then
+    A-07 deriving from it in the same amendment -- so the architecture entry
     derived from the session's own reasoning rather than from an entry it
     read, and every gate still passed. Enforced here rather than asked for in
     a prompt: a mechanical check needs a function, not an agent."""
@@ -2159,8 +2159,8 @@ def test_an_amendment_may_only_write_one_layer(store, prompts):
         store, prompts, "POST", "/projects/m/amendments",
         {"slice": "listings", "in_response_to": mid,
          "entries": [
-             {"layer": "B", "title": "a behaviour", "derives_from": ["I·01"]},
-             {"layer": "A", "title": "its architecture", "derives_from": ["B·02"]},
+             {"layer": "B", "title": "a behaviour", "derives_from": ["I-01"]},
+             {"layer": "A", "title": "its architecture", "derives_from": ["B-02"]},
          ]},
     )
     assert status >= 400
@@ -2175,8 +2175,8 @@ def test_many_entries_at_one_layer_are_still_fine(store, prompts):
         store, prompts, "POST", "/projects/m/amendments",
         {"slice": "listings", "in_response_to": mid,
          "entries": [
-             {"layer": "B", "title": "one", "derives_from": ["I·01"]},
-             {"layer": "B", "title": "two", "derives_from": ["I·01"]},
+             {"layer": "B", "title": "one", "derives_from": ["I-01"]},
+             {"layer": "B", "title": "two", "derives_from": ["I-01"]},
          ]},
     )
     assert status == 200
@@ -2272,9 +2272,9 @@ def test_a_staged_entry_can_be_referenced_by_position(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "A seller lists an item",
-                 "derives_from": ["I·01"]},
+                 "derives_from": ["I-01"]},
                 {"layer": "B", "title": "A listing can be withdrawn",
-                 "derives_from": ["I·01"], "depends_on": ["#0"]},
+                 "derives_from": ["I-01"], "depends_on": ["#0"]},
             ],
         },
     )
@@ -2297,7 +2297,7 @@ def test_a_placeholder_past_the_end_of_the_batch_is_refused(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "A seller lists an item",
-                 "derives_from": ["I·01"], "depends_on": ["#7"]},
+                 "derives_from": ["I-01"], "depends_on": ["#7"]},
             ],
         },
     )
@@ -2321,7 +2321,7 @@ def test_a_placeholder_may_not_be_used_for_a_vertical_edge(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "A seller lists an item",
-                 "derives_from": ["I·01"]},
+                 "derives_from": ["I-01"]},
                 {"layer": "B", "title": "A listing can be withdrawn",
                  "derives_from": ["#0"]},
             ],
@@ -2343,7 +2343,7 @@ def test_a_placeholder_may_not_point_at_itself(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "A seller lists an item",
-                 "derives_from": ["I·01"], "depends_on": ["#0"]},
+                 "derives_from": ["I-01"], "depends_on": ["#0"]},
             ],
         },
     )
@@ -2370,7 +2370,7 @@ def test_an_amendment_naming_an_unratified_slice_is_refused(store, prompts):
             "in_response_to": mid,
             "entries": [
                 {"layer": "B", "title": "A seller lists an item",
-                 "derives_from": ["I·01"]},
+                 "derives_from": ["I-01"]},
             ],
         },
     )
@@ -2385,7 +2385,7 @@ def column(store, prompts, mid, slice_name="listings"):
     """One more complete vertical column inside an existing slice, so there
     is something a split can take out."""
     out = []
-    parent = "I·01"
+    parent = "I-01"
     for layer, title in (
         ("B", "A seller lists an item"),
         ("A", "Listings are written through one writer"),
@@ -2428,7 +2428,7 @@ def test_a_slice_splits_into_a_new_one_without_renumbering(store, prompts):
     owner = {r["id"]: r["slice"] for r in spine["spine"]}
     for identifier in moved:
         assert owner[identifier] == "discovery"
-    assert owner["B·01"] == "listings"
+    assert owner["B-01"] == "listings"
 
 
 def test_a_slice_may_not_be_split_into_an_existing_one(store, prompts):
@@ -2448,7 +2448,7 @@ def test_a_slice_may_not_be_split_into_an_existing_one(store, prompts):
         prompts,
         "POST",
         "/projects/m/slices/listings/split",
-        {"into": "discovery", "members": ["B·01"]},
+        {"into": "discovery", "members": ["B-01"]},
     )
     assert status == 400
     assert "merge" in payload["error"]
@@ -2461,7 +2461,7 @@ def test_splitting_an_unknown_slice_is_refused(store, prompts):
         prompts,
         "POST",
         "/projects/m/slices/nope/split",
-        {"into": "discovery", "members": ["B·01"]},
+        {"into": "discovery", "members": ["B-01"]},
     )
     assert status == 400
 
@@ -2474,7 +2474,7 @@ def test_splitting_something_the_slice_does_not_own_is_refused(store, prompts):
         prompts,
         "POST",
         "/projects/m/slices/listings/split",
-        {"into": "discovery", "members": ["I·01"]},
+        {"into": "discovery", "members": ["I-01"]},
     )
     assert status == 400
 
@@ -2502,14 +2502,14 @@ def test_a_split_that_would_create_a_cycle_is_refused(store, prompts):
         )
         return payload["created"][0]
 
-    b2 = amend({"layer": "B", "title": "A seller is paid", "derives_from": ["I·01"]})
-    # A·01 (staying) needs A·02 (leaving) -- listings will depend on discovery.
+    b2 = amend({"layer": "B", "title": "A seller is paid", "derives_from": ["I-01"]})
+    # A-01 (staying) needs A-02 (leaving) -- listings will depend on discovery.
     a2 = amend({"layer": "A", "title": "Payouts run nightly", "derives_from": [b2]})
     amend({"layer": "A", "title": "Search reads the ledger",
-           "derives_from": ["B·01"], "depends_on": [a2], "supersedes": "A·01"})
-    # S·02 (leaving) needs S·01 (staying) -- discovery will depend on listings.
+           "derives_from": ["B-01"], "depends_on": [a2], "supersedes": "A-01"})
+    # S-02 (leaving) needs S-01 (staying) -- discovery will depend on listings.
     s2 = amend({"layer": "S", "title": "ledger.py", "derives_from": [a2],
-                "depends_on": ["S·01"]})
+                "depends_on": ["S-01"]})
 
     status, payload = call(
         store,
@@ -2542,26 +2542,26 @@ def test_ratifying_files_behaviour_under_the_slice_it_was_given(store, prompts):
     call(store, prompts, "POST", "/projects/m/amendments",
          {"in_response_to": mid,
           "entries": [
-              {"layer": "B", "title": "search", "derives_from": ["I·01"]},
-              {"layer": "B", "title": "filter", "derives_from": ["I·01"]},
+              {"layer": "B", "title": "search", "derives_from": ["I-01"]},
+              {"layer": "B", "title": "filter", "derives_from": ["I-01"]},
           ]})
 
     held = store.root() / "m" / "behaviour" / "_unassigned.jsonl"
-    assert held.exists() and "B·01" in held.read_text(encoding="utf-8")
+    assert held.exists() and "B-01" in held.read_text(encoding="utf-8")
 
     call(store, prompts, "POST", "/projects/m/slicing/proposal",
-         {"proposal": {"listings": ["B·01"], "filters": ["B·02"]}})
+         {"proposal": {"listings": ["B-01"], "filters": ["B-02"]}})
     assert call(store, prompts, "POST", "/projects/m/slicing/proposal/ratify", {})[0] == 200
 
     # The holding file no longer claims what now has an owner.
-    assert "B·01" not in held.read_text(encoding="utf-8")
-    assert "B·01" in (store.root() / "m" / "behaviour" / "listings.jsonl").read_text(encoding="utf-8")
+    assert "B-01" not in held.read_text(encoding="utf-8")
+    assert "B-01" in (store.root() / "m" / "behaviour" / "listings.jsonl").read_text(encoding="utf-8")
 
     # And the graph still loads, with each entry exactly once.
     status, spine = call(store, prompts, "GET", "/projects/m/spine")
     assert status == 200, spine
     ids = [r["id"] for r in spine["spine"]]
-    assert sorted(ids) == ["B·01", "B·02", "I·01"]
+    assert sorted(ids) == ["B-01", "B-02", "I-01"]
 
 
 def test_a_split_after_ratification_does_not_duplicate_held_behaviour(store, prompts):
@@ -2577,15 +2577,15 @@ def test_a_split_after_ratification_does_not_duplicate_held_behaviour(store, pro
     call(store, prompts, "POST", "/projects/m/amendments",
          {"in_response_to": mid,
           "entries": [
-              {"layer": "B", "title": "search", "derives_from": ["I·01"]},
-              {"layer": "B", "title": "filter", "derives_from": ["I·01"]},
+              {"layer": "B", "title": "search", "derives_from": ["I-01"]},
+              {"layer": "B", "title": "filter", "derives_from": ["I-01"]},
           ]})
     call(store, prompts, "POST", "/projects/m/slicing/proposal",
-         {"proposal": {"listings": ["B·01", "B·02"]}})
+         {"proposal": {"listings": ["B-01", "B-02"]}})
     call(store, prompts, "POST", "/projects/m/slicing/proposal/ratify", {})
 
     status, payload = call(store, prompts, "POST",
-        "/projects/m/slices/listings/split", {"into": "filters", "members": ["B·02"]})
+        "/projects/m/slices/listings/split", {"into": "filters", "members": ["B-02"]})
     assert status == 200, payload
 
     status, spine = call(store, prompts, "GET", "/projects/m/spine")
@@ -2598,7 +2598,7 @@ def test_a_split_after_ratification_does_not_duplicate_held_behaviour(store, pro
 
 
 def _unsound(store, prompts, mid):
-    """Retire B·01, leaving A·01 derived from an entry that no longer lives.
+    """Retire B-01, leaving A-01 derived from an entry that no longer lives.
 
     The same path the slice-context tests use: this is what "unsound" looks
     like when it happens for real, rather than a hand-built broken file.
@@ -2616,8 +2616,8 @@ def _unsound(store, prompts, mid):
                 {
                     "layer": "B",
                     "title": "ranked by rating",
-                    "derives_from": ["I·01"],
-                    "supersedes": "B·01",
+                    "derives_from": ["I-01"],
+                    "supersedes": "B-01",
                 }
             ],
         },
@@ -2635,7 +2635,7 @@ def test_cutting_with_no_modules_declared_is_refused(store, prompts):
     assert status == 409
     assert payload["cut"] is False
     assert "module" in payload["reason"]
-    assert payload["unimplemented"] == ["S·01"]
+    assert payload["unimplemented"] == ["S-01"]
 
 
 def test_cutting_an_unsound_graph_is_refused_before_the_module_check(
@@ -2646,7 +2646,7 @@ def test_cutting_an_unsound_graph_is_refused_before_the_module_check(
     taken from one would hand out work derived from a retired entry."""
     mid = seed(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "search/index.py", "implements": ["S·01"]})
+         {"path": "search/index.py", "implements": ["S-01"]})
     _unsound(store, prompts, mid)
     status, payload = call(store, prompts, "POST", "/projects/m/units/cut", {})
     assert status == 409
@@ -2727,16 +2727,16 @@ def test_two_entries_in_one_file_are_two_units_over_one_write_set(store, prompts
     to know not to run them together."""
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "core.py", "implements": ["S·01", "S·02"]})
-    status_a, by_first = call(store, prompts, "GET", "/projects/m/units/S·01")
-    status_b, by_second = call(store, prompts, "GET", "/projects/m/units/S·02")
+         {"path": "core.py", "implements": ["S-01", "S-02"]})
+    status_a, by_first = call(store, prompts, "GET", "/projects/m/units/S-01")
+    status_b, by_second = call(store, prompts, "GET", "/projects/m/units/S-02")
     assert (status_a, status_b) == (200, 200)
-    assert by_first["unit"]["key"] == "S·01"
-    assert by_second["unit"]["key"] == "S·02"
+    assert by_first["unit"]["key"] == "S-01"
+    assert by_second["unit"]["key"] == "S-02"
     assert by_first["write_set"] == by_second["write_set"] == ["core.py"]
-    assert by_first["unit"]["entries"] == ["S·01"]
-    assert by_first["overlap"] == ["S·02"]
-    assert by_second["overlap"] == ["S·01"]
+    assert by_first["unit"]["entries"] == ["S-01"]
+    assert by_first["overlap"] == ["S-02"]
+    assert by_second["overlap"] == ["S-01"]
     assert by_first["follows"] == [] and by_second["follows"] == []
 
 
@@ -2822,7 +2822,7 @@ def test_the_unit_tool_names_what_it_actually_returns(store, prompts):
     assert ":T" in described, "the test-unit key form is undocumented"
     assert "key" in described.lower(), "get_work_unit never mentions a unit key"
 
-    _, unit = call(store, prompts, "GET", "/projects/m/units/S\u00b701")
+    _, unit = call(store, prompts, "GET", "/projects/m/units/S-01")
     for field in ("overlap", "file_scope", "follows", "write_set"):
         assert field in unit, f"the response lost {field}"
 
@@ -2836,14 +2836,14 @@ def test_a_unit_is_handed_the_other_contracts_its_files_must_serve(store, prompt
     then pin it permanently."""
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "core.py", "implements": ["S·01", "S·02"]})
-    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+         {"path": "core.py", "implements": ["S-01", "S-02"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S-01")
 
     scope = payload["file_scope"]
     assert list(scope) == ["core.py"]
     (other,) = scope["core.py"]
-    assert other["id"] == "S·02"
-    assert other["unit"] == "S·02"
+    assert other["id"] == "S-02"
+    assert other["unit"] == "S-02"
     # The body, not a stub: the shape has to serve this contract, so whoever
     # designs the file has to be able to read it.
     assert "body" in other
@@ -2854,7 +2854,7 @@ def test_a_file_this_unit_alone_claims_contributes_no_scope(store, prompts):
     has nothing to design around, and saying so with an empty map keeps the
     caller from having to tell "no co-claimants" from "not computed"."""
     _implemented(store, prompts)
-    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S-01")
     assert payload["file_scope"] == {}
 
 
@@ -2864,28 +2864,28 @@ def test_file_scope_never_includes_the_units_own_entries(store, prompts):
     disagreeing copy of the unit's own entry list."""
     _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "core.py", "implements": ["S·01", "S·02"]})
-    _, payload = call(store, prompts, "GET", "/projects/m/units/S·02")
+         {"path": "core.py", "implements": ["S-01", "S-02"]})
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S-02")
     ids = [v["id"] for v in payload["file_scope"]["core.py"]]
-    assert ids == ["S·01"]
-    assert "S·02" not in ids
+    assert ids == ["S-01"]
+    assert "S-02" not in ids
 
 
 def test_a_work_units_write_set_is_module_paths_not_entry_ids(store, prompts):
     """The write set is what a branch may edit, so it has to be files. An
     entry identifier is not something a diff can be audited against."""
     _implemented(store, prompts)
-    _, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    _, payload = call(store, prompts, "GET", "/projects/m/units/S-01")
     assert payload["write_set"] == ["search/index.py"]
     assert payload["audit"]["editable_paths"] == ["search/index.py"]
 
 
 def test_an_entry_no_module_implements_has_no_work_unit(store, prompts):
-    """S·02 is stated and nothing was built for it. Inventing an empty unit
+    """S-02 is stated and nothing was built for it. Inventing an empty unit
     would hand someone a branch with no files in it; the honest answer is
     that this entry is in no piece of work yet."""
     _implemented(store, prompts)
-    status, payload = call(store, prompts, "GET", "/projects/m/units/S·02")
+    status, payload = call(store, prompts, "GET", "/projects/m/units/S-02")
     assert status == 400
     assert "no work unit" in payload["error"]
     assert "nothing implements" in payload["error"]
@@ -2896,7 +2896,7 @@ def test_a_work_unit_is_refused_when_the_graph_is_unsound(store, prompts):
     would be derived from a retired entry."""
     mid = _implemented(store, prompts)
     _unsound(store, prompts, mid)
-    status, payload = call(store, prompts, "GET", "/projects/m/units/S·01")
+    status, payload = call(store, prompts, "GET", "/projects/m/units/S-01")
     assert status == 409
     assert payload["issued"] is False
     assert payload["gates"]["sound"] is False
@@ -2918,13 +2918,13 @@ def test_listing_cuts_reports_each_cuts_header(store, prompts):
 
 
 def test_a_unit_that_depends_on_another_reports_it_in_follows(store, prompts):
-    """Disjoint files are not independence. S·03 depends on S·01, so the
+    """Disjoint files are not independence. S-03 depends on S-01, so the
     ledger's unit waits for the index's -- and the direction matters: the
     index waits for nobody, and saying otherwise would serialise work that
     could have run at the same time."""
     _implemented(store, prompts)
-    _, ledger = call(store, prompts, "GET", "/projects/m/units/S·03")
-    _, index = call(store, prompts, "GET", "/projects/m/units/S·01")
+    _, ledger = call(store, prompts, "GET", "/projects/m/units/S-03")
+    _, index = call(store, prompts, "GET", "/projects/m/units/S-01")
     assert ledger["follows"] == [index["unit"]["key"]]
     assert index["follows"] == []
 
@@ -2932,7 +2932,7 @@ def test_a_unit_that_depends_on_another_reports_it_in_follows(store, prompts):
 # -- tests as entries --------------------------------------------------------
 
 
-def _scenario(store, prompts, mid, judges="S·01", title="the empty case",
+def _scenario(store, prompts, mid, judges="S-01", title="the empty case",
               purpose="", **outer):
     """Write one scenario. `outer` goes on the amendment itself, which is how
     a test can try to hand one a slice it must not have."""
@@ -2963,10 +2963,10 @@ def test_a_scenario_is_admitted_at_the_test_layer(store, prompts):
         store, prompts, mid, purpose="the boundary nobody documents"
     )
     assert status == 200
-    assert payload["created"] == ["T·01"]
+    assert payload["created"] == ["T-01"]
 
-    _, entry = call(store, prompts, "GET", "/projects/m/entries/T·01")
-    assert entry["derives_from"] == ["S·01"]
+    _, entry = call(store, prompts, "GET", "/projects/m/entries/T-01")
+    assert entry["derives_from"] == ["S-01"]
     assert entry["purpose"] == "the boundary nobody documents"
     assert entry["layer"] == "test"
 
@@ -2994,7 +2994,7 @@ def test_a_scenario_may_not_judge_two_contracts(store, prompts):
                 {
                     "layer": "T",
                     "title": "two at once",
-                    "derives_from": ["S·01", "S·03"],
+                    "derives_from": ["S-01", "S-03"],
                 }
             ],
         },
@@ -3011,10 +3011,10 @@ def test_an_untested_spec_entry_is_reported_and_the_graph_stays_sound(
     _implemented(store, prompts)
     _, gates = call(store, prompts, "GET", "/projects/m/gates")
     kinds = {(f["kind"], f["id"]) for f in gates["findings"]}
-    assert ("untested", "S·01") in kinds
+    assert ("untested", "S-01") in kinds
     assert gates["sound"] is True
 
-    status, _ = call(store, prompts, "GET", "/projects/m/units/S·01")
+    status, _ = call(store, prompts, "GET", "/projects/m/units/S-01")
     assert status == 200
 
 
@@ -3029,7 +3029,7 @@ def test_a_module_may_not_implement_a_spec_and_a_test_entry(store, prompts):
         prompts,
         "POST",
         "/projects/m/modules",
-        {"path": "mixed.py", "implements": ["S·01", "T·01"]},
+        {"path": "mixed.py", "implements": ["S-01", "T-01"]},
     )
     assert status == 400
     assert "both spec and test" in payload["error"]
@@ -3043,10 +3043,10 @@ def test_the_implementation_unit_follows_the_unit_holding_its_scenarios(
     mid = _implemented(store, prompts)
     _scenario(store, prompts, mid)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "tests/test_index.py", "implements": ["T·01"]})
+         {"path": "tests/test_index.py", "implements": ["T-01"]})
 
-    _, impl = call(store, prompts, "GET", "/projects/m/units/S·01")
-    _, tests = call(store, prompts, "GET", "/projects/m/units/T·01")
+    _, impl = call(store, prompts, "GET", "/projects/m/units/S-01")
+    _, tests = call(store, prompts, "GET", "/projects/m/units/T-01")
 
     assert tests["unit"]["tests"] is True
     assert impl["unit"]["tests"] is False
@@ -3069,27 +3069,27 @@ def test_a_unit_carries_the_scenarios_to_run_and_the_ones_not_built_yet(
     _scenario(store, prompts, mid, title="the empty case")
     _scenario(store, prompts, mid, title="the duplicate case")
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "tests/test_index.py", "implements": ["T·01"]})
+         {"path": "tests/test_index.py", "implements": ["T-01"]})
 
-    _, impl = call(store, prompts, "GET", "/projects/m/units/S·01")
-    assert [t["id"] for t in impl["tests"]] == ["T·01"]
+    _, impl = call(store, prompts, "GET", "/projects/m/units/S-01")
+    assert [t["id"] for t in impl["tests"]] == ["T-01"]
     assert impl["tests"][0]["modules"] == ["tests/test_index.py"]
-    assert impl["tests"][0]["judges"] == "S·01"
-    assert impl["tests_pending"] == ["T·02"]
+    assert impl["tests"][0]["judges"] == "S-01"
+    assert impl["tests_pending"] == ["T-02"]
 
 
 def test_the_module_list_reports_both_halves_of_coverage(store, prompts):
     mid = _implemented(store, prompts)
     _scenario(store, prompts, mid)
     _, payload = call(store, prompts, "GET", "/projects/m/modules")
-    assert payload["untested"] == ["S·02", "S·03"]
-    assert payload["unimplemented_tests"] == ["T·01"]
+    assert payload["untested"] == ["S-02", "S-03"]
+    assert payload["unimplemented_tests"] == ["T-01"]
 
 
 def test_scenarios_can_be_asked_for_on_their_own(store, prompts):
     """Found by running it, not by reading it. Every other request type
     stops at spec, so a fresh ask for scenarios had nowhere to originate and
-    'write the tests for S·01' was refused outright. Writing them as part
+    'write the tests for S-01' was refused outright. Writing them as part
     of the feature that created the spec always worked -- once a request has
     produced entries, propagation is unrestricted -- but the standalone ask
     is the ordinary case for a contract specified before anyone said how it
@@ -3105,7 +3105,7 @@ def test_scenarios_can_be_asked_for_on_their_own(store, prompts):
 
     status, payload = _scenario(store, prompts, msg["message_id"])
     assert status == 200
-    assert payload["created"] == ["T·01"]
+    assert payload["created"] == ["T-01"]
 
 
 def test_an_observation_still_creates_nothing(store, prompts):
@@ -3252,7 +3252,7 @@ def _emit_ready(store, prompts):
     """A sound project with a repo, a cut, and a token in the environment."""
     mid = _two_columns(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "search/index.py", "implements": ["S·01"]})
+         {"path": "search/index.py", "implements": ["S-01"]})
     call(store, prompts, "POST", "/projects/m/repo", {"repo": "owner/name"})
     call(store, prompts, "POST", "/projects/m/units/cut", {"note": "ready"})
     return mid

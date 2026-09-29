@@ -24,7 +24,7 @@ def _log(tmp_path) -> IssueLog:
 def _body(**kw) -> dict:
     return {
         "project": "m",
-        "target": "S·01",
+        "target": "S-01",
         "kind": ADDITIVE,
         "claim": "the index has no way to report its size",
         **kw,
@@ -42,7 +42,7 @@ def test_an_issue_is_filed_against_an_entry(tmp_path):
     issue = _log(tmp_path).raise_issue(_body(), "listings", _clock)
     assert (issue.id, issue.target, issue.target_slice) == (
         "iss-0001",
-        "S·01",
+        "S-01",
         "listings",
     )
     assert issue.status == OPEN
@@ -110,9 +110,9 @@ def test_the_assumption_is_kept_even_though_the_router_ignores_it(tmp_path):
 def test_closing_an_issue_records_what_it_produced(tmp_path):
     log = _log(tmp_path)
     log.raise_issue(_body(), "listings", _clock)
-    closed = log.close("iss-0001", RESOLVED, "added a size method", ["S·09"])
+    closed = log.close("iss-0001", RESOLVED, "added a size method", ["S-09"])
     assert closed.status == RESOLVED
-    assert closed.resolution["produced"] == ["S·09"]
+    assert closed.resolution["produced"] == ["S-09"]
 
 
 def test_closing_twice_is_refused(tmp_path):
@@ -126,7 +126,7 @@ def test_closing_twice_is_refused(tmp_path):
 def test_listing_filters_by_status_and_target_slice(tmp_path):
     log = _log(tmp_path)
     log.raise_issue(_body(), "listings", _clock)
-    log.raise_issue(_body(target="S·02"), "payouts", _clock)
+    log.raise_issue(_body(target="S-02"), "payouts", _clock)
     log.close("iss-0001", RESOLVED)
     assert [i.id for i in log.list(status=OPEN)] == ["iss-0002"]
     assert [i.id for i in log.list(target_slice="listings")] == ["iss-0001"]
@@ -138,24 +138,24 @@ def test_listing_filters_by_status_and_target_slice(tmp_path):
 def _graph() -> Graph:
     return Graph(
         [
-            Entry(id=parse("S·01"), title="index"),
-            Entry(id=parse("S·02"), title="ledger", depends_on=(parse("S·01"),)),
-            Entry(id=parse("S·03"), title="report", depends_on=(parse("S·02"),)),
-            Entry(id=parse("S·04"), title="unrelated"),
+            Entry(id=parse("S-01"), title="index"),
+            Entry(id=parse("S-02"), title="ledger", depends_on=(parse("S-01"),)),
+            Entry(id=parse("S-03"), title="report", depends_on=(parse("S-02"),)),
+            Entry(id=parse("S-04"), title="unrelated"),
         ]
     )
 
 
 def test_rerun_scope_does_not_cascade_transitively():
-    """Direct dependents only. S·03 consumed S·02's meaning, not S·01's, and
-    whether S·02's meaning actually moves is not known until S·02 is
+    """Direct dependents only. S-03 consumed S-02's meaning, not S-01's, and
+    whether S-02's meaning actually moves is not known until S-02 is
     repaired -- assuming it does would re-run half the project on every
     correction."""
-    assert rerun_scope(_graph(), ["S·01"]) == ("S·02",)
+    assert rerun_scope(_graph(), ["S-01"]) == ("S-02",)
 
 
 def test_rerun_scope_of_something_nothing_uses_is_empty():
-    assert rerun_scope(_graph(), ["S·04"]) == ()
+    assert rerun_scope(_graph(), ["S-04"]) == ()
 
 
 def test_an_unparseable_target_has_no_scope_but_is_not_an_error():
@@ -170,11 +170,11 @@ def _manifest() -> Manifest:
     return Manifest(
         project="m",
         slices={
-            "listings": Slice(name="listings", members={parse("S·01")}),
+            "listings": Slice(name="listings", members={parse("S-01")}),
             "payouts": Slice(
-                name="payouts", members={parse("S·02"), parse("S·03")}
+                name="payouts", members={parse("S-02"), parse("S-03")}
             ),
-            "aside": Slice(name="aside", members={parse("S·04")}),
+            "aside": Slice(name="aside", members={parse("S-04")}),
         },
     )
 
@@ -193,7 +193,7 @@ def test_a_hundred_issues_across_six_slices_is_six_batches(tmp_path):
     log = _log(tmp_path)
     for n in range(50):
         log.raise_issue(_body(claim=f"c{n}"), "listings", _clock)
-        log.raise_issue(_body(target="S·02", claim=f"c{n}"), "payouts", _clock)
+        log.raise_issue(_body(target="S-02", claim=f"c{n}"), "payouts", _clock)
     batches, _ = route(_manifest(), _graph(), log.list())
     assert [b.slice for b in batches] == ["listings", "payouts"]
     assert [len(b.issues) for b in batches] == [50, 50]
@@ -202,8 +202,8 @@ def test_a_hundred_issues_across_six_slices_is_six_batches(tmp_path):
 def test_batches_come_back_in_dependency_order(tmp_path):
     """payouts depends on listings, so listings is repaired first."""
     log = _log(tmp_path)
-    log.raise_issue(_body(target="S·02"), "payouts", _clock)
-    log.raise_issue(_body(target="S·01"), "listings", _clock)
+    log.raise_issue(_body(target="S-02"), "payouts", _clock)
+    log.raise_issue(_body(target="S-01"), "listings", _clock)
     batches, _ = route(_manifest(), _graph(), log.list())
     assert [(b.slice, b.wave) for b in batches] == [("listings", 0), ("payouts", 1)]
 
@@ -212,7 +212,7 @@ def test_a_semantic_issue_carries_its_rerun_scope(tmp_path):
     log = _log(tmp_path)
     log.raise_issue(_body(kind=SEMANTIC), "listings", _clock)
     batches, _ = route(_manifest(), _graph(), log.list())
-    assert batches[0].rerun == ("S·02",)
+    assert batches[0].rerun == ("S-02",)
 
 
 def test_an_additive_issue_invalidates_nothing(tmp_path):
@@ -271,7 +271,7 @@ def test_a_semantic_issue_reaching_forward_is_an_ordinary_repair(tmp_path):
     been derived yet. Nothing is invalidated because nothing was built."""
     log = _log(tmp_path)
     log.raise_issue(
-        _body(target="S·02", kind=SEMANTIC, raised_by="listings"),
+        _body(target="S-02", kind=SEMANTIC, raised_by="listings"),
         "payouts",
         _clock,
     )
@@ -305,11 +305,11 @@ def test_an_issue_against_an_unsliced_entry_escalates_rather_than_batching():
     from mu_spec.reconcile import UNOWNED, route
     from mu_spec.storage import Manifest
 
-    graph = Graph([Entry(id=parse("I·01"), title="intent")])
+    graph = Graph([Entry(id=parse("I-01"), title="intent")])
     issue = Issue(
         id="iss-0001",
         project="m",
-        target="I·01",
+        target="I-01",
         target_slice=None,
         raised_by=None,
         kind="additive",
@@ -330,9 +330,9 @@ def test_an_issue_naming_a_slice_that_does_not_exist_escalates():
     from mu_spec.reconcile import UNOWNED, route
     from mu_spec.storage import Manifest
 
-    graph = Graph([Entry(id=parse("B·01"), title="b")])
+    graph = Graph([Entry(id=parse("B-01"), title="b")])
     issue = Issue(
-        id="iss-0001", project="m", target="B·01", target_slice="gone",
+        id="iss-0001", project="m", target="B-01", target_slice="gone",
         raised_by=None, kind="additive", claim="something", round=1,
     )
     batches, escalations = route(Manifest(project="m", slices={}), graph, [issue])
@@ -354,17 +354,17 @@ def test_the_owning_slice_is_projected_not_trusted_from_the_issue():
     from mu_spec.reconcile import route
     from mu_spec.storage import Manifest, Slice
 
-    graph = Graph([Entry(id=parse("B·19"), title="b")])
+    graph = Graph([Entry(id=parse("B-19"), title="b")])
     manifest = Manifest(
         project="m",
-        slices={"accounts": Slice(name="accounts", members={parse("B·19")})},
+        slices={"accounts": Slice(name="accounts", members={parse("B-19")})},
     )
     stale = Issue(
-        id="iss-0009", project="m", target="B·19", target_slice=None,
+        id="iss-0009", project="m", target="B-19", target_slice=None,
         raised_by=None, kind="additive", claim="raised before slicing", round=1,
     )
     fresh = Issue(
-        id="iss-0011", project="m", target="B·19", target_slice="accounts",
+        id="iss-0011", project="m", target="B-19", target_slice="accounts",
         raised_by=None, kind="additive", claim="raised after", round=1,
     )
     batches, escalations = route(manifest, graph, [stale, fresh])

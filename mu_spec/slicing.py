@@ -14,7 +14,7 @@ candidates. Deliberately *not* the text half. The design doc's first step is
 bodies. Counting token overlap here would be the retriever-scored-it-0.83
 problem in different clothing: tunable, unexplainable, and needing a
 tokenizer this unit does not have. "These group because they share intent
-parent I·03" is a sentence somebody can check.
+parent I-03" is a sentence somebody can check.
 
 **Scoring.** Take a proposed partition, commit nothing, and run every gate
 and every structural metric against it as though it were real. This is what

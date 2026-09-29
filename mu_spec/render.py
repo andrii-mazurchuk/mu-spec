@@ -31,6 +31,8 @@ from __future__ import annotations
 import dataclasses
 import json
 
+from mu_spec.units import is_test_key
+
 # GitHub allows 256. A title is a line in a list, not a manifest, and a unit
 # writing nine files does not earn nine paths in it.
 MAX_TITLE = 120
@@ -46,7 +48,7 @@ TEST = "test"
 
 # The prefix on the label naming a unit's anchor. Scoped so it cannot collide
 # with a label somebody already uses on the repository -- these are created on
-# a repository this unit does not own, and a bare `S·01` is the sort of thing
+# a repository this unit does not own, and a bare `S-01` is the sort of thing
 # another tool invents too.
 LABEL_NAMESPACE = "mu-spec"
 
@@ -89,12 +91,12 @@ class Ticket:
 
 
 def _title(key: str, write_set: list[str]) -> str:
-    """`S·01 — dark/config/declare.py`.
+    """`S-01 — dark/config/declare.py`.
 
     Computable, which it was not under the old grain: a unit held several
     entries then, and `a12837b4` ruled that naming a unit was judgement. A unit
     is now one entry and its modules, and the paths name the work better than
-    the entry's own title does -- `S·01`'s title is a 150-character sentence
+    the entry's own title does -- `S-01`'s title is a 150-character sentence
     and makes a useless line in a list.
     """
     if not write_set:
@@ -117,7 +119,7 @@ def _labels(unit: dict) -> tuple[str, ...]:
     and filtering by either half should work. The anchor is namespaced because
     these land on a repository this unit does not own.
     """
-    kind = TEST if unit["key"].endswith(":T") else IMPLEMENTATION
+    kind = TEST if is_test_key(unit["key"]) else IMPLEMENTATION
     labels = [f"{LABEL_NAMESPACE}:{unit['anchor']}", f"kind:{kind}"]
     labels += [f"slice:{name}" for name in unit.get("slices", [])]
     return tuple(labels)
@@ -146,7 +148,7 @@ def _machine(
     return {
         "key": unit["key"],
         "anchor": unit.get("anchor"),
-        "kind": TEST if unit["key"].endswith(":T") else IMPLEMENTATION,
+        "kind": TEST if is_test_key(unit["key"]) else IMPLEMENTATION,
         "repo": repo,
         "cut_seq": cut_seq,
         "slices": list(unit.get("slices") or ()),

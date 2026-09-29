@@ -13,9 +13,9 @@ that fills the graph in -- is `GET /prompts/wayfinding`.
 ```json
 {"layer": "S",
  "title": "capture/store.py: an append-only store whose every read names an account",
- "derives_from": ["A·04"],
- "depends_on":   ["S·02"],
- "emits_into":   ["S·31"],
+ "derives_from": ["A-04"],
+ "depends_on":   ["S-02"],
+ "emits_into":   ["S-31"],
  "body": "Module capture/store.py. CapturedRecord is frozen ..."}
 ```
 
@@ -227,7 +227,7 @@ outside this graph, like a README does.
 
 ```
 POST /projects/{project}/modules
-{"path": "tests/test_rates.py", "implements": ["T·04", "T·05"]}
+{"path": "tests/test_rates.py", "implements": ["T-04", "T-05"]}
 ```
 
 **A module implements spec entries or test entries, never both.** Refused
@@ -280,7 +280,7 @@ Retrieval is graph traversal. There is no similarity search and you should
 not want one: `blast radius`, `ancestors` and `dependents` are exact answers,
 and an approximate one would be worse.
 
-Identifiers contain `·` (U+00B7). Raw or percent-encoded both work.
+Identifiers are pure ASCII: a layer letter, a hyphen, a number — `S-31`. A unit key adds `-T` for the scenarios judging a contract — `S-31-T`. Safe in a URL, a filename, a shell argument and a git ref, which is why the separator is a hyphen and not the U+00B7 it used to be. The old spelling is still accepted on input, forever, and never written.
 
 ---
 

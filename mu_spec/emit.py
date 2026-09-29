@@ -39,6 +39,7 @@ from typing import Callable
 
 from mu_spec.github import GitHubError
 from mu_spec.render import render
+from mu_spec.units import canonical_key
 
 
 # Every line in the log carries a kind. An emission omits it, because the
@@ -138,7 +139,8 @@ def read_log(path: Path) -> tuple[tuple[Emission, ...], tuple[Rollback, ...]]:
                     cut_seq=int(raw["cut_seq"]),
                     repo=str(raw["repo"]),
                     undone=tuple(int(u) for u in raw.get("undone") or ()),
-                    closed={str(k): int(v) for k, v in (raw.get("closed") or {}).items()},
+                    closed={canonical_key(str(k)): int(v)
+                            for k, v in (raw.get("closed") or {}).items()},
                     failed=tuple(raw.get("failed") or ()),
                 )
             )
@@ -166,8 +168,16 @@ def read_emissions(path: Path) -> tuple[Emission, ...]:
                     at=float(raw["at"]),
                     cut_seq=int(raw["cut_seq"]),
                     repo=str(raw["repo"]),
-                    issues=dict(raw.get("issues") or {}),
-                    wired=tuple(raw.get("wired") or ()),
+                    # Re-spelled on read. The log is keyed by unit key, and
+                    # an emission recorded before the separator changed holds
+                    # the old spelling -- which `standing()` would fail to
+                    # match against a freshly computed key, conclude nothing
+                    # had been emitted, and create every issue a second time.
+                    # That is the exact duplication this log exists to stop.
+                    issues={canonical_key(k): v
+                            for k, v in (raw.get("issues") or {}).items()},
+                    wired=tuple(_canonical_pair(p)
+                                for p in (raw.get("wired") or ())),
                 )
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -190,6 +200,12 @@ def _next_seq(path: Path) -> int:
 
 def _pair(blocked: str, blocker: str) -> str:
     return f"{blocked}<-{blocker}"
+
+
+def _canonical_pair(pair: str) -> str:
+    """A wired edge re-spelled on both sides, for the reason above."""
+    blocked, _, blocker = pair.partition("<-")
+    return _pair(canonical_key(blocked), canonical_key(blocker))
 
 
 class RunBusy(RuntimeError):

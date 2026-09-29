@@ -72,7 +72,7 @@ bottom layer floats free of the structure and the whole scheme is decorative.
 
 Every entry at every layer carries:
 
-- **Identifier** — layer prefix plus a flat number. `B·14`, `A·07`, `S·31`.
+- **Identifier** — layer prefix plus a flat number. `B-14`, `A-07`, `S-31`.
 - **Derives-from** — *vertical*, exactly one layer up. What this entry serves.
 - **Depends-on** — *horizontal*, within its own layer. What this entry needs, and the
   only edge that imposes an order.
@@ -238,7 +238,7 @@ file**.
 
 Three other grains were available.
 
-- **An entry-module pair is too fine.** `t-finance`'s `S·11` spans four modules, and
+- **An entry-module pair is too fine.** `t-finance`'s `S-11` spans four modules, and
   eight of its thirty entries span more than one. Splitting per pair turns one contract
   into four tickets that then have to be reassembled by whoever reads them.
 - **A slice is too coarse.** It over-serialises, and a module straddling two slices
@@ -339,8 +339,8 @@ not have, which then had to be contracted and reported.
 
 ### Identity, and the cut
 
-Identity **is** the spec entry, plus which of the two kinds the unit is — `S·13` and
-`S·13:T`. Nothing is allocated and nothing is stored, so two projections of the same
+Identity **is** the spec entry, plus which of the two kinds the unit is — `S-13` and
+`S-13-T`. Nothing is allocated and nothing is stored, so two projections of the same
 graph agree without consulting each other, and a unit's name is readable by whoever
 receives the ticket rather than being a digest nobody can place.
 
@@ -415,7 +415,7 @@ It does **not** make a test unit a wave-0 root: it sits immediately before the
 implementation it serves (§4a).
 
 **Scenarios can be asked for on their own.** Every request type stopped at spec, so a
-fresh "say how `S·01` can fail" had nowhere to originate and was refused. A
+fresh "say how `S-01` can fail" had nowhere to originate and was refused. A
 `verification` request originates at `T`, which is not an exception to the rule that a
 change may not enter below its cause: that rule guards against fixing something low
 while the layers above go on saying the old thing, and a scenario makes no claim those
@@ -581,8 +581,8 @@ radius.
 
 **No vector search, no embeddings.** Semantic retrieval is non-deterministic: same
 question, different chunks, different day. The edge graph is already a precise
-index, and traversing it is deterministic, cheap and explainable. "I loaded `A·14`
-because `B·22` derives from it" is auditable. "The retriever ranked it 0.83" is not.
+index, and traversing it is deterministic, cheap and explainable. "I loaded `A-14`
+because `B-22` derives from it" is auditable. "The retriever ranked it 0.83" is not.
 
 **History files are never loaded by default.** They exist for reconciliation and audit.
 If history lives alongside live entries, every read pays for every past mistake.
@@ -789,8 +789,8 @@ session that was going to load that column anyway.
 
 ### Re-run scope
 
-Computed at the **entry** level, never the slice level. If `B·31` changed meaning, only
-the entries declaring `depends_on: B·31` are invalid — usually a handful, not a column.
+Computed at the **entry** level, never the slice level. If `B-31` changed meaning, only
+the entries declaring `depends_on: B-31` are invalid — usually a handful, not a column.
 Direct dependents only: an entry two hops away consumed its *neighbour's* meaning, and
 whether that moved is not known until the neighbour is actually repaired.
 

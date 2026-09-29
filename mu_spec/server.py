@@ -44,7 +44,11 @@ TEXT = "text/plain; charset=utf-8"
 MARKDOWN = "text/markdown; charset=utf-8"
 HTML = "text/html; charset=utf-8"
 
-_ID = r"[A-Z]·[0-9]+"
+# Both spellings, and a unit key's kind suffix in both spellings too. The
+# route must still resolve an identifier written the old way: a link in an
+# issue created before the separator changed, or a bookmark, is a URL
+# somebody still has.
+_ID = r"[A-Z][-·][0-9]+(?:[-:]T)?"
 _P = r"(?P<project>[A-Za-z0-9_-]+)"
 
 
@@ -479,8 +483,8 @@ def _tools() -> list[dict[str, Any]]:
                 "entry": {
                     "type": "string",
                     "description": "A unit key as the listing reports it "
-                    "(`S·01`, `S·01:T`), or any entry the unit contains "
-                    "(`S·01`, `T·30`). Iterating the listing's keys is the "
+                    "(`S-01`, `S-01-T`), or any entry the unit contains "
+                    "(`S-01`, `T-30`). Iterating the listing's keys is the "
                     "normal use and works for both kinds of unit.",
                 },
             },
@@ -1162,7 +1166,9 @@ def handle(
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
-    # Identifiers contain U+00B7, so any correct client percent-encodes them.
+    # Identifiers are ASCII now and need no encoding. The old U+00B7
+    # spelling still resolves, so a link in an issue created before the
+    # change is not dead, and percent-encoding it still works.
     # Without this every entry lookup 404s -- which is every identifier this
     # unit has ever issued.
     path = unquote(parsed.path).rstrip("/") or "/"

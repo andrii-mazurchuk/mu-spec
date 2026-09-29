@@ -51,14 +51,67 @@ from pathlib import Path
 from typing import Callable
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import TEST, Identifier, parse, sort_key
+from mu_spec.identifiers import (
+    TEST, Identifier, InvalidIdentifier, parse, sort_key,
+)
 from mu_spec.storage import Manifest
 from mu_spec.waves import Schedule, schedule_edges
 
 SPEC = "S"
 # What marks a test unit's key apart from its implementation unit's. Both are
 # anchored to the same spec entry, so the anchor alone does not name them.
-TEST_SUFFIX = ":T"
+# `-T`, not `:T`. A colon is illegal in a git ref, so a key spelled `S-76-T`
+# could not be a branch name in any encoding -- and a key that cannot be a
+# branch name is one somebody transforms, which makes every consumer's
+# transform a place two systems can disagree about which unit a branch
+# belongs to. The key is now legal as a ref, a filename and a path segment,
+# so nothing downstream has to invent a mapping.
+TEST_SUFFIX = "-T"
+# Read, never written, for the same reason the legacy separator is: a cut
+# taken before this change holds the old spelling.
+LEGACY_TEST_SUFFIX = ":T"
+
+
+def is_test_key(key: str) -> bool:
+    """Whether a unit key names a test unit, in either spelling.
+
+    One function rather than `endswith` at three call sites: the suffix was
+    hardcoded in two of them, so changing it in the constant would have left
+    render.py quietly calling every test unit an implementation unit -- and
+    the emitted `kind` is what a consumer routes on.
+    """
+    return key.endswith(TEST_SUFFIX) or key.endswith(LEGACY_TEST_SUFFIX)
+
+
+def anchor_of(key: str) -> str:
+    """A unit key without its kind suffix, in either spelling."""
+    for suffix in (TEST_SUFFIX, LEGACY_TEST_SUFFIX):
+        if key.endswith(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
+def canonical_key(key: str) -> str:
+    """A unit key in the current spelling, whatever spelling it was stored in.
+
+    RE-SPELLS, never re-derives. A cut written before the separator changed
+    holds `S·01:T`; the live projection computes `S-01-T`; and comparing the
+    two reported all 144 units of a real project as changed, which refuses
+    emission and tells a reader their graph moved when only its punctuation
+    did. Rebuilding the key from the anchor instead would be wrong for the
+    oldest cuts, which store no anchor and would come back named after their
+    first entry.
+
+    A key that is not identifier-shaped is returned untouched -- this makes
+    no claim about what a key may be, it only normalises the ones it
+    recognises.
+    """
+    tests = key.endswith(TEST_SUFFIX) or key.endswith(LEGACY_TEST_SUFFIX)
+    try:
+        base = str(parse(anchor_of(key)))
+    except InvalidIdentifier:
+        return key
+    return base + (TEST_SUFFIX if tests else "")
 
 
 def unit_key(anchor: Identifier, tests: bool = False) -> str:
@@ -683,7 +736,7 @@ def _unit_from_body(key: str, body: dict) -> Unit:
             "no write set to hand out"
         )
     return Unit(
-        key=key,
+        key=canonical_key(key),
         # A cut written before units were anchored carries no anchor. Its
         # first entry is the closest true thing, and an old cut is a record
         # of what went out rather than something to re-derive -- refusing to
@@ -731,8 +784,13 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
                 at=raw.get("at", 0.0),
                 note=raw.get("note", ""),
                 units=tuple(_unit_from_body(k, bodies[k]) for k in members),
+                # Both sides re-spelled, for the same reason the keys are:
+                # an edge stored as `S·02 -> S·01` names the same two units
+                # as `S-02 -> S-01`, and comparing the spellings reported a
+                # cut's every edge as moved.
                 edges={
-                    k: tuple(v) for k, v in (raw.get("edges") or {}).items()
+                    canonical_key(k): tuple(canonical_key(x) for x in v)
+                    for k, v in (raw.get("edges") or {}).items()
                 },
                 unimplemented=tuple(parse(i) for i in raw.get("unimplemented", ())),
                 stale_modules=tuple(raw.get("stale_modules", ())),
@@ -740,7 +798,9 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
                 unimplemented_tests=tuple(
                     parse(i) for i in raw.get("unimplemented_tests", ())
                 ),
-                unfollowed_tests=tuple(raw.get("unfollowed_tests", ())),
+                unfollowed_tests=tuple(
+                    canonical_key(k) for k in raw.get("unfollowed_tests", ())
+                ),
                 dangling=tuple(parse(i) for i in raw.get("dangling", ())),
             )
         )
