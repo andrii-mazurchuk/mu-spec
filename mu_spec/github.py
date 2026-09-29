@@ -217,6 +217,26 @@ class GitHub:
             }
         return self._identity
 
+    def issue_state(self, repo: str, number: int) -> dict:
+        """`{"state", "state_reason"}` for one issue.
+
+        The only read this module performs, and it exists for one reason: a
+        withdrawal must not overwrite somebody else's close. `not_planned` is
+        this unit's marker and means withdrawn; `completed` belongs to whoever
+        finished the work. A blind PATCH replaces the second with the first,
+        which destroys the one signal the split exists to carry.
+
+        This is not reacting to an issue. Nothing here decides anything from
+        what comes back except whether the write it was already asked to make
+        would damage something -- which is part of performing the withdrawal
+        correctly rather than a second opinion about it.
+        """
+        raw = self._get(f"/repos/{repo}/issues/{int(number)}")
+        return {
+            "state": str(raw.get("state") or ""),
+            "state_reason": str(raw.get("state_reason") or ""),
+        }
+
     def close_issue(self, repo: str, number: int, reason: str = "not_planned") -> None:
         """Close one issue, as `not_planned` rather than `completed`.
 

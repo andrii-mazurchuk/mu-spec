@@ -626,9 +626,21 @@ def test_a_blank_token_counts_as_absent(tmp_path, monkeypatch):
 # -- withdrawing a batch -----------------------------------------------------
 
 
-def _closer(client):
-    """Teach the FakeClient to close, recording the order it was asked."""
+def _closer(client, states=None):
+    """Teach the FakeClient to close, recording the order it was asked.
+
+    `states` maps issue number -> what a read reports. Anything not named is
+    open, which is the ordinary case.
+    """
     client.closed = []
+    client.states = dict(states or {})
+
+    def issue_state(repo, number):
+        return client.states.get(
+            number, {"state": "open", "state_reason": ""}
+        )
+
+    client.issue_state = issue_state
 
     def close_issue(repo, number, reason="not_planned"):
         if number in getattr(client, "fail_close", ()):
@@ -649,7 +661,8 @@ def test_a_rollback_closes_every_issue_of_the_cut(tmp_path):
     _closer(client)
     out = _rollback(log, client)
     assert out["rolled_back"] is True
-    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0}
+    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0,
+                             "skipped": 0}
     assert {n for _r, n, _why in client.closed} == {1, 2, 3}
     assert all(why == "not_planned" for _r, _n, why in client.closed), (
         "withdrawn is not completed"
@@ -688,7 +701,8 @@ def test_an_issue_that_would_not_close_is_not_recreated(tmp_path):
     _closer(client)
     client.fail_close = {2}
     out = _rollback(log, client)
-    assert out["counts"] == {"targeted": 3, "closed": 2, "failed": 1}
+    assert out["counts"] == {"targeted": 3, "closed": 2, "failed": 1,
+                             "skipped": 0}
     assert out["failed"][0]["number"] == 2
     again, _c, _l = run(tmp_path, client=FakeClient())
     assert again["counts"]["created"] == 2
@@ -765,10 +779,73 @@ def test_a_unit_emitted_again_can_be_withdrawn_again(tmp_path):
     run(tmp_path, client=second)
     out = _rollback(log, second)
     assert out["rolled_back"] is True
-    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0}
+    assert out["counts"] == {"targeted": 3, "closed": 3, "failed": 0,
+                             "skipped": 0}
     assert {n for _r, n, _w in second.closed} == {4, 5, 6}, (
         "the replacements, not the issues already withdrawn"
     )
+
+
+def test_a_withdrawal_never_overwrites_someone_elses_close(tmp_path):
+    """`not_planned` is this unit's word and means withdrawn. `completed` is
+    the consumer's and means DONE.
+
+    This happened for real on 2026-09-29: a consumer finished one unit of a
+    144-issue batch and closed its issue `completed`; a withdrawal of the
+    batch relabelled it `not_planned`, which reads as "withdrawn, may be
+    re-admitted" -- so finished work would have been handed back to an agent,
+    on a branch that already existed.
+    """
+    _result, client, log = run(tmp_path)
+    _closer(client, states={2: {"state": "closed", "state_reason": "completed"}})
+    out = _rollback(log, client)
+    assert [n for _r, n, _w in client.closed] == [3, 1], "issue 2 untouched"
+    assert out["counts"] == {"targeted": 3, "closed": 2, "failed": 0,
+                             "skipped": 1}
+    assert out["skipped"][0]["number"] == 2
+    assert "completed" in out["skipped"][0]["reason"]
+
+
+def test_work_somebody_finished_is_not_recreated(tmp_path):
+    """The half that matters more. A skipped issue is NOT recorded as
+    withdrawn, so the duplicate guard still considers that unit emitted --
+    re-emitting it would ask for work that is already merged."""
+    _result, client, log = run(tmp_path)
+    _closer(client, states={2: {"state": "closed", "state_reason": "completed"}})
+    _rollback(log, client)
+    again, _c, _l = run(tmp_path, client=_closer(FakeClient(start=9)))
+    assert [s["key"] for s in again["skipped"]] == ["S-01"], (
+        "the finished unit stays out"
+    )
+    assert "S-01" not in [c["key"] for c in again["created"]]
+
+
+def test_an_issue_this_unit_already_withdrew_is_closed_again_harmlessly(tmp_path):
+    """Our own marker is the one reason we may overwrite: a re-run of a
+    partial withdrawal has to be able to finish the job."""
+    _result, client, log = run(tmp_path)
+    _closer(client,
+            states={2: {"state": "closed", "state_reason": "not_planned"}})
+    out = _rollback(log, client)
+    assert out["counts"]["closed"] == 3
+    assert out["counts"]["skipped"] == 0
+
+
+def test_an_unreadable_state_leaves_the_issue_alone(tmp_path):
+    """Not knowing is a reason to stop, not to proceed: a skipped issue can be
+    withdrawn on a re-run, a clobbered one cannot be restored."""
+    _result, client, log = run(tmp_path)
+    _closer(client)
+
+    def broken(repo, number):
+        raise GitHubError("GitHub answered 502", status=502)
+
+    client.issue_state = broken
+    out = _rollback(log, client)
+    assert client.closed == [], "nothing was touched"
+    assert out["counts"] == {"targeted": 3, "closed": 0, "failed": 0,
+                             "skipped": 3}
+    assert "could not read" in out["skipped"][0]["reason"]
 
 
 def test_a_rollback_reports_what_it_has_closed(tmp_path):

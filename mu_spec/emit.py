@@ -47,6 +47,10 @@ from mu_spec.units import canonical_key
 # field is precisely what this unit does not do.
 ROLLBACK = "rollback"
 
+# The reason this unit closes an issue with, and the only one it may
+# overwrite. `completed` is somebody else's word and is never touched.
+WITHDRAWN = "not_planned"
+
 
 @dataclasses.dataclass(frozen=True)
 class Emission:
@@ -486,6 +490,7 @@ def rollback(
 
     closed: dict[str, int] = {}
     failed: list[dict] = []
+    skipped: list[dict] = []
     total = len(order)
 
     def tick(step: str) -> None:
@@ -493,14 +498,49 @@ def rollback(
             on_progress({
                 "step": step,
                 "total": total,
-                "processed": len(closed) + len(failed),
+                "processed": len(closed) + len(failed) + len(skipped),
                 "closed": len(closed),
                 "failed": len(failed),
+                "skipped": len(skipped),
             })
 
     tick("closing")
     for key in order:
         number = targets[key].get("number")
+        # Look before writing. A withdrawal that blindly PATCHes
+        # `state_reason: not_planned` overwrites a `completed` close -- and
+        # `completed` is somebody else's statement that the work is DONE.
+        # That happened for real: a consumer finished one unit of a batch,
+        # closed its issue `completed`, and a withdrawal of the batch
+        # relabelled it as withdrawn, which would have handed the finished
+        # work straight back to an agent as re-admittable.
+        #
+        # A read that cannot be made is treated as "leave it alone". For a
+        # destructive operation, not knowing is a reason to stop rather than
+        # a reason to proceed: a skipped issue can be withdrawn on a re-run,
+        # a clobbered one cannot be un-clobbered.
+        try:
+            state = client.issue_state(repo, int(number))
+        except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+            skipped.append({
+                "key": key, "number": number,
+                "reason": f"could not read the issue's state, so it was left "
+                          f"untouched: {exc}",
+            })
+            tick("closing")
+            continue
+        if state.get("state") == "closed" and state.get("state_reason") != WITHDRAWN:
+            # Somebody else closed it, and said why. Left exactly as it is,
+            # and NOT recorded as withdrawn -- so it is never recreated
+            # either, because the work it names has already happened.
+            skipped.append({
+                "key": key, "number": number,
+                "reason": f"already closed as "
+                          f"{state.get('state_reason') or 'closed'} by someone "
+                          f"else -- left alone",
+            })
+            tick("closing")
+            continue
         try:
             client.close_issue(repo, int(number))
         except (GitHubError, TypeError, ValueError) as exc:
@@ -513,7 +553,7 @@ def rollback(
             closed[key] = int(number)
         tick("closing")
 
-    if closed or failed:
+    if closed or failed or skipped:
         _append(
             log_path,
             Rollback(
@@ -533,10 +573,12 @@ def rollback(
         "cut_seq": cut_seq,
         "closed": [{"key": k, "number": n} for k, n in closed.items()],
         "failed": failed,
+        "skipped": skipped,
         "counts": {
             "targeted": total,
             "closed": len(closed),
             "failed": len(failed),
+            "skipped": len(skipped),
         },
     }
 

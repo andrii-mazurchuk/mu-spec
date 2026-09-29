@@ -3486,9 +3486,13 @@ def test_actions_declares_no_path_the_page_never_presses(store, prompts):
         ), f"/actions declares {path!r}, which no button presses"
 
 
-def _closing_client():
+def _closing_client(states=None):
     client = _Client()
     client.closed = []
+    client.states = dict(states or {})
+    client.issue_state = lambda repo, number: client.states.get(
+        number, {"state": "open", "state_reason": ""}
+    )
     client.close_issue = lambda repo, number, reason="not_planned": (
         client.closed.append((number, reason))
     )
