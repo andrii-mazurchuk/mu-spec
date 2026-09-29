@@ -29,3 +29,6 @@ uv.lock
 # about who did what and what to do next, not project state -- they age out
 # within days and say nothing about how this unit behaves.
 .claude/handoff/
+
+# Windows crash dumps from the shell, never source
+sh.exe.stackdump
