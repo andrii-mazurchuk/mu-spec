@@ -871,9 +871,15 @@ def _actions() -> list[dict[str, Any]]:
     offered. Discovery never reads this -- nothing here becomes an MCP
     tool, and that is the one property to protect if this is refactored.
 
-    Exactly two, and both are the same decision: a partition is not a
-    partition until a human rules on it. Ratifying is close to one-way,
-    because slices split and never merge.
+    Every POST the dashboard makes must appear here, and the cost of
+    forgetting one is not a visible error: the node's proxy refuses an
+    undeclared path with **405 before this unit is ever contacted**, so the
+    button is dead, this unit's logs show nothing, and the page has no
+    request to report on. `set_repo` and `emit_tickets` were both missing
+    for exactly as long as it took someone to press them -- the whole Ship
+    panel was unreachable through the node while every test here passed and
+    a direct call to the unit worked. A test now asserts this list against
+    the page in both directions.
 
     Declared paths are templates, spelled exactly as the routing table
     spells them -- the node matches `{name}` against one segment and never
@@ -935,6 +941,39 @@ def _actions() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {"note": {"type": "string"}},
             },
+        },
+        {
+            "name": "set_repo",
+            "description": (
+                "Point this project at the repository its work units become "
+                "issues in, or clear it with null. A deployment decision and "
+                "a person's to make, which is why it is a control here and "
+                "never a tool: an agent that could repoint a project would "
+                "choose where several hundred issues land. Accepts "
+                "'owner/name' or a github.com URL to take one from, and "
+                "reports what was stored rather than what was sent."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/repo",
+            "input_schema": {
+                "type": "object",
+                "properties": {"repo": {"type": ["string", "null"]}},
+                "required": ["repo"],
+            },
+        },
+        {
+            "name": "emit_tickets",
+            "description": (
+                "Create a GitHub issue for every work unit of the current "
+                "cut. The one operation here that cannot be undone from "
+                "inside this unit, and the reason the page puts every "
+                "precondition above the button. Answers immediately with a "
+                "run id; progress is read back from GET on the same path. "
+                "Skips units already emitted, so a re-run is safe."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/emit",
+            "input_schema": {"type": "object", "properties": {}},
         },
     ]
 

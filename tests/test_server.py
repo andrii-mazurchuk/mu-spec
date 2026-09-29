@@ -1898,15 +1898,22 @@ def test_ratifying_is_still_not_reachable_as_a_tool(store, prompts):
     assert not any(p.endswith("/ratify") or p.endswith("/reject") for p in paths)
 
 
-def test_actions_declares_exactly_the_two_human_decisions(store, prompts):
+def test_actions_declares_exactly_the_presses_a_person_makes(store, prompts):
     """This list is the whole surface a framed dashboard can write through,
-    and nothing else bounds it. Growing it is a decision, so it is pinned."""
+    and nothing else bounds it. Growing it is a decision, so it is pinned.
+
+    Grew from three to five on 2026-09-29, and not by choice: `set_repo` and
+    `emit_tickets` were buttons on the page all along, so the node's proxy
+    was refusing them with 405 before the unit was contacted. An undeclared
+    button is not a smaller surface, it is a broken one."""
     status, payload = call(store, prompts, "GET", "/actions")
     assert (status, payload["unit"]) == (200, UNIT_NAME)
     assert {a["name"] for a in payload["actions"]} == {
         "ratify",
         "reject",
         "cut_units",
+        "set_repo",
+        "emit_tickets",
     }
     assert all(a["method"] == "POST" for a in payload["actions"])
 
@@ -1920,14 +1927,23 @@ def test_no_action_is_also_a_tool(store, prompts):
     This is mu-spec's own invariant, not a rule the standard imposes:
     ratifying is the one caller a slicing session's contract forbids, so for
     this unit specifically the overlap must never happen.
+
+    An OPERATION is a method and a path, not a path. Comparing paths alone
+    was right only while no action shared one with a read tool, and it stopped
+    being right the moment `set_repo` was declared: `GET /projects/{p}/repo`
+    is `get_repo`, deliberately offered so an agent can confirm a project is
+    configured before anything ships, and `POST` on that same path is the
+    deployment decision, deliberately withheld. Same for `get_emission` and
+    `emit_tickets`. That is the split this unit designed on purpose -- read
+    offered, write withheld -- and a path-only comparison forbids it while
+    letting the real danger through unremarked.
     """
     _, actions = call(store, prompts, "GET", "/actions")
     _, tools = call(store, prompts, "GET", "/tools")
-    tool_paths = {t["path"].lstrip("/") for t in tools["tools"]}
+    tool_ops = {(t["method"], t["path"].lstrip("/")) for t in tools["tools"]}
     for action in actions["actions"]:
-        assert action["path"].lstrip("/") not in tool_paths, (
-            f"{action['name']} is reachable as a tool"
-        )
+        op = (action["method"], action["path"].lstrip("/"))
+        assert op not in tool_ops, f"{action['name']} is reachable as a tool"
 
 
 def test_every_declared_action_path_actually_routes(store, prompts):
@@ -3400,3 +3416,61 @@ def test_config_is_not_offered_to_an_agent(store, prompts):
     about the unit, not an operation on the graph."""
     _, payload = call(store, prompts, "GET", "/tools")
     assert "/config" not in {t["path"] for t in payload["tools"]}
+
+
+def _page_post_paths() -> set[str]:
+    """Every path the dashboard POSTs to, as an /actions path template.
+
+    Extracted from the page rather than listed here: a list would be a second
+    statement of the same fact, and the one that goes stale is the copy.
+    """
+    page = Path("mu_spec/dashboard.html").read_text(encoding="utf-8")
+    paths = set()
+    # The gap must not swallow another fetch: `.*?` across the whole page
+    # pairs the first fetch with a much later POST and yields nonsense.
+    pattern = r'fetch\(((?:(?!fetch\().)*?)\{\s*\n?\s*method\s*:\s*"POST"'
+    for call in re.finditer(pattern, page, re.S):
+        expr = call.group(1)
+        # "projects/" + enc(STATE.project) + "/repo"  ->  projects/{project}/repo
+        expr = re.sub(r'"\s*\+\s*enc\(STATE\.project\)\s*\+\s*"', "{project}", expr)
+        # A dynamic tail -- "/slicing/proposal/" + what -- names a segment the
+        # page chooses at press time. Both spellings must be declared, so the
+        # template keeps the literal prefix and the test checks by prefix.
+        literal = "".join(re.findall(r'"([^"]*)"', expr))
+        paths.add(literal.strip().rstrip(",").rstrip("/"))
+    return paths
+
+
+def test_every_button_on_the_page_is_a_declared_action(store, prompts):
+    """The node's proxy refuses an undeclared path with 405 BEFORE the unit is
+    contacted, so an undeclared button is dead and this unit's own logs show
+    nothing at all. Every POST the page makes must therefore be declared.
+
+    Found the hard way: `set_repo` and `emit_tickets` were both undeclared,
+    which made the Ship panel unpressable through the node while every test
+    here passed and a direct call to the unit worked.
+    """
+    from mu_spec.server import _actions
+
+    declared = {a["path"] for a in _actions()}
+    for pressed in _page_post_paths():
+        assert any(
+            pressed == path or pressed.startswith(path.rstrip("/") + "/")
+            or path.startswith(pressed + "/")
+            for path in declared
+        ), f"the page POSTs to {pressed!r}, which /actions does not declare"
+
+
+def test_actions_declares_no_path_the_page_never_presses(store, prompts):
+    """The other direction, and the one with teeth: every declared path is a
+    path a framed page can write through, and the page renders text other
+    agents wrote. A declaration nobody presses is surface for nothing."""
+    from mu_spec.server import _actions
+
+    pressed = _page_post_paths()
+    for action in _actions():
+        path = action["path"]
+        assert any(
+            p == path or p.startswith(path.rstrip("/") + "/") or path.startswith(p + "/")
+            for p in pressed
+        ), f"/actions declares {path!r}, which no button presses"

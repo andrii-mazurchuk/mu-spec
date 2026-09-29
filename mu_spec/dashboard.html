@@ -701,6 +701,24 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
    ============================================================= */
 const enc = encodeURIComponent;
 
+/* What a refused write actually said.
+
+   A refusal does not always come from this unit, and the one that does not
+   is the one that reads like a mystery: the node's proxy refuses a path this
+   unit has not declared in /actions with 405 and a PLAIN TEXT body -- before
+   the unit is contacted at all, so nothing appears in its log either. Every
+   caller here used to render `payload.error` and fall back to the bare
+   status, and since a text/plain body does not parse as JSON, `payload` was
+   null and the sentence naming the cause was thrown away. "Refused - 405"
+   cost an afternoon of suspecting the proxy of not forwarding POST.
+
+   So: this unit's own JSON reason first, then whatever the body says
+   verbatim, and the bare status only when there is genuinely nothing else. */
+function refusal(res, text, payload){
+  const said = (payload && (payload.error || payload.reason)) || (text || "").trim();
+  return said ? said + " (" + res.status + ")" : "Refused - " + res.status;
+}
+
 async function get(path){
   const r = await fetch(path, {headers:{accept:"application/json"}});
   if(!r.ok) throw new Error(path + " → " + r.status);
@@ -2313,7 +2331,7 @@ async function cutUnits(){
     try{ payload = JSON.parse(text); }catch(_){}
     if(!r.ok){
       STATE.cutFlash = {kind:"bad",
-        text:(payload && payload.reason) || ("Refused — " + r.status)};
+        text: refusal(r, text, payload)};
       drawWaves();
       return;
     }
@@ -2697,7 +2715,7 @@ async function decide(what, body){
     try{ payload=JSON.parse(text); }catch(_){}
     if(!r.ok){
       out.className="bad";
-      out.textContent=(payload&&payload.error)||("Refused — "+r.status+"\n\n"+text.slice(0,400));
+      out.textContent=refusal(r, text.slice(0,400), payload);
       for(const b of [ratify,reject]) if(b) b.disabled=false;
       if(confirm) confirm.disabled=false;
       return;
@@ -3081,7 +3099,7 @@ async function setRepo(value){
     let payload = null;
     try{ payload = JSON.parse(text); }catch(_){}
     if(!res.ok){
-      STATE.shipFlash = {kind:"bad", text:(payload && payload.error) || ("Refused — " + res.status)};
+      STATE.shipFlash = {kind:"bad", text: refusal(res, text, payload)};
     } else {
       // Reporting what was STORED, not what was typed: a browser URL is
       // reduced to owner/name, and a reader who assumes otherwise has no way
@@ -3112,7 +3130,7 @@ async function shipTickets(){
     try{ payload = JSON.parse(text); }catch(_){}
     if(!res.ok){
       STATE.shipFlash = {kind:"bad",
-        text:(payload && (payload.error || payload.reason)) || ("Refused — " + res.status)};
+        text: refusal(res, text, payload)};
       drawShip();
       return;
     }
