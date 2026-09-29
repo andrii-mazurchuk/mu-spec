@@ -716,7 +716,13 @@ const enc = encodeURIComponent;
    verbatim, and the bare status only when there is genuinely nothing else. */
 function refusal(res, text, payload){
   const said = (payload && (payload.error || payload.reason)) || (text || "").trim();
-  return said ? said + " (" + res.status + ")" : "Refused - " + res.status;
+  if(!said) return "Refused - " + res.status;
+  // `detail` is the node's second sentence, and on its 405 it is the useful
+  // one: it says the unit was never contacted, which is why nothing appears
+  // in the unit's log either. Dropping it leaves the next reader with the
+  // same two indistinguishable causes.
+  const why = payload && payload.detail ? "\n\n" + payload.detail : "";
+  return said + " (" + res.status + ")" + why;
 }
 
 async function get(path){
