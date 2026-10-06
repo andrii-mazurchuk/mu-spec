@@ -1012,30 +1012,37 @@ def _actions() -> list[dict[str, Any]]:
         {
             "name": "emit_tickets",
             "description": (
-                "Create a GitHub issue for every work unit of the current "
-                "cut. The one operation here that cannot be undone from "
-                "inside this unit, and the reason the page puts every "
-                "precondition above the button. Answers immediately with a "
-                "run id; progress is read back from GET on the same path. "
-                "Skips units already emitted, so a re-run is safe."
+                "Make the repository say what the current cut says "
+                "(docs/TICKETS.md): create issues for new units within the "
+                "horizon, edit in place an issue whose content changed and "
+                "nobody has picked up, withdraw one whose unit left the cut, "
+                "and report every picked-up issue instead of touching it. "
+                "One live issue per unit across every cut, so a re-run or a "
+                "new cut that says the same thing creates nothing. `waves` is "
+                "the horizon: how many waves still holding an unshipped unit "
+                "get issues in this press; omitted means all. Answers "
+                "immediately with a run id; progress is read back from GET "
+                "on the same path."
             ),
             "method": "POST",
             "path": "projects/{project}/emit",
-            "input_schema": {"type": "object", "properties": {}},
+            "input_schema": {
+                "type": "object",
+                "properties": {"waves": {"type": "integer", "minimum": 1}},
+            },
         },
         {
             "name": "rollback_tickets",
             "description": (
-                "Withdraw the issues a cut put on the repository: close every "
-                "one this unit created for it, as `not_planned` rather than "
-                "completed, and record the withdrawal so those units can be "
-                "emitted again. Closed, never deleted -- deletion is an "
-                "admin-only GraphQL mutation and is not reversible. Takes an "
-                "optional `cut_seq`; without one it withdraws the current "
-                "cut's, which is rarely what is wanted, because the reason to "
-                "withdraw a batch is usually that a newer cut has replaced "
-                "it. An issue GitHub refuses to close is reported and stays "
-                "un-emittable, so a stray issue is never duplicated."
+                "Withdraw every live issue this unit created on the "
+                "repository, from any cut: close each as `not_planned` rather "
+                "than completed, and record it so those units can be emitted "
+                "again. An issue somebody picked up or closed is skipped and "
+                "reported, never overwritten. Closed, never deleted -- "
+                "deletion is an admin-only GraphQL mutation and is not "
+                "reversible. `cut_seq` is only recorded. An issue GitHub "
+                "refuses to close is reported and stays live, so a stray "
+                "issue is never duplicated."
             ),
             "method": "POST",
             "path": "projects/{project}/emit/rollback",
@@ -1408,7 +1415,7 @@ def handle(
             if runs is None:
                 result = service.emit_tickets(
                     store, project, client=emit_client, events=events,
-                    now_fn=now_fn,
+                    now_fn=now_fn, body=body,
                 )
                 return (200 if result.get("emitted") else 409), JSON, json.dumps(result)
             try:
@@ -1416,7 +1423,7 @@ def handle(
                     project,
                     lambda report: service.emit_tickets(
                         store, project, client=emit_client, events=events,
-                        now_fn=now_fn, on_progress=report,
+                        now_fn=now_fn, on_progress=report, body=body,
                     ),
                 )
             except emitting.RunBusy as exc:

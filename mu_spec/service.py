@@ -1535,8 +1535,14 @@ def emit_tickets(
     events: Lifecycle | None = None,
     now_fn: Callable[[], float] = time.time,
     on_progress: Callable[[dict], None] | None = None,
+    body: dict | None = None,
 ) -> dict:
-    """Create one issue per work unit in the current cut, and wire the order.
+    """Make the tracker say what the current cut says (docs/TICKETS.md).
+
+    Creates issues for new units within the horizon -- `body.waves`, the
+    number of waves still holding an unshipped unit; omitted means all --
+    edits untouched issues whose content changed, withdraws untouched issues
+    whose unit left the cut, and reports everything touched.
 
     A person triggers this. Never a schedule and never a session: several
     hundred issues appearing on a repository is not something to decide on
@@ -1611,6 +1617,21 @@ def emit_tickets(
     order = [key for wave in schedule.waves for key in wave]
     order += [key for key in schedule.unschedulable if key not in set(order)]
 
+    raw = (body or {}).get("waves")
+    horizon = None
+    if raw is not None:
+        try:
+            horizon = int(raw)
+        except (TypeError, ValueError):
+            horizon = -1
+        if horizon < 1:
+            return {
+                "emitted": False,
+                "project": project,
+                "repo": manifest.repo,
+                "reason": f"'waves' must be a whole number of at least 1, not {raw!r}",
+            }
+
     if client is None:
         client = github.GitHub(token)
 
@@ -1625,6 +1646,9 @@ def emit_tickets(
         now_fn=now_fn,
         labels=manifest.labels,
         on_progress=on_progress,
+        waves=[list(w) for w in schedule.waves],
+        horizon=horizon,
+        pickup=manifest.pickup,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
@@ -1739,6 +1763,7 @@ def rollback_tickets(
         client=client,
         now_fn=now_fn,
         on_progress=on_progress,
+        pickup=manifest.pickup,
     )
     result["project"] = project
     if events is not None and result.get("rolled_back"):
@@ -1791,9 +1816,7 @@ def get_emission(
     if cut is not None and repo:
         # The same function `emit` skips on, not a second copy of its rule.
         # These were two copies until a withdrawal made them disagree.
-        already, _wired = emitting.standing(
-            store.emissions_path(project), cut.seq, repo
-        )
+        already, _wired = emitting.standing(store.emissions_path(project), repo)
 
     return {
         "project": project,

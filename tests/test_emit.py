@@ -125,7 +125,8 @@ def test_the_result_names_every_issue_it_made(tmp_path):
     assert first["title"]
     assert result["counts"] == {
         "units": 3, "created": 3, "skipped": 0, "failed": 0,
-        "wired": 2, "unwired": 0,
+        "wired": 2, "unwired": 0, "edited": 0, "withdrawn": 0,
+        "touched": 0, "raced": 0, "held": 0, "removed": 0,
     }
 
 
@@ -569,7 +570,10 @@ def test_the_emission_status_says_which_units_are_already_out(tmp_path, monkeypa
     assert after["already"]["S-01"]["number"] == 2
 
 
-def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monkeypatch):
+def test_units_emitted_under_an_older_cut_are_still_out(tmp_path, monkeypatch):
+    """Identity is per repository, never per cut (docs/TICKETS.md section 1).
+    Reporting them as not out is how a new cut used to promise, and then
+    perform, a second copy of every issue."""
     from mu_spec import service
     from mu_spec.graph import Entry
     from mu_spec.identifiers import parse
@@ -588,7 +592,7 @@ def test_units_emitted_under_an_older_cut_are_not_reported_as_out(tmp_path, monk
 
     status = service.get_emission(store, "p")
     assert status["cut_seq"] == 2
-    assert status["already"] == {}, "a new cut is a new emission"
+    assert set(status["already"]) == {"S-01", "S-01-T"}
 
 
 def test_the_status_says_whether_a_token_exists_never_what_it_is(tmp_path, monkeypatch):
@@ -747,18 +751,6 @@ def test_a_rollback_reports_progress_as_it_goes(tmp_path):
     assert seen[0]["total"] == 3
     assert [s["processed"] for s in seen] == [0, 1, 2, 3]
     assert seen[-1]["closed"] == 3
-
-
-def test_a_rollback_leaves_another_cut_alone(tmp_path):
-    """Scoped by (cut_seq, repo), exactly as the duplicate guard is."""
-    _result, client, log = run(tmp_path)
-    _closer(client)
-    emit(log_path=log, repo=REPO, cut_seq=9, order=["S-09"], edges={},
-         fetch=lambda key: payload(key), client=client, now_fn=lambda: 1500.0)
-    before = len(client.created)
-    out = _rollback(log, client)
-    assert out["counts"]["targeted"] == 3, "cut 9's issue is not touched"
-    assert before == 4
 
 
 def test_a_unit_emitted_again_can_be_withdrawn_again(tmp_path):

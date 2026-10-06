@@ -3567,10 +3567,10 @@ def test_a_rollback_with_no_token_is_an_answer_not_a_crash(store, prompts, monke
     assert "MU_SPEC_GITHUB_TOKEN" in payload["reason"]
 
 
-def test_a_rollback_can_name_an_older_cut(store, prompts, monkeypatch):
+def test_a_rollback_after_a_fresh_cut_still_withdraws_what_is_live(store, prompts, monkeypatch):
     """The case it exists for: by the time a batch is known to be wrong, the
-    spec has moved and a newer cut is current. Defaulting to the current cut
-    with no way to name another would miss exactly that."""
+    spec has moved and a newer cut is current. Identity is per repository, so
+    a withdrawal covers every live issue whichever cut made it."""
     from mu_spec.emit import Runs
 
     monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
@@ -3583,9 +3583,6 @@ def test_a_rollback_can_name_an_older_cut(store, prompts, monkeypatch):
     # A fresh cut: the current cut_seq is now 2 and holds no issues.
     call(store, prompts, "POST", "/projects/m/units/cut", {"note": "again"})
     _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {},
-               runs=inline(), client=client)
-    assert client.closed == [], "the current cut has emitted nothing"
-    _emit_call(store, prompts, "POST", "/projects/m/emit/rollback", {"cut_seq": 1},
                runs=inline(), client=client)
     assert len(client.closed) == emitted
 

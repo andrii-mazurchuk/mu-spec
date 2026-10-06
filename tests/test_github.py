@@ -433,3 +433,23 @@ def test_removing_a_dependency_names_the_blocked_number_and_the_blocker_id():
         f"/repos/{REPO}/issues/12/dependencies/blocked_by/3141592653"
     )
     assert request.data is None
+
+
+def test_label_changes_touch_only_the_names_given():
+    """A PATCH with `labels` replaces the set, and would erase a pickup label
+    a consumer added between our read and our write. Found by driving the
+    sync against a fake that admits inside that gap."""
+    gh, rec, _ = client(FakeResponse({}, status=200), FakeResponse({}, status=200))
+    gh.add_labels(REPO, 12, ["slice:new"])
+    gh.remove_label(REPO, 12, "slice:old one")
+    assert rec.requests[0].get_method() == "POST"
+    assert rec.requests[0].full_url.endswith(f"/repos/{REPO}/issues/12/labels")
+    assert rec.bodies[0] == {"labels": ["slice:new"]}
+    assert rec.requests[1].get_method() == "DELETE"
+    assert rec.requests[1].full_url.endswith("/issues/12/labels/slice%3Aold%20one")
+
+
+def test_an_edit_without_labels_does_not_send_them():
+    gh, rec, _ = client(FakeResponse({}, status=200))
+    gh.update_issue(REPO, 12, "t", "b")
+    assert rec.bodies[0] == {"title": "t", "body": "b"}

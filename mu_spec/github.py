@@ -34,6 +34,7 @@ import dataclasses
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Callable
 
@@ -247,12 +248,33 @@ class GitHub:
 
     def update_issue(
         self, repo: str, number: int, title: str, body: str,
-        labels: "list[str] | tuple[str, ...]",
+        labels: "list[str] | tuple[str, ...] | None" = None,
     ) -> None:
-        """Rewrite an issue nobody has picked up. One PATCH; `labels` replaces
-        the whole set, so the caller passes any label it means to keep."""
-        self._patch(f"/repos/{repo}/issues/{int(number)}",
-                    {"title": title, "body": body, "labels": list(labels)})
+        """Rewrite an issue nobody has picked up: title and body.
+
+        `labels` REPLACES the whole set, and a sync must never send it: a
+        consumer labelling the issue between our read and this write would
+        have its pickup label erased, and the issue would look untouched to
+        every Ship after. Use `add_labels` / `remove_label`, which touch only
+        the names given."""
+        payload: dict = {"title": title, "body": body}
+        if labels is not None:
+            payload["labels"] = list(labels)
+        self._patch(f"/repos/{repo}/issues/{int(number)}", payload)
+
+    def add_labels(self, repo: str, number: int, labels) -> None:
+        """Add labels, leaving every other label exactly as it is."""
+        self._post(f"/repos/{repo}/issues/{int(number)}/labels",
+                   {"labels": list(labels)})
+
+    def remove_label(self, repo: str, number: int, label: str) -> None:
+        """Remove one label by name, leaving the rest."""
+        self._request(
+            "DELETE",
+            f"/repos/{repo}/issues/{int(number)}/labels/"
+            f"{urllib.parse.quote(label, safe='')}",
+            None,
+        )
 
     def remove_blocked_by(self, repo: str, blocked_number: int, blocker_id: int) -> None:
         """Undeclare an order the cut no longer has. Number in the path, the

@@ -1,11 +1,13 @@
-"""A cut becomes issues on a tracker: two passes, and a log of what landed.
+"""A cut becomes issues on a tracker, and stays in step with it.
 
 This is the only module in the unit that causes something to happen outside
 it, and the boundary it sits on is worth stating precisely. mu-spec **creates**
-tickets -- that is its purpose -- and never **acts on** them. What happens to
-an issue after it exists is the tracker's business and the business of whoever
-picks the work up. Nothing here reads an issue back, comments, closes, or
-reacts to a specification that has since moved.
+tickets -- that is its purpose -- and never **acts on** them. A Ship makes the
+tracker say what the cut says: it creates, edits in place and withdraws, but
+only issues nobody has picked up, and only because a person pressed it. It
+reads an issue only to avoid destroying somebody else's state while doing so.
+It never comments, never reopens, never reacts to a PR. The protocol is
+docs/TICKETS.md.
 
 **Two passes, not one.** A dependency needs the blocker's issue *id*, which
 does not exist until the blocker has been created. Creating in dependency order
@@ -38,7 +40,7 @@ from pathlib import Path
 from typing import Callable
 
 from mu_spec.github import GitHubError
-from mu_spec.render import render
+from mu_spec.render import LABEL_NAMESPACE, render
 from mu_spec.units import canonical_key
 
 
@@ -257,6 +259,9 @@ class Run:
             "failed": 0,
             "wired": 0,
             "unwired": 0,
+            "edited": 0,
+            "withdrawn": 0,
+            "touched": 0,
             "started_at": now_fn(),
             "finished_at": None,
             "error": None,
@@ -281,7 +286,8 @@ class Run:
                 # here is a counter that silently stays zero on the page
                 # while the work it counts is happening.
                 "step", "total", "processed", "created", "skipped",
-                "failed", "wired", "unwired", "closed",
+                "failed", "wired", "unwired", "closed", "edited",
+                "withdrawn", "touched",
             ):
                 if field in progress:
                     self._state[field] = progress[field]
@@ -369,121 +375,117 @@ class Runs:
         return run.snapshot() if run else None
 
 
-def standing(
-    log_path: Path, cut_seq: int, repo: str
-) -> tuple[dict[str, dict], set[str]]:
-    """What is currently out: unit key -> issue, and the edges already wired.
+def standing(log_path: Path, repo: str) -> tuple[dict[str, dict], set[str]]:
+    """What is live on a repository: unit key -> issue, and the edges wired.
 
     The one place this is computed. It was two places for exactly as long as
     it took to add rollbacks: `emit` learned to subtract a withdrawal and the
     pre-flight count did not, so the panel said "0 new issues" while pressing
-    the button would have created 144. The comment on the copy even said it
-    was scoped "exactly as the skip in emit is", which is how a copy tells you
-    it wants to be a function.
+    the button would have created 144.
 
-    Scoped to `(cut_seq, repo)`, which is what makes a re-run of one cut
-    create nothing while a fresh cut creates everything.
+    **Per repository, across every cut** (docs/TICKETS.md §1). It used to be
+    scoped to `(cut_seq, repo)`, so every new cut looked never-emitted and a
+    Ship created every issue a second time -- which is how `dark` reached 288
+    issues for 144 units. A cut is a version of a ticket's content, never a
+    new set of tickets.
 
-    Withdrawals are subtracted by issue NUMBER, not by unit key: a unit
+    Withdrawals are subtracted by issue NUMBER, never by unit key: a unit
     emitted, withdrawn and emitted again holds a live issue under a key that
     also appears in a rollback, and dropping it by name would create a third
     issue for work that already has one.
+
+    The edges are the latest record's, because every record carries the full
+    set: an edge the cut dropped is removed from the tracker and from the
+    next record, and a union across records would resurrect it.
     """
     emissions, rollbacks = read_log(log_path)
-    known: dict[str, dict] = {}
-    wired: set[str] = set()
-    for emission in emissions:
-        if emission.cut_seq == cut_seq and emission.repo == repo:
-            known.update(emission.issues)
-            wired.update(emission.wired)
-
-    closed_numbers: set[int] = set()
-    for record in rollbacks:
-        if record.cut_seq == cut_seq and record.repo == repo:
-            closed_numbers.update(record.closed.values())
-    reopened = {
-        key for key, issue in known.items()
-        if issue.get("number") is not None
-        and int(issue["number"]) in closed_numbers
+    mine = [e for e in emissions if e.repo == repo]
+    closed = {
+        n for record in rollbacks if record.repo == repo
+        for n in record.closed.values()
     }
-    for key in reopened:
-        known.pop(key, None)
-    # The edges go with them: an edge between two issues that are now closed
-    # must be declared again between their replacements.
+    known: dict[str, dict] = {}
+    for emission in mine:
+        known.update(emission.issues)
+    known = {
+        key: issue for key, issue in known.items()
+        if issue.get("number") is None or int(issue["number"]) not in closed
+    }
     wired = {
-        pair for pair in wired
-        if not any(key in pair.split("<-") for key in reopened)
+        pair for pair in (mine[-1].wired if mine else ())
+        if all(key in known for key in pair.split("<-"))
     }
     return known, wired
+
+
+def _touched(client, repo: str, number, pickup) -> "tuple[str | None, dict]":
+    """Why this issue is not ours to write (None if it is), and what was read.
+
+    Touched = closed for any reason this unit did not record, or carrying a
+    pickup label (docs/TICKETS.md §2). A read that fails counts as touched:
+    for a write that can destroy somebody's state, not knowing is a reason to
+    stop. A skipped issue can be written on a re-run; a clobbered one cannot
+    be restored.
+    """
+    try:
+        state = client.issue_state(repo, int(number))
+    except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+        return f"could not read the issue's state, so it was left untouched: {exc}", {}
+    if state.get("state") == "closed":
+        return (f"closed as {state.get('state_reason') or 'closed'} by someone "
+                "else -- left alone"), state
+    held = [label for label in state.get("labels") or () if label in pickup]
+    if held:
+        return f"picked up ({', '.join(held)}) -- never edited after pickup", state
+    return None, state
+
+
+def _ours(label: str, extra: "tuple[str, ...] | list[str]") -> bool:
+    """A label this unit puts on its issues. On an edit these are replaced and
+    every other label is kept."""
+    return label.startswith((f"{LABEL_NAMESPACE}:", "kind:", "slice:")) or label in extra
 
 
 def rollback(
     *,
     log_path: Path,
     repo: str,
-    cut_seq: int,
+    cut_seq: int | None = None,
     client,
     now_fn: Callable[[], float],
     on_progress: Callable[[dict], None] | None = None,
+    pickup: "tuple[str, ...] | list[str]" = (),
 ) -> dict:
-    """Withdraw every issue this unit created for one cut, on this repository.
+    """Withdraw every live issue on this repository, from any cut.
 
-    Scoped by `(cut_seq, repo)` because that is exactly the key the duplicate
-    guard uses. One concept, not two: what a re-emission would skip is what a
-    rollback undoes, and the two staying in step is not an accident that has
-    to be maintained.
+    The sync run against an empty cut (docs/TICKETS.md §4). `cut_seq` is only
+    recorded: identity is per repository, so withdrawing "one cut's" issues
+    no longer names a set.
 
-    Closed, never deleted. REST cannot delete an issue; that is an admin-only
-    GraphQL mutation. Closing is also the reversible half, which is the right
-    default for an operation whose entire purpose is undoing something -- and
-    a closed issue leaves the default `is:open` list, which is the visible
-    outcome somebody asking for a rollback actually wants.
+    Closed, never deleted. REST cannot delete an issue; closing is also the
+    reversible half, and a closed issue leaves the default `is:open` list,
+    which is the visible outcome somebody asking for a rollback wants.
 
-    Nothing raises. A run of 144 closes has to come back as a pass/fail list,
-    exactly like the emission it undoes, not as one exception about the first
-    issue GitHub would not touch.
+    A touched issue is skipped and NOT recorded as withdrawn, so it is never
+    recreated: work somebody picked up or finished is theirs.
 
-    **The one thing this does NOT do is decide.** It withdraws what a person
-    asked to withdraw. Nothing here reads an issue's state back, reacts to a
-    comment, or concludes on its own that a cut is stale -- that is the line
-    this unit does not cross, and a rollback sits on the near side of it
-    because a person triggered it and the set was already recorded.
+    **The one thing this does NOT do is decide.** A person asked; the set was
+    already recorded.
     """
-    emissions, done = read_log(log_path)
-    mine = [e for e in emissions if e.cut_seq == cut_seq and e.repo == repo]
-    # By issue NUMBER, never by unit key. A unit withdrawn and then emitted
-    # again is a different issue under the same key, and keying this by the
-    # key made that second issue permanently un-withdrawable -- the first
-    # rollback had already claimed the name. Found by driving two full rounds
-    # against dark; the second rollback closed nothing and reported success.
-    withdrawn: set[int] = set()
-    for record in done:
-        if record.cut_seq == cut_seq and record.repo == repo:
-            withdrawn.update(record.closed.values())
-
+    emissions, _done = read_log(log_path)
+    mine = [e for e in emissions if e.repo == repo]
+    targets, _wired = standing(log_path, repo)
     # Highest issue number first. An emission creates a test unit before the
     # implementation that follows it, so closing in reverse withdraws the
     # dependent before the thing it depends on and never leaves a live issue
     # blocked by a withdrawn one, however far the run gets.
-    targets: dict[str, dict] = {}
-    for emission in mine:
-        for key, issue in emission.issues.items():
-            number = issue.get("number")
-            if number is not None and int(number) not in withdrawn:
-                targets[key] = issue
-            else:
-                # A later emission may have replaced a withdrawn issue under
-                # the same key; only the withdrawn one drops out.
-                targets.pop(key, None)
     order = sorted(targets, key=lambda k: -int(targets[k].get("number") or 0))
 
     if not order:
         return {
             "rolled_back": False,
-            "reason": (
-                f"nothing to withdraw: no issue from cut {cut_seq} on {repo} "
-                "is still recorded as open by this unit"
-            ),
+            "reason": f"nothing to withdraw: no issue on {repo} is still "
+                      "recorded as open by this unit",
             "repo": repo,
             "cut_seq": cut_seq,
         }
@@ -507,65 +509,28 @@ def rollback(
     tick("closing")
     for key in order:
         number = targets[key].get("number")
-        # Look before writing. A withdrawal that blindly PATCHes
-        # `state_reason: not_planned` overwrites a `completed` close -- and
-        # `completed` is somebody else's statement that the work is DONE.
-        # That happened for real: a consumer finished one unit of a batch,
-        # closed its issue `completed`, and a withdrawal of the batch
-        # relabelled it as withdrawn, which would have handed the finished
-        # work straight back to an agent as re-admittable.
-        #
-        # A read that cannot be made is treated as "leave it alone". For a
-        # destructive operation, not knowing is a reason to stop rather than
-        # a reason to proceed: a skipped issue can be withdrawn on a re-run,
-        # a clobbered one cannot be un-clobbered.
-        try:
-            state = client.issue_state(repo, int(number))
-        except (GitHubError, TypeError, ValueError, AttributeError) as exc:
-            skipped.append({
-                "key": key, "number": number,
-                "reason": f"could not read the issue's state, so it was left "
-                          f"untouched: {exc}",
-            })
-            tick("closing")
-            continue
-        if state.get("state") == "closed" and state.get("state_reason") != WITHDRAWN:
-            # Somebody else closed it, and said why. Left exactly as it is,
-            # and NOT recorded as withdrawn -- so it is never recreated
-            # either, because the work it names has already happened.
-            skipped.append({
-                "key": key, "number": number,
-                "reason": f"already closed as "
-                          f"{state.get('state_reason') or 'closed'} by someone "
-                          f"else -- left alone",
-            })
+        why, _state = _touched(client, repo, number, pickup)
+        if why is not None and not why.startswith(f"closed as {WITHDRAWN}"):
+            skipped.append({"key": key, "number": number, "reason": why})
             tick("closing")
             continue
         try:
             client.close_issue(repo, int(number))
         except (GitHubError, TypeError, ValueError) as exc:
-            # Left OUT of `closed`, so the duplicate guard still considers it
-            # emitted. An issue that is still open must never be recreated --
-            # that turns one stray issue into two, which is worse than the
-            # thing being fixed.
+            # Left OUT of `closed`, so it stays live. An issue still open on
+            # the tracker must never be recreated -- that turns one stray
+            # issue into two.
             failed.append({"key": key, "number": number, "reason": str(exc)})
         else:
             closed[key] = int(number)
         tick("closing")
 
     if closed or failed or skipped:
-        _append(
-            log_path,
-            Rollback(
-                seq=_next_seq(log_path),
-                at=now_fn(),
-                cut_seq=cut_seq,
-                repo=repo,
-                undone=tuple(sorted(e.seq for e in mine)),
-                closed=closed,
-                failed=tuple(failed),
-            ),
-        )
+        _append(log_path, Rollback(
+            seq=_next_seq(log_path), at=now_fn(), cut_seq=int(cut_seq or 0),
+            repo=repo, undone=tuple(sorted(e.seq for e in mine)),
+            closed=closed, failed=tuple(failed),
+        ))
 
     return {
         "rolled_back": True,
@@ -595,16 +560,30 @@ def emit(
     now_fn: Callable[[], float],
     labels: "tuple[str, ...] | list[str]" = (),
     on_progress: Callable[[dict], None] | None = None,
+    waves: "list[list[str]] | None" = None,
+    horizon: int | None = None,
+    pickup: "tuple[str, ...] | list[str]" = (),
 ) -> dict:
-    """Create an issue per work unit, then wire the dependencies between them.
+    """Make the tracker say what the cut says (docs/TICKETS.md §3).
+
+    Per unit: unchanged -> nothing, and no call at all; changed and untouched
+    -> edited in place; changed and touched -> reported; new -> created;
+    gone from the cut and untouched -> closed `not_planned`; gone and touched
+    -> reported. Then every dependency is made to match the cut.
 
     `order` is the unit keys in dependency order; `edges` maps a unit to the
-    units it follows. `fetch` returns one work unit's payload -- injected rather
-    than taken from a store, so the loop is testable and so this module needs to
-    know nothing about how a unit is assembled.
+    units it follows; `waves` is that order grouped, for `horizon` -- the
+    number of waves still holding an unshipped unit that this press creates
+    issues for. The horizon limits creation only: an edit or a withdrawal is
+    never held back. `pickup` is the labels a consumer adds on pickup; with
+    none, nothing is edited or closed, because untouched cannot be told from
+    admitted.
+
+    Every write re-reads the issue first and reads it once more after. A
+    pickup label that appeared in between is reported in `raced` -- never
+    silent.
     """
-    known, wired_already = standing(log_path, cut_seq, repo)
-    previous, _rollbacks = read_log(log_path)
+    live, wired_before = standing(log_path, repo)
 
     if not order:
         return {
@@ -614,145 +593,284 @@ def emit(
             "cut_seq": cut_seq,
         }
 
+    # The sequence the emission record will carry, and so the batch every
+    # ticket written in this press is stamped with.
+    batch = _next_seq(log_path)
+    in_cut = set(order)
+
+    missing = [key for key in order if key not in live]
+    held: list[str] = []
+    if horizon is not None and waves:
+        chosen = [wave for wave in waves if any(k not in live for k in wave)]
+        allowed = {k for wave in chosen[: max(0, int(horizon))] for k in wave}
+        held = [key for key in missing if key not in allowed]
+        missing = [key for key in missing if key in allowed]
+
     created: list[dict] = []
+    edited: list[dict] = []
+    withdrawn: list[dict] = []
+    touched: list[dict] = []
+    raced: list[dict] = []
     skipped: list[dict] = []
     failed: list[dict] = []
-    issues: dict[str, dict] = dict(known)
     wired: list[dict] = []
     unwired: list[dict] = []
+    removed: list[dict] = []
+    issues: dict[str, dict] = dict(live)
+    # Issues whose dependencies are frozen: picked up, or unreadable.
+    frozen: set[str] = set()
+    work = [k for k in order if k in live or k in missing]
 
-    def tick(step: str, processed: int) -> None:
-        """Report after every unit and every edge.
-
-        Per item rather than per phase: the point is watching a six-minute run
-        advance, and two updates in six minutes is a spinner with extra steps.
-        """
+    def tick(step: str) -> None:
+        """Per item, not per phase: the point is watching a run advance."""
         if on_progress is None:
             return
         on_progress({
             "step": step,
-            "total": len(order),
-            "processed": processed,
+            "total": len(work),
+            "processed": len(created) + len(edited) + len(skipped)
+                         + len(failed) + len(touched),
             "created": len(created),
+            "edited": len(edited),
+            "withdrawn": len(withdrawn),
+            "touched": len(touched),
             "skipped": len(skipped),
             "failed": len(failed),
             "wired": len(wired),
             "unwired": len(unwired),
         })
 
-    # -- pass one: the issues ----------------------------------------------
-    for position, key in enumerate(order, start=1):
-        if key in known:
-            skipped.append({
-                "key": key,
-                "reason": f"already emitted as #{known[key].get('number')}",
-                "number": known[key].get("number"),
-                "url": known[key].get("url", ""),
-            })
-            tick("creating", position)
+    def look(key: str) -> "tuple[str | None, dict]":
+        if not pickup:
+            return ("no pickup labels are configured, so an issue somebody "
+                    "picked up cannot be told from one nobody has -- left alone"), {}
+        return _touched(client, repo, issues[key].get("number"), pickup)
+
+    def after(key: str, what: str) -> None:
+        """The second read. The consumer admits by labelling first and reading
+        second, so a label that appeared since our first read means the write
+        may have landed on an issue it had just taken."""
+        try:
+            state = client.issue_state(repo, int(issues[key]["number"]))
+        except (GitHubError, TypeError, ValueError, AttributeError):
+            return
+        if any(label in pickup for label in state.get("labels") or ()):
+            raced.append({"key": key, "number": issues[key]["number"],
+                          "reason": f"{what} while it was being picked up"})
+
+    # -- units that left the cut: withdraw, highest number first --------------
+    gone = sorted((k for k in live if k not in in_cut),
+                  key=lambda k: -int(live[k].get("number") or 0))
+    closed: dict[str, int] = {}
+    for key in gone:
+        why, _state = look(key)
+        if why is not None:
+            touched.append({"key": key, "number": live[key].get("number"),
+                            "reason": f"gone from the cut, not closed: {why}"})
+            frozen.add(key)
+            tick("withdrawing")
             continue
         try:
-            ticket = render(
-                fetch(key), repo=repo, cut_seq=cut_seq, extra_labels=labels,
-            )
+            client.close_issue(repo, int(live[key]["number"]))
+        except (GitHubError, TypeError, ValueError) as exc:
+            failed.append({"key": key, "reason": f"could not be withdrawn: {exc}"})
+            frozen.add(key)
+        else:
+            after(key, "withdrawn")
+            closed[key] = int(live[key]["number"])
+            withdrawn.append({"key": key, "number": closed[key]})
+            issues.pop(key, None)
+        tick("withdrawing")
+
+    # -- units already out: compare, edit what changed ------------------------
+    for key in order:
+        if key not in live:
+            continue
+        try:
+            ticket = render(fetch(key), repo=repo, cut_seq=cut_seq,
+                            extra_labels=labels, batch=batch)
+        except (ValueError, KeyError) as exc:
+            failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
+            frozen.add(key)
+            tick("editing")
+            continue
+        if ticket.fingerprint == live[key].get("fingerprint"):
+            skipped.append({"key": key, "number": live[key].get("number"),
+                            "url": live[key].get("url", ""),
+                            "reason": f"already emitted as #{live[key].get('number')}, "
+                                      "unchanged"})
+            tick("editing")
+            continue
+        if ticket.oversized:
+            failed.append({"key": key, "reason": f"the rendered body is too large "
+                           f"for the tracker ({len(ticket.body)} characters)"})
+            frozen.add(key)
+            tick("editing")
+            continue
+        why, state = look(key)
+        if why is not None:
+            # Its old fingerprint is kept, so the change stays reported until
+            # somebody releases the issue.
+            touched.append({"key": key, "number": live[key].get("number"),
+                            "reason": f"changed, not edited: {why}"})
+            frozen.add(key)
+            tick("editing")
+            continue
+        try:
+            # Labels by difference, never by replacement: a PATCH of the whole
+            # set would erase a pickup label added since our read, and the
+            # issue would look untouched to every Ship after.
+            number = int(live[key]["number"])
+            client.update_issue(repo, number, ticket.title, ticket.body)
+            current = list(state.get("labels") or ())
+            add = [l for l in ticket.labels if l not in current]
+            if add:
+                client.add_labels(repo, number, add)
+            wrote = tuple(live[key].get("labels") or ()) + tuple(labels)
+            for label in current:
+                if _ours(label, wrote) and label not in ticket.labels:
+                    client.remove_label(repo, number, label)
+        except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+            failed.append({"key": key, "reason": f"could not be edited: {exc}"})
+            frozen.add(key)
+            tick("editing")
+            continue
+        after(key, "edited")
+        issues[key] = {**live[key], "fingerprint": ticket.fingerprint,
+                       "batch": batch, "labels": list(ticket.labels)}
+        edited.append({"key": key, "number": live[key]["number"],
+                       "url": live[key].get("url", "")})
+        tick("editing")
+
+    # -- new units, within the horizon ----------------------------------------
+    for key in missing:
+        try:
+            ticket = render(fetch(key), repo=repo, cut_seq=cut_seq,
+                            extra_labels=labels, batch=batch)
         except (ValueError, KeyError) as exc:
             # An unsound graph refuses one unit at a time. One bad unit must
             # not cost the other hundred and forty-three.
             failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
-            tick("creating", position)
+            tick("creating")
             continue
         if ticket.oversized:
-            skipped.append({
-                "key": key,
-                "reason": f"the rendered body is too large for the tracker "
-                          f"({len(ticket.body)} characters)",
-            })
-            tick("creating", position)
+            skipped.append({"key": key, "reason": f"the rendered body is too large "
+                            f"for the tracker ({len(ticket.body)} characters)"})
+            tick("creating")
             continue
         try:
-            issue = client.create_issue(
-                repo, ticket.title, ticket.body, ticket.labels
-            )
+            issue = client.create_issue(repo, ticket.title, ticket.body, ticket.labels)
         except GitHubError as exc:
             failed.append({"key": key, "reason": str(exc)})
-            tick("creating", position)
+            tick("creating")
             continue
-        issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url}
-        created.append({
-            "key": key,
-            "title": ticket.title,
-            "number": issue.number,
-            "url": issue.url,
-            "labels": list(ticket.labels),
-        })
-        tick("creating", position)
+        # The labels written are recorded so a later edit can remove the ones
+        # this unit put there -- a project label renamed since is still ours.
+        issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
+                       "fingerprint": ticket.fingerprint, "batch": batch,
+                       "labels": list(ticket.labels)}
+        created.append({"key": key, "title": ticket.title, "number": issue.number,
+                        "url": issue.url, "labels": list(ticket.labels)})
+        tick("creating")
 
-    # -- pass two: the order ------------------------------------------------
+    # -- the order: declare what the cut has, remove what it dropped ---------
+    wanted = {
+        _pair(blocked, blocker)
+        for blocked in order if blocked in issues
+        for blocker in edges.get(blocked, ()) or ()
+    }
+    now_wired = {p for p in wired_before
+                 if all(k in issues for k in p.split("<-"))}
     for blocked in order:
+        if blocked not in issues or blocked in frozen:
+            continue
         for blocker in edges.get(blocked, ()) or ():
             pair = _pair(blocked, blocker)
-            if pair in wired_already:
+            if pair in now_wired:
                 continue
-            here, there = issues.get(blocked), issues.get(blocker)
-            if not here or not there:
+            there = issues.get(blocker)
+            if not there:
                 # Order is the point of the feature, so an order that silently
                 # did not happen is the worst available outcome.
-                missing = blocker if not there else blocked
-                unwired.append({
-                    "blocked": blocked,
-                    "blocker": blocker,
-                    "reason": f"{missing} has no issue, so this order could "
-                              "not be declared",
-                })
-                tick("wiring", len(order))
+                unwired.append({"blocked": blocked, "blocker": blocker,
+                                "reason": f"{blocker} has no issue, so this order "
+                                          "could not be declared"})
+                tick("wiring")
                 continue
             try:
-                client.add_blocked_by(repo, here["number"], there["id"])
+                client.add_blocked_by(repo, issues[blocked]["number"], there["id"])
             except GitHubError as exc:
-                unwired.append({
-                    "blocked": blocked, "blocker": blocker, "reason": str(exc)
-                })
-                tick("wiring", len(order))
+                unwired.append({"blocked": blocked, "blocker": blocker,
+                                "reason": str(exc)})
+                tick("wiring")
                 continue
-            wired_already.add(pair)
-            wired.append({
-                "blocked": blocked,
-                "blocker": blocker,
-                "blocked_number": here["number"],
-                "blocker_id": there["id"],
-            })
-            tick("wiring", len(order))
+            now_wired.add(pair)
+            wired.append({"blocked": blocked, "blocker": blocker,
+                          "blocked_number": issues[blocked]["number"],
+                          "blocker_id": there["id"]})
+            tick("wiring")
+    # Removal walks the edges as they were BEFORE this press: a blocker
+    # withdrawn just now is gone from `issues`, and its edge is exactly the
+    # one that must leave the tracker -- a consumer treats a blocker closed
+    # `not_planned` as never satisfied.
+    for pair in sorted(wired_before):
+        blocked, _, blocker = pair.partition("<-")
+        if pair in wanted or blocked not in issues or blocked in frozen:
+            continue
+        source = live.get(blocker)
+        if not source:
+            continue
+        try:
+            client.remove_blocked_by(repo, issues[blocked]["number"], source["id"])
+        except GitHubError as exc:
+            unwired.append({"blocked": blocked, "blocker": blocker,
+                            "reason": f"a dropped order could not be removed: {exc}"})
+            continue
+        now_wired.discard(pair)
+        removed.append({"blocked": blocked, "blocker": blocker})
 
     # Recorded even when the run went badly: otherwise a re-run duplicates the
     # issues that DID land, which is the one thing the guard exists to stop.
-    if created or wired:
-        _append(
-            log_path,
-            Emission(
-                seq=_next_seq(log_path),
-                at=now_fn(),
-                cut_seq=cut_seq,
-                repo=repo,
-                issues=issues,
-                wired=tuple(sorted(wired_already)),
-            ),
-        )
+    if created or edited or wired or removed or withdrawn:
+        _append(log_path, Emission(
+            seq=batch, at=now_fn(), cut_seq=cut_seq, repo=repo,
+            issues=issues, wired=tuple(sorted(now_wired)),
+        ))
+    if closed:
+        _append(log_path, Rollback(
+            seq=_next_seq(log_path), at=now_fn(), cut_seq=cut_seq, repo=repo,
+            undone=(), closed=closed,
+        ))
 
     return {
         "emitted": True,
         "repo": repo,
         "cut_seq": cut_seq,
+        "batch": batch,
+        "horizon": horizon,
         "created": created,
+        "edited": edited,
+        "withdrawn": withdrawn,
+        "touched": touched,
+        "raced": raced,
+        "held": held,
         "skipped": skipped,
         "failed": failed,
         "wired": wired,
         "unwired": unwired,
+        "removed": removed,
         "counts": {
             "units": len(order),
             "created": len(created),
+            "edited": len(edited),
+            "withdrawn": len(withdrawn),
+            "touched": len(touched),
+            "raced": len(raced),
+            "held": len(held),
             "skipped": len(skipped),
             "failed": len(failed),
             "wired": len(wired),
             "unwired": len(unwired),
+            "removed": len(removed),
         },
     }
