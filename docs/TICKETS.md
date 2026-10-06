@@ -119,12 +119,13 @@ ticket still fits GitHub's 65,536-character limit.
 - That was the gap on the one real run. S-01-T knew `Provisional` (defined by S-02, the
   same file) only by its title, so it read nine other issues to find it. Under a
   horizon, those issues often won't exist yet.
-- Measured on DARK: the median ticket grows from 17 KB to 25 KB, and 140 of 144 fit.
+- Measured on DARK with the real renderer: the median ticket grows from 17 KB to 24 KB, and
+  139 of 144 carry their neighbours in full.
 - The ticket isn't the cost driver. For one run (S-01-T, $4.00 without the cancelled
   run), the ticket was about 8% of cached input. Turns multiplied by context dominated
   the cost, and every lookup Case is spared removes turns.
 
-**The 4 that don't fit** (S-105, S-69, S-76-T, S-107) keep titles, and list the ids in
+**The 5 that don't fit** (S-105, S-107, S-38-T, S-69, S-76-T) keep titles, and list the ids in
 the machine block as `context_ids`. Fetching those is a consumer decision. The
 candidate is Paperclip's `plan` document, which is injected into the prompt with no cap.
 It isn't built.

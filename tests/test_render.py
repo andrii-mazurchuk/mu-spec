@@ -346,3 +346,77 @@ def test_extra_labels_are_added_to_the_per_unit_ones():
 def test_no_extra_labels_changes_nothing():
     plain = render(IMPL, repo="o/n", cut_seq=1)
     assert all(not l.startswith("team:") for l in plain.labels)
+
+
+# -- the other contracts a file serves, in full (option A, 2026-10-06) ------
+
+
+def _with_scope_body(body: str = "`Provisional(value, reason)` is a frozen dataclass.") -> dict:
+    scope = {"dark/config/declare.py": [
+        {"id": "S-02", "title": "`Provisional` is a declaration-site attribute",
+         "body": body}
+    ]}
+    return {**IMPL, "file_scope": scope}
+
+
+def test_another_contract_on_the_same_file_arrives_in_full():
+    """The one real run: S-01-T knew `Provisional` only by its title and read
+    nine other issues to find its shape. Under a wave horizon those issues
+    often do not exist yet, so the text has to travel with the ticket."""
+    body = render(_with_scope_body()).body
+    assert "`Provisional(value, reason)` is a frozen dataclass." in body
+
+
+def test_a_contract_serving_two_files_is_written_out_once():
+    one = {"id": "S-02", "title": "Provisional", "body": "THE-BODY"}
+    payload = {**IMPL, "write_set": ["a.py", "b.py"],
+               "file_scope": {"a.py": [one], "b.py": [one]}}
+    assert render(payload).body.count("THE-BODY") == 1
+
+
+def test_inlined_contracts_leave_nothing_to_fetch():
+    data = _block(render(_with_scope_body(), repo="o/n", cut_seq=1).body)
+    assert data["context_ids"] == []
+
+
+def test_contracts_that_would_overflow_the_ticket_fall_back_to_titles_and_ids():
+    """Four of dark's 144 units do not fit with their neighbours inlined. A
+    ticket GitHub refuses helps nobody, so those keep the titles and name the
+    ids for whoever can fetch them."""
+    from mu_spec.render import BODY_LIMIT
+
+    ticket = render(_with_scope_body("y" * BODY_LIMIT), repo="o/n", cut_seq=1)
+    assert not ticket.oversized
+    assert "y" * 100 not in ticket.body
+    assert "`Provisional` is a declaration-site attribute" in ticket.body
+    assert _block(ticket.body)["context_ids"] == ["S-02"]
+
+
+# -- what a consumer reads to place the ticket ----------------------------
+
+
+def test_the_block_names_the_project_and_the_batch():
+    """`project` is what a finding is filed against; `batch` is the Ship press
+    that created or last edited the issue, and what a wave review waits on."""
+    data = _block(render(IMPL, repo="o/n", cut_seq=1, batch=4).body)
+    assert data["project"] == "dark"
+    assert data["batch"] == 4
+
+
+def test_the_fingerprint_ignores_which_cut_and_press_it_came_from():
+    """A new cut that says the same thing about a unit must not edit its
+    issue. Hashing the cut number would rewrite every open issue on every
+    cut."""
+    a = render(IMPL, repo="o/n", cut_seq=1, batch=1).fingerprint
+    b = render(IMPL, repo="o/n", cut_seq=9, batch=5).fingerprint
+    assert a == b
+
+
+def test_the_fingerprint_moves_when_the_contract_does():
+    changed = {**IMPL, "entries": [{**IMPL["entries"][0], "body": "different"}]}
+    assert render(IMPL).fingerprint != render(changed).fingerprint
+
+
+def test_the_fingerprint_moves_when_the_labels_do():
+    assert (render(IMPL).fingerprint
+            != render(IMPL, extra_labels=("team:cto",)).fingerprint)

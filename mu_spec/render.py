@@ -29,6 +29,7 @@ so whoever creates the issues is the one that must notice `BODY_LIMIT`.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import re
 
@@ -70,6 +71,10 @@ class Ticket:
     body: str
     labels: tuple[str, ...]
     blocked_by: tuple[str, ...]
+    # What the ticket SAYS, hashed without the cut and the press it came from.
+    # A new cut that says the same thing about a unit must leave its issue
+    # alone; hashing `cut_seq` would rewrite every open issue on every cut.
+    fingerprint: str = ""
 
     @property
     def oversized(self) -> bool:
@@ -155,6 +160,7 @@ def _respell(text: str) -> str:
 def _machine(
     payload: dict, unit: dict, write_set: list[str],
     repo: str | None, cut_seq: int | None,
+    batch: int | None = None, context_ids: "list[str] | None" = None,
 ) -> dict:
     """What a consumer reads instead of the markdown.
 
@@ -166,6 +172,11 @@ def _machine(
     `file_scope` carries paths and entry identifiers only, never the other
     contracts' bodies -- those are in the markdown, in full, because an agent
     has to read them. A machine deciding what a unit may touch does not.
+
+    `batch` is the Ship press that created or last edited the issue: what a
+    wave review waits on, and never renumbered, unlike a wave. `context_ids`
+    names the other contracts left as titles because inlining them would
+    overflow the ticket -- empty on every ticket that carries them in full.
     """
     scope = {
         path: [other.get("id") for other in others]
@@ -175,14 +186,17 @@ def _machine(
     return {
         "key": unit["key"],
         "anchor": unit.get("anchor"),
+        "project": payload.get("project"),
         "kind": TEST if is_test_key(unit["key"]) else IMPLEMENTATION,
         "repo": repo,
         "cut_seq": cut_seq,
+        "batch": batch,
         "slices": list(unit.get("slices") or ()),
         "write_set": write_set,
         "blocked_by": list(payload.get("follows") or ()),
         "mutex": list(payload.get("overlap") or ()),
         "file_scope": scope,
+        "context_ids": list(context_ids or ()),
     }
 
 
@@ -206,8 +220,14 @@ def render(
     repo: str | None = None,
     cut_seq: int | None = None,
     extra_labels: "tuple[str, ...] | list[str]" = (),
+    batch: int | None = None,
 ) -> Ticket:
     """One work unit as a ticket.
+
+    The other contracts a file serves go in full when the ticket still fits,
+    and as titles plus `context_ids` when it would not. Measured on `dark`:
+    140 of 144 fit, median 17 KB -> 25 KB. The four that do not keep the
+    titles, because a ticket GitHub refuses helps nobody.
 
     `payload` is what `get_work_unit` returns. An unissued payload is refused
     rather than rendered: it carries `reason` where a contract should be, and a
@@ -220,6 +240,13 @@ def render(
     this a pure function of its arguments, which is what lets a ticket be read
     and argued about before any issue exists.
     """
+    ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=True)
+    if ticket.oversized:
+        ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=False)
+    return ticket
+
+
+def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Ticket:
     if not payload.get("issued"):
         raise ValueError(
             "this work unit was not issued, so there is nothing to render: "
@@ -276,6 +303,7 @@ def render(
         for path, others in (payload.get("file_scope") or {}).items()
         if others
     }
+    context_ids: list[str] = []
     if scope:
         out.append("## Other contracts these files must also serve")
         out.append(
@@ -283,9 +311,20 @@ def render(
             "file while it is still empty decides its shape for all of them, "
             "so design for these too."
         )
+        written: set = set()
         for path, others in scope.items():
             out.append(f"**`{path}`**")
-            out.append(_bullets(_entry_line(other) for other in others))
+            for other in others:
+                if not inline or not other.get("body") or other.get("id") in written:
+                    # Listed, not repeated: a contract serving two files is
+                    # written out under the first and named under the second.
+                    out.append(_entry_line(other))
+                    if not inline and other.get("id") not in context_ids:
+                        context_ids.append(other.get("id"))
+                    continue
+                written.add(other.get("id"))
+                out.append(f"#### {other.get('id')} — {_respell(other.get('title', ''))}")
+                out.append(_respell(other["body"]))
 
     if payload.get("justification"):
         out.append("## Why this exists")
@@ -341,15 +380,23 @@ def render(
         "The same facts as above, for a consumer that should not parse prose. "
         "A heading can be reworded; these field names are a contract."
     )
+    machine = _machine(payload, unit, write_set, repo, cut_seq, batch, context_ids)
+    title = _title(unit["key"], write_set)
+    labels = _labels(unit) + tuple(extra_labels)
+    stable = {k: v for k, v in machine.items() if k not in ("cut_seq", "batch")}
+    fingerprint = hashlib.sha256(json.dumps(
+        [title, out, stable, sorted(labels)], ensure_ascii=False, sort_keys=True,
+    ).encode("utf-8")).hexdigest()
+
     out.append(MACHINE_FENCE + "\n" + json.dumps(
-        _machine(payload, unit, write_set, repo, cut_seq), indent=2,
-        ensure_ascii=False,
+        machine, indent=2, ensure_ascii=False,
     ) + "\n```")
 
     return Ticket(
         key=unit["key"],
-        title=_title(unit["key"], write_set),
+        title=title,
         body="\n\n".join(part for part in out if str(part).strip()),
-        labels=_labels(unit) + tuple(extra_labels),
+        labels=labels,
         blocked_by=tuple(payload.get("follows") or ()),
+        fingerprint=fingerprint,
     )

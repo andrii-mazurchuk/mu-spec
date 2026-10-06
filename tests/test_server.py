@@ -2819,7 +2819,11 @@ def test_the_unit_tool_names_what_it_actually_returns(store, prompts):
     described = entry["description"] + entry["input_schema"]["properties"][
         "entry"
     ].get("description", "")
-    assert ":T" in described, "the test-unit key form is undocumented"
+    # `-T`, the current spelling. This asserted `:T` for a week after the
+    # separator changed, so the manifest taught every agent a key the route
+    # no longer writes.
+    assert "-T`" in described, "the test-unit key form is undocumented"
+    assert "`:T`" not in described, "the manifest still teaches the old key"
     assert "key" in described.lower(), "get_work_unit never mentions a unit key"
 
     _, unit = call(store, prompts, "GET", "/projects/m/units/S-01")

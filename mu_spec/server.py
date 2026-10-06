@@ -444,7 +444,7 @@ def _tools() -> list[dict[str, Any]]:
             "entry together with every module implementing it -- one unit is "
             "one branch and one ticket. A test unit is the scenarios derived "
             "from one spec entry and the files implementing those; its key is "
-            "the spec entry it is anchored to, plus `:T` -- and that key is a "
+            "the spec entry it is anchored to, plus `-T` (`S-01-T`) -- and that key is a "
             "key only, never an entry identifier, so pass it as the key. "
             "Its `write_set` is module PATHS, and those paths are NOT "
             "exclusive: a file implementing several spec entries is written "
