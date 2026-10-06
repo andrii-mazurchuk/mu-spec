@@ -280,6 +280,11 @@ def test_withdrawing_a_blocker_unwires_its_live_dependent(tmp_path):
     ship(tmp_path, gh, order=["S-01-T", "S-02"], edges={}, waves=[["S-01-T", "S-02"]])
     assert gh.issues[2]["state"] == "closed"
     assert gh.issues[3]["blocked_by"] == set(), "S-02 no longer waits on a withdrawn S-01"
+    # The consumer reads blocked_by from the body's block, never from GitHub's
+    # native dependency -- so the edit must rewrite it there too.
+    import json
+    block = gh.issues[3]["body"].split("```json")[-1].split("```")[0]
+    assert json.loads(block)["blocked_by"] == []
 
 
 # -- the horizon --------------------------------------------------------------
