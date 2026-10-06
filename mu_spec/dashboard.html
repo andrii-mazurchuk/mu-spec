@@ -786,6 +786,9 @@ const STATE = {
   repoDraft:null,       // uncommitted, for the same reason rejectDraft is
   labels:[],            // added to every issue this project emits
   labelsDraft:null,
+  pickup:[],            // labels the consumer adds on pickup -- never edited after
+  pickupDraft:null,
+  horizon:1,            // waves to create issues for in one press (docs/TICKETS.md section 5)
   shipFlash:null        // the outcome of the last press, outliving its reload
 };
 
@@ -884,6 +887,7 @@ async function fetchProject(project){
     units,
     repo: repo.repo || null,
     labels: labels.labels || [],
+    pickup: labels.pickup || [],
     emission
   };
 }
@@ -918,11 +922,13 @@ function applyProject(d){
   // broken. Cleared here rather than in the switch handler so a poll, which
   // also lands here, cannot resurrect it either.
   if(STATE.project !== d.project){ STATE.cutFlash = null; STATE.shipFlash = null;
-                                   STATE.repoDraft = null; STATE.labelsDraft = null; }
-  const draft = STATE.repoDraft, ldraft = STATE.labelsDraft;
+                                   STATE.repoDraft = null; STATE.labelsDraft = null;
+                                   STATE.pickupDraft = null; }
+  const draft = STATE.repoDraft, ldraft = STATE.labelsDraft, pdraft = STATE.pickupDraft;
   Object.assign(STATE, d, {bodies: STATE.bodies || {}, preview: false});
   STATE.repoDraft = draft;
   STATE.labelsDraft = ldraft;
+  STATE.pickupDraft = pdraft;
   /* Which slice each entry WOULD belong to if the proposal were ratified.
      Held beside the real membership rather than replacing it -- previewing a
      decision must never look like having taken it. */
@@ -2919,7 +2925,15 @@ function shipPreflight(){
   const keys = cut ? (cut.units || []).map(u => u.key) : [];
   const already = e.already || {};
   const out = keys.filter(k => already[k]).length;
-  return {total: keys.length, already: out, fresh: keys.length - out};
+  /* The horizon, computed exactly as the unit computes it: the first N waves
+     that still hold a unit with no live issue. Edits and withdrawals are not
+     counted here -- whether content changed is known only server-side. */
+  const waves = ((cut && cut.waves) || []).map(w => w.units || []);
+  const open = waves.filter(w => w.some(k => !already[k]));
+  const n = Math.max(1, STATE.horizon || 1);
+  const inside = open.slice(0, n).flat().filter(k => !already[k]).length;
+  return {total: keys.length, already: out, fresh: inside,
+          held: keys.length - out - inside, waves: Math.min(n, open.length)};
 }
 
 /* Counts before lists. Zero failures is the thing being looked for, so it has
@@ -2931,7 +2945,13 @@ function shipTally(c){
     `<div class="${kind||""}"><b>${n}</b><span>${label}</span></div>`;
   return `<div class="tally">
     ${box(c.created||0, "created", (c.created||0) ? "good" : "")}
+    ${(c.edited||0) ? box(c.edited, "edited in place", "good") : ""}
+    ${(c.withdrawn||0) ? box(c.withdrawn, "withdrawn", "") : ""}
+    ${(c.touched||0) ? box(c.touched, "picked up — left alone", "warn") : ""}
+    ${(c.raced||0) ? box(c.raced, "written during pickup", "bad") : ""}
     ${box(c.wired||0, "orders wired", (c.wired||0) ? "good" : "")}
+    ${(c.removed||0) ? box(c.removed, "orders removed", "") : ""}
+    ${(c.held||0) ? box(c.held, "beyond the horizon", "quiet") : ""}
     ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
     ${box(c.unwired||0, "orders not declared", (c.unwired||0) ? "bad" : "")}
     ${/* "already out" is the standing count in the launch band; this is what
@@ -2980,6 +3000,23 @@ function shipTrouble(r){
         <td><code>${esc(u.blocker)}</code></td>
         <td class="why">${esc(u.reason)}</td></tr>`).join("") + `</table></div>`;
 
+  if((r.raced||[]).length)
+    out += `<div class="trouble"><h3><span class="n">${r.raced.length}</span>
+      written while being picked up</h3>
+      <p>The consumer labelled these between this unit's read and its write. The
+      agent may have started from the earlier text — check with whoever owns it.</p>
+      <table><tr><th>unit</th><th>issue</th><th>what</th></tr>` +
+      r.raced.map(t=>`<tr><td><code>${esc(t.key)}</code></td><td>#${esc(t.number)}</td>
+        <td class="why">${esc(t.reason)}</td></tr>`).join("") + `</table></div>`;
+  if((r.touched||[]).length)
+    out += `<div class="trouble"><h3><span class="n">${r.touched.length}</span>
+      changed or withdrawn here, but picked up there — left alone</h3>
+      <p>Never edited after pickup. To apply the change, release the unit
+      (cancel its work, remove the pickup label) and ship again.</p>
+      <table><tr><th>unit</th><th>issue</th><th>why</th></tr>` +
+      r.touched.map(t=>`<tr><td><code>${esc(t.key)}</code></td><td>#${esc(t.number)}</td>
+        <td class="why">${esc(t.reason)}</td></tr>`).join("") + `</table></div>`;
+
   // Two different things have been called "skipped". One is a problem.
   const skipped = r.skipped || [];
   const toobig = skipped.filter(k => !k.number);
@@ -2995,7 +3032,7 @@ function shipTrouble(r){
         <td class="why">${esc(k.reason)}</td></tr>`).join("") + `</table></div>`;
   if(out_already.length)
     out += `<div class="tame"><details><summary><b>${out_already.length}</b>
-      already out — created by an earlier run of this cut, not created again
+      already out and unchanged — left exactly as they are
       </summary>
       <table><tr><th>unit</th><th>issue</th></tr>` +
       out_already.map(k=>`<tr><td><code>${esc(k.key)}</code></td>
@@ -3033,13 +3070,16 @@ function drawShip(){
   const draft = STATE.repoDraft == null ? (STATE.repo || "") : STATE.repoDraft;
   const labelDraft = STATE.labelsDraft == null
     ? (STATE.labels || []).join(", ") : STATE.labelsDraft;
+  const pickupDraft = STATE.pickupDraft == null
+    ? (STATE.pickup || []).join(", ") : STATE.pickupDraft;
 
   const head = `<h3>Ship — work units become issues on a tracker</h3>
     <p class="muted" style="max-width:76ch">One issue per work unit, then the order between
     them as native <b>blocked by</b> dependencies. The issues are written for an
-    <b>agent</b> to build from — legible to a person, but that is incidental. This unit
-    creates tickets and never acts on them: nothing here reads an issue back, closes one,
-    or reacts to a specification that has since moved.</p>`;
+    <b>agent</b> to build from — legible to a person, but that is incidental. A press
+    makes the repository say what the cut says: one live issue per unit across every cut,
+    edited in place while nobody has picked it up, withdrawn when its unit leaves the cut,
+    and never touched once picked up. It never comments, reopens, or reacts to a PR.</p>`;
 
   const running = !!e.running;
   const pf = shipPreflight();
@@ -3070,6 +3110,18 @@ function drawShip(){
              anchor, kind and slice labels.`
           : `Optional. A label on every issue, which is what lets a consumer
              admit these and hand-filed issues by one rule.`}</p>
+        <div class="shipbar" style="margin-top:8px">
+          <input id="pickup-in" value="${esc(pickupDraft)}" spellcheck="false"
+            placeholder="labels the consumer adds on pickup — e.g. cto:admitted">
+          <button class="btn" id="pickup-save">${
+            STATE.pickup.length ? "Change" : "Set"}</button>
+        </div>
+        <p class="shiphelp">${STATE.pickup.length
+          ? `An issue carrying ${STATE.pickup.map(l =>
+              `<code>${esc(l)}</code>`).join(" or ")} is picked up, and is never
+             edited or withdrawn by a press.`
+          : `<b>Not set: nothing already out will be edited or withdrawn</b>,
+             because an issue somebody picked up cannot be told from one nobody has.`}</p>
       </div>
       <div class="count">
         <div class="bignum ${pf.fresh ? "" : "zero"}">
@@ -3077,15 +3129,21 @@ function drawShip(){
         ${pf.already
           ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out</span></div>`
           : ""}
+        ${pf.held
+          ? `<div class="bignum quiet"><b>${pf.held}</b><span>beyond the horizon</span></div>`
+          : ""}
+        <label class="shiphelp" style="display:block;margin-top:6px">waves this press
+          <input id="horizon-in" type="number" min="1" step="1" value="${esc(STATE.horizon)}"
+            style="width:4em"></label>
       </div>
       <div class="go">
-        <button class="shipgo" id="do-ship" ${blocked || running || !pf.fresh ? "disabled" : ""}>${
+        <button class="shipgo" id="do-ship" ${blocked || running ? "disabled" : ""}>${
           running ? "Shipping…" : "Ship to GitHub"}</button>
         <span class="gonote">${
           running ? "in flight"
           : blocked ? "not ready"
-          : !pf.fresh ? "everything in this cut is already out"
-          : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"}, paced one a second`}</span>
+          : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"} across ${pf.waves}
+             wave${pf.waves===1?"":"s"}, and edits or withdraws whatever changed`}</span>
       </div>
     </div>`;
 
@@ -3121,6 +3179,12 @@ function drawShip(){
   const lsave = $("labels-save"), linput = $("labels-in");
   if(linput) linput.oninput = () => { STATE.labelsDraft = linput.value; };
   if(lsave) lsave.onclick = () => setLabels(linput.value);
+  const psave = $("pickup-save"), pinput = $("pickup-in");
+  if(pinput) pinput.oninput = () => { STATE.pickupDraft = pinput.value; };
+  if(psave) psave.onclick = () => setLabels(null, pinput.value);
+  const hinput = $("horizon-in");
+  if(hinput) hinput.onchange = () => {
+    STATE.horizon = Math.max(1, parseInt(hinput.value, 10) || 1); drawShip(); };
   if(save) save.onclick = () => setRepo(input.value);
   const go = $("do-ship");
   if(go) go.onclick = shipTickets;
@@ -3129,14 +3193,17 @@ function drawShip(){
 /* Project-wide labels. Split on commas rather than asking for JSON: this is a
    field a person types into, and "team:cto, area:core" is how they will type
    it. The unit trims and de-duplicates, and what was STORED comes back. */
-async function setLabels(value){
-  const btn = $("labels-save");
+async function setLabels(value, pickup){
+  const btn = $(pickup == null ? "labels-save" : "pickup-save");
   if(btn) btn.disabled = true;
-  const wanted = value.split(",").map(s => s.trim()).filter(Boolean);
+  const split = v => v.split(",").map(s => s.trim()).filter(Boolean);
+  const wanted = value == null ? (STATE.labels || []) : split(value);
+  const send = {labels: wanted};
+  if(pickup != null) send.pickup = split(pickup);
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/labels", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({labels: wanted})
+      body: JSON.stringify(send)
     });
     const text = await res.text();
     let payload = null;
@@ -3145,10 +3212,16 @@ async function setLabels(value){
       STATE.shipFlash = {kind:"bad", text: refusal(res, text, payload)};
     } else {
       STATE.labels = payload.labels || [];
+      STATE.pickup = payload.pickup || [];
       STATE.labelsDraft = null;
-      STATE.shipFlash = {kind:"ok", text: STATE.labels.length
-        ? "Every issue will carry " + STATE.labels.join(", ")
-        : "No labels beyond the per-unit ones."};
+      STATE.pickupDraft = null;
+      STATE.shipFlash = pickup != null
+        ? {kind:"ok", text: STATE.pickup.length
+            ? "Picked up means labelled " + STATE.pickup.join(" or ")
+            : "No pickup labels: nothing already out will be edited."}
+        : {kind:"ok", text: STATE.labels.length
+            ? "Every issue will carry " + STATE.labels.join(", ")
+            : "No labels beyond the per-unit ones."};
     }
   }catch(err){
     STATE.shipFlash = {kind:"bad", text:String(err)};
@@ -3195,7 +3268,8 @@ async function shipTickets(){
   drawShip();
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
-      method:"POST", headers:{"content-type":"application/json"}, body:"{}"
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({waves: Math.max(1, STATE.horizon || 1)})
     });
     const text = await res.text();
     let payload = null;
@@ -3239,6 +3313,9 @@ function watchEmission(){
           : c
             ? {kind:(c.failed || c.unwired) ? "bad" : "ok",
                text:"Shipped " + c.created + " issue" + (c.created===1?"":"s") +
+                    (c.edited ? ", edited " + c.edited : "") +
+                    (c.withdrawn ? ", withdrew " + c.withdrawn : "") +
+                    (c.touched ? ", left " + c.touched + " picked up" : "") +
                     " and declared " + c.wired + " order" + (c.wired===1?"":"s") +
                     (c.skipped ? ", skipped " + c.skipped : "") +
                     (c.failed ? ". " + c.failed + " failed" : "") +
