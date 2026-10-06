@@ -392,3 +392,44 @@ def test_a_second_client_asks_again():
     assert first.whoami()["login"] == "a"
     assert second.whoami()["login"] == "b"
     assert len(r2.requests) == 1
+
+
+# -- what a sync needs: an issue's labels, an edit, an edge removed ---------
+
+
+def test_issue_state_carries_the_labels_too():
+    """`touched` is read from state, reason and labels in ONE call. A pickup
+    label is the consumer saying "mine now", and a second read per issue to
+    learn it would double the cost of every sync."""
+    gh, _rec, _ = client(FakeResponse({
+        "state": "open", "state_reason": None,
+        "labels": [{"name": "cto:admitted"}, {"name": "kind:test"}],
+    }, status=200))
+    assert gh.issue_state(REPO, 5) == {
+        "state": "open", "state_reason": "",
+        "labels": ["cto:admitted", "kind:test"],
+    }
+
+
+def test_update_issue_is_one_patch_of_title_body_and_labels():
+    gh, rec, _ = client(FakeResponse({}, status=200))
+    gh.update_issue(REPO, 12, "S-01 — a.py", "new body", ["kind:test"])
+    request = rec.requests[0]
+    assert request.get_method() == "PATCH"
+    assert request.full_url.endswith(f"/repos/{REPO}/issues/12")
+    assert rec.bodies[0] == {
+        "title": "S-01 — a.py", "body": "new body", "labels": ["kind:test"],
+    }
+
+
+def test_removing_a_dependency_names_the_blocked_number_and_the_blocker_id():
+    """The same asymmetry as adding one: number in the path, id of the blocker
+    at the end of it."""
+    gh, rec, _ = client(FakeResponse({}, status=200))
+    gh.remove_blocked_by(REPO, 12, 3141592653)
+    request = rec.requests[0]
+    assert request.get_method() == "DELETE"
+    assert request.full_url.endswith(
+        f"/repos/{REPO}/issues/12/dependencies/blocked_by/3141592653"
+    )
+    assert request.data is None

@@ -1,4 +1,5 @@
-"""The GitHub REST client: create an issue, declare what blocks it.
+"""The GitHub REST client: create, edit and close an issue; declare and
+undeclare what blocks it; read an issue's state before touching it.
 
 Stdlib `urllib.request`, because two POSTs do not earn a dependency and this
 unit has none.
@@ -235,7 +236,37 @@ class GitHub:
         return {
             "state": str(raw.get("state") or ""),
             "state_reason": str(raw.get("state_reason") or ""),
+            # In the same read: a pickup label is the consumer saying "mine
+            # now", and a second call per issue to learn it would double the
+            # cost of every sync.
+            "labels": [
+                str(label.get("name") if isinstance(label, dict) else label)
+                for label in raw.get("labels") or ()
+            ],
         }
+
+    def update_issue(
+        self, repo: str, number: int, title: str, body: str,
+        labels: "list[str] | tuple[str, ...]",
+    ) -> None:
+        """Rewrite an issue nobody has picked up. One PATCH; `labels` replaces
+        the whole set, so the caller passes any label it means to keep."""
+        self._patch(f"/repos/{repo}/issues/{int(number)}",
+                    {"title": title, "body": body, "labels": list(labels)})
+
+    def remove_blocked_by(self, repo: str, blocked_number: int, blocker_id: int) -> None:
+        """Undeclare an order the cut no longer has. Number in the path, the
+        blocker's id at the end of it -- the same asymmetry as adding one.
+
+        Not optional tidiness: a consumer treats a blocker closed `not_planned`
+        as never satisfied, so a stale edge to a withdrawn unit blocks its
+        dependent forever."""
+        self._request(
+            "DELETE",
+            f"/repos/{repo}/issues/{int(blocked_number)}/dependencies/blocked_by/"
+            f"{int(blocker_id)}",
+            None,
+        )
 
     def close_issue(self, repo: str, number: int, reason: str = "not_planned") -> None:
         """Close one issue, as `not_planned` rather than `completed`.
