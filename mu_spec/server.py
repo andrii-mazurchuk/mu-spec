@@ -722,7 +722,9 @@ def _tools() -> list[dict[str, Any]]:
             "each slice. Project-wide operating config, typically naming the "
             "team a consumer admits work for, and the reason a consumer can "
             "have one admission rule covering both generated issues and ones "
-            "a person filed by hand.",
+            "a person filed by hand. Also `pickup`: the labels a consumer adds "
+            "when it picks an issue up. An issue carrying one is never edited "
+            "or closed by a Ship, and with none configured nothing is edited.",
             "GET",
             "/projects/{project}/labels",
             {"project": s},
@@ -992,14 +994,17 @@ def _actions() -> list[dict[str, Any]]:
                 "put it there. Because these are ordinary labels, the same "
                 "one can be applied by hand to an issue this unit never "
                 "generated -- which is what lets a consumer have one "
-                "admission rule instead of two paths."
+                "admission rule instead of two paths. Optional `pickup`: the "
+                "labels the consumer adds when it picks an issue up; omitted "
+                "leaves them as they are, [] clears them."
             ),
             "method": "POST",
             "path": "projects/{project}/labels",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "labels": {"type": "array", "items": {"type": "string"}}
+                    "labels": {"type": "array", "items": {"type": "string"}},
+                    "pickup": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["labels"],
             },

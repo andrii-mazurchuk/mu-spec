@@ -276,6 +276,11 @@ class Manifest:
     # the same label by hand to an issue this unit never generated -- which is
     # what lets a consumer have ONE admission rule rather than two paths.
     labels: tuple[str, ...] = ()
+    # Labels a CONSUMER adds when it picks an issue up -- "mine now". An issue
+    # carrying one is touched, and this unit never edits or closes a touched
+    # issue. Empty means no pickup signal exists, and then nothing is edited at
+    # all: without one, untouched cannot be told from admitted.
+    pickup: tuple[str, ...] = ()
 
     def slice_of(self, identifier: Identifier) -> str | None:
         for name, sl in self.slices.items():
@@ -339,6 +344,7 @@ class Manifest:
                 },
                 "repo": self.repo,
                 "labels": list(self.labels),
+                "pickup": list(self.pickup),
             },
             indent=2,
         )
@@ -363,10 +369,33 @@ class Manifest:
             },
             repo=raw.get("repo") or None,
             labels=tuple(raw.get("labels") or ()),
+            pickup=tuple(raw.get("pickup") or ()),
         )
 
 
 # -- the store --------------------------------------------------------------
+
+
+def _clean_labels(labels) -> tuple[str, ...]:
+    """Trimmed, de-duplicated, and refused here if GitHub would refuse it."""
+    if labels is None:
+        return ()
+    if isinstance(labels, str) or not isinstance(labels, (list, tuple)):
+        raise ValueError("'labels' must be a list of strings")
+    seen: list[str] = []
+    for raw in labels:
+        if not isinstance(raw, str):
+            raise ValueError("'labels' must be a list of strings")
+        text = raw.strip()
+        if not text:
+            raise ValueError("a label cannot be empty")
+        if len(text) > 50:
+            # GitHub's ceiling. Refused here so it is refused once,
+            # not once per issue.
+            raise ValueError(f"{text!r} is longer than 50 characters")
+        if text not in seen:
+            seen.append(text)
+    return tuple(seen)
 
 
 class ProjectStore:
@@ -426,7 +455,7 @@ class ProjectStore:
         self.save_manifest(project, manifest)
         return manifest.repo
 
-    def set_labels(self, project: str, labels) -> tuple[str, ...]:
+    def set_labels(self, project: str, labels, pickup=None) -> tuple[str, ...]:
         """Replace the labels added to every issue from this project.
 
         Replaces rather than merges, and an empty list clears: set in error
@@ -437,28 +466,13 @@ class ProjectStore:
         attached to and not the call that set it -- which would surface as a
         422 several hundred writes into an emission, naming the unit rather
         than the configuration that actually broke it.
+
+        `pickup` is validated the same way; `None` leaves it as it was.
         """
-        if labels is None:
-            cleaned: tuple[str, ...] = ()
-        elif isinstance(labels, str) or not isinstance(labels, (list, tuple)):
-            raise ValueError("'labels' must be a list of strings")
-        else:
-            seen: list[str] = []
-            for raw in labels:
-                if not isinstance(raw, str):
-                    raise ValueError("'labels' must be a list of strings")
-                text = raw.strip()
-                if not text:
-                    raise ValueError("a label cannot be empty")
-                if len(text) > 50:
-                    # GitHub's ceiling. Refused here so it is refused once,
-                    # not once per issue.
-                    raise ValueError(f"{text!r} is longer than 50 characters")
-                if text not in seen:
-                    seen.append(text)
-            cleaned = tuple(seen)
         manifest = self.load_manifest(project)
-        manifest.labels = cleaned
+        manifest.labels = _clean_labels(labels)
+        if pickup is not None:
+            manifest.pickup = _clean_labels(pickup)
         self.save_manifest(project, manifest)
         return manifest.labels
 

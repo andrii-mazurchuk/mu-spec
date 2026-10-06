@@ -3655,6 +3655,31 @@ def test_labels_survive_a_manifest_round_trip(store, prompts):
     assert payload["labels"] == ["team:cto"]
 
 
+def test_pickup_labels_are_set_beside_the_labels_and_kept_when_omitted(store, prompts):
+    """The consumer's "mine now" signal. Set on the same route, because both
+    are one project's arrangement with one consumer -- and omitted means
+    unchanged, so setting team labels never silently disarms the edit guard."""
+    seed(store, prompts)
+    _s, payload = call(store, prompts, "POST", "/projects/m/labels",
+                       {"labels": ["team:cto"], "pickup": ["cto:admitted"]})
+    assert payload["pickup"] == ["cto:admitted"]
+    _s, payload = call(store, prompts, "POST", "/projects/m/labels",
+                       {"labels": ["team:x"]})
+    assert payload["pickup"] == ["cto:admitted"], "omitted is unchanged"
+    _s, payload = call(store, prompts, "GET", "/projects/m/labels")
+    assert payload == {"project": "m", "labels": ["team:x"], "pickup": ["cto:admitted"]}
+    _s, payload = call(store, prompts, "POST", "/projects/m/labels",
+                       {"labels": ["team:x"], "pickup": []})
+    assert payload["pickup"] == []
+
+
+def test_a_pickup_label_is_validated_like_any_other(store, prompts):
+    seed(store, prompts)
+    status, _ = call(store, prompts, "POST", "/projects/m/labels",
+                     {"labels": [], "pickup": [""]})
+    assert status == 400
+
+
 def test_the_emitted_body_carries_the_repo_and_cut_it_came_from(store, prompts,
                                                                 monkeypatch):
     """A consumer must not have to infer which repo or cut an issue belongs to

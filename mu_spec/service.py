@@ -1862,7 +1862,9 @@ def set_repo(store: ProjectStore, project: str, body: dict) -> dict:
 
 
 def get_labels(store: ProjectStore, project: str) -> dict:
-    return {"project": project, "labels": list(store.load_manifest(project).labels)}
+    manifest = store.load_manifest(project)
+    return {"project": project, "labels": list(manifest.labels),
+            "pickup": list(manifest.pickup)}
 
 
 def set_labels(store: ProjectStore, project: str, body: dict) -> dict:
@@ -1877,9 +1879,12 @@ def set_labels(store: ProjectStore, project: str, body: dict) -> dict:
             "'labels' is required: a list of label names, or [] to clear them"
         )
     try:
-        return {"project": project, "labels": list(store.set_labels(project, body["labels"]))}
+        # `pickup` absent means unchanged: setting team labels must never
+        # silently disarm the guard that keeps a picked-up issue unedited.
+        store.set_labels(project, body["labels"], body.get("pickup"))
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
+    return get_labels(store, project)
 
 
 def _is_identifier(text) -> bool:
