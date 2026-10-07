@@ -768,8 +768,12 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
             raw = json.loads(line)
         except ValueError as exc:
             raise CutError(f"{path}:{number} is not valid JSON: {exc}") from exc
-        bodies.update(raw.get("units") or {})
-        members = raw.get("members") or []
+        # Both sides re-spelled. A body carried under `S·01:T` by an old cut
+        # is referenced, unchanged, as `S-01-T` by a newer one -- which is
+        # correct of the writer, and made this reader refuse dark's whole log
+        # on the first cut taken after the separator changed.
+        bodies.update({canonical_key(k): v for k, v in (raw.get("units") or {}).items()})
+        members = [canonical_key(k) for k in raw.get("members") or []]
         missing = [k for k in members if k not in bodies]
         if missing:
             raise CutError(

@@ -164,3 +164,26 @@ def test_the_stored_entry_is_never_rewritten(tmp_path):
     store.append("m", [Entry(id=parse("I-01"), title="t", body=body)])
     graph = store.load_graph("m")
     assert graph.get(parse("I-01")).body == body
+
+
+def test_a_new_cut_resolves_unchanged_units_stored_under_the_old_spelling(tmp_path):
+    """dark, 2026-10-07: cut 3 carried every unit's body under `S·01:T`. The
+    next cut listed the unchanged ones as members in the current spelling and
+    carried no body for them -- correctly, they had not changed -- and the
+    reader looked `S-01-T` up among `S·01:T` and refused the whole log:
+    "names work units ... whose contents appear in no earlier cut"."""
+    import json
+    from mu_spec.units import read_cuts
+
+    old = "S·01"
+    body = {"anchor": old, "entries": [old], "modules": ["a.py"], "slices": ["x"],
+            "body_bytes": 1}
+    log = tmp_path / "units.jsonl"
+    log.write_text(
+        json.dumps({"seq": 1, "members": [old], "units": {old: body}}) + "\n"
+        + json.dumps({"seq": 2, "members": ["S-01"], "units": {}}) + "\n",
+        encoding="utf-8",
+    )
+    cuts = read_cuts(log)
+    assert [u.key for u in cuts[-1].units] == ["S-01"]
+    assert [str(i) for i in cuts[-1].units[0].entries] == ["S-01"]
