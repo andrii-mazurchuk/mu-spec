@@ -1474,6 +1474,7 @@ def split_slice(
 
     graph = store.load_graph(project)
     before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
+    edges_before = {(f.kind, str(f.id)) for f in edge_gates(manifest, graph)}
     prospective = Manifest.from_json(manifest.to_json())
     prospective.slices[source].members -= moving
     prospective.slices[into] = Slice(name=into, members=set(moving))
@@ -1516,6 +1517,17 @@ def split_slice(
         "split": True,
         "moved": sorted(str(i) for i in moving),
         "remaining": sorted(str(i) for i in after.slices[source].members),
+        # Allowed, and reported. Moving an emission's target out of a
+        # cross-cutting slice makes the emission illegal, and the correction
+        # (the emitter re-declared as a dependency) can only be written after
+        # the split exists -- so refusing would make the fix impossible. But
+        # the graph is unsound from this moment, and a split that said
+        # nothing about it was accepted in silence on dark.
+        "made_unsound": [
+            {"kind": f.kind, "id": str(f.id), "detail": f.detail}
+            for f in edge_gates(after, store.load_graph(project))
+            if (f.kind, str(f.id)) not in edges_before
+        ],
     }
 
 

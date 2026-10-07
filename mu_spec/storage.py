@@ -766,8 +766,23 @@ class ProjectStore:
         self.save_manifest(project, manifest)
 
         # Rewrite the affected files so each entry sits in its slice's file.
+        #
+        # Only the layers something MOVES in. Rewriting every layer from
+        # membership wrote dark's B-43 and B-45 -- legibility members still
+        # sitting in the behaviour holding file -- into behaviour/legibility.jsonl
+        # beside their originals, when the split moved two SPEC entries, and
+        # the graph refused to load: "identifier B-43 used twice".
         entries = {e.id: e for e in self.load_all(project)}
-        for layer in LAYER_DIRS:
+        for layer in {i.layer for i in moving} & set(LAYER_DIRS):
+            if layer == BEHAVIOUR_LAYER:
+                # Whatever this rewrite places in a slice file leaves the
+                # holding file, or it is held twice.
+                placed = manifest.slices[source].members | moving
+                held = self._file_for(project, layer, None)
+                if held.exists():
+                    held.write_text(render_entries(
+                        [e for e in self._read_file(held) if e.id not in placed]
+                    ), encoding="utf-8")
             for name in (source, target):
                 members = [
                     entries[i]

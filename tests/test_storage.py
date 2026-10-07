@@ -11,6 +11,7 @@ from mu_spec.storage import (
     SLICE,
     MalformedEntryFile,
     ProjectStore,
+    Slice,
     UnknownProject,
     parse_entries,
     render_entries,
@@ -519,3 +520,77 @@ def test_clearing_the_repo_is_allowed(tmp_path):
     store.set_repo("p", "andrii-mazurchuk/dark")
     store.set_repo("p", None)
     assert store.load_manifest("p").repo is None
+
+
+def test_a_split_leaves_untouched_layers_alone(tmp_path):
+    """dark, 2026-10-07: B-43 and B-45 were legibility members still sitting in
+    the behaviour holding file. Splitting two SPEC entries out of legibility
+    rewrote every layer's file from membership, wrote the two behaviour
+    entries into behaviour/legibility.jsonl beside their originals, and the
+    graph refused to load: "identifier B-43 used twice"."""
+    from mu_spec.storage import HOLDING_FILE
+
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("B-01"), title="held")], slice_name=None)
+    manifest = store.load_manifest("m")
+    manifest.slices["leg"] = Slice(name="leg", members={parse("B-01")})
+    store.save_manifest("m", manifest)
+    store.append("m", [Entry(id=parse("A-01"), title="a", derives_from=(parse("B-01"),))],
+                 slice_name="leg")
+    store.append("m", [Entry(id=parse("S-01"), title="s", derives_from=(parse("A-01"),)),
+                       Entry(id=parse("S-02"), title="t", derives_from=(parse("A-01"),))],
+                 slice_name="leg")
+
+    store.split_slice("m", "leg", "res", {parse("S-02")})
+
+    ids = [str(e.id) for e in store.load_graph("m").entries()]
+    assert sorted(ids) == ["A-01", "B-01", "S-01", "S-02"]
+    assert not (tmp_path / "m" / "behaviour" / "leg.jsonl").exists()
+    assert (tmp_path / "m" / "behaviour" / HOLDING_FILE).exists()
+
+
+def test_a_split_of_held_behaviour_takes_it_out_of_the_holding_file(tmp_path):
+    from mu_spec.storage import HOLDING_FILE
+
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("B-01"), title="a"),
+                       Entry(id=parse("B-02"), title="b")], slice_name=None)
+    manifest = store.load_manifest("m")
+    manifest.slices["leg"] = Slice(name="leg", members={parse("B-01"), parse("B-02")})
+    store.save_manifest("m", manifest)
+
+    store.split_slice("m", "leg", "res", {parse("B-02")})
+
+    ids = [str(e.id) for e in store.load_graph("m").entries()]
+    assert sorted(ids) == ["B-01", "B-02"]
+
+
+def test_a_split_reports_the_emissions_it_makes_illegal(tmp_path):
+    """An emission goes only into a cross-cutting slice. Moving its target
+    into an ordinary one makes it a bad emission -- the graph is unsound
+    until the emitter is corrected. The split is still allowed, because the
+    correction can only be written after it, but it must SAY so: dark's
+    first split of legibility was accepted in silence."""
+    from mu_spec import service
+    from mu_spec.storage import CROSS_CUTTING
+
+    store = ProjectStore(tmp_path)
+    store.create_project("m")
+    store.append("m", [Entry(id=parse("B-01"), title="b")], slice_name="feat")
+    store.append("m", [Entry(id=parse("A-01"), title="a", derives_from=(parse("B-01"),))],
+                 slice_name="feat")
+    store.append("m", [Entry(id=parse("S-01"), title="concern", derives_from=(parse("A-01"),)),
+                       Entry(id=parse("S-02"), title="resolver", derives_from=(parse("A-01"),))],
+                 slice_name="leg")
+    store.append("m", [Entry(id=parse("S-03"), title="caller", derives_from=(parse("A-01"),),
+                             emits_into=(parse("S-02"),))], slice_name="feat")
+    manifest = store.load_manifest("m")
+    manifest.slices["leg"].type = CROSS_CUTTING
+    store.save_manifest("m", manifest)
+
+    out = service.split_slice(store, "m", "leg", {"into": "res", "members": ["S-02"]})
+    assert out["split"] is True
+    assert [f["id"] for f in out["made_unsound"]] == ["S-03"]
+    assert out["made_unsound"][0]["kind"] == "bad_emission"
