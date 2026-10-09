@@ -104,9 +104,9 @@ class Tracker:
 
 
 def ship(tmp_path, tracker, *, order=ORDER, edges=EDGES, waves=WAVES,
-         horizon=None, bodies=None, pickup=PICKUP, labels=()):
+         horizon=None, bodies=None, pickup=PICKUP, labels=(), renamed=None):
     bodies = bodies or {}
-    return emit(
+    return emit(renamed=renamed,
         log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
         order=list(order), edges=edges, waves=waves, horizon=horizon,
         fetch=lambda k: payload(k, edges.get(k, ()), bodies.get(k, "the contract")),
@@ -345,3 +345,69 @@ def test_an_edit_moves_our_labels_by_difference(tmp_path):
     ship(tmp_path, gh, bodies={"S-02": "changed"}, labels=("team:new",))
     labels = gh.issues[3]["labels"]
     assert "team:new" in labels and "team:old" not in labels
+
+
+# -- a superseded anchor keeps its issue ---------------------------------------
+
+# S-02 superseded by S-03: unit S-02 becomes unit S-03, the same work.
+RENAMED_ORDER = ["S-01-T", "S-01", "S-03"]
+RENAMED_EDGES = {"S-01": ("S-01-T",), "S-03": ("S-01",)}
+RENAMED_WAVES = [["S-01-T"], ["S-01"], ["S-03"]]
+RENAMED = {"S-03": ("S-02",)}
+
+
+def ship_renamed(tmp_path, gh, **kw):
+    return ship(tmp_path, gh, order=RENAMED_ORDER, edges=RENAMED_EDGES,
+                waves=RENAMED_WAVES, renamed=RENAMED, **kw)
+
+
+def test_a_superseded_anchor_edits_its_predecessors_issue_instead_of_creating(tmp_path):
+    """Units are keyed by their spec anchor, so superseding S-02 turns unit
+    S-02 into a brand-new S-03. The sync used to withdraw #3 and open a fresh
+    issue for the same work -- or, if #3 was picked up, leave it live and open
+    a second copy beside it. DARK's S-107 -> S-127 was the first."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    result = ship_renamed(tmp_path, gh)
+    assert result["created"] == [] and result["withdrawn"] == []
+    assert [e["key"] for e in result["edited"]] == ["S-03"]
+    assert gh.issues[3]["title"].startswith("S-03")
+    assert gh.n == 3
+    live, wired = standing(tmp_path / "emissions.jsonl", REPO, RENAMED)
+    assert live["S-03"]["number"] == 3 and "S-02" not in live
+    assert wired == {"S-01<-S-01-T", "S-03<-S-01"}
+
+
+def test_a_superseded_anchor_whose_issue_was_finished_is_reported_not_duplicated(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    gh.calls.clear()
+    result = ship_renamed(tmp_path, gh)
+    assert result["created"] == []
+    assert [t["key"] for t in result["touched"]] == ["S-03"]
+    assert [c for c in gh.writes() if c[0] in ("create", "edit", "close")] == []
+
+
+def test_a_press_after_the_rename_neither_withdraws_nor_recreates(tmp_path):
+    """The log still holds S-02 -> #3 from the first press. Read naively, a
+    later press sees S-02 gone from the cut and closes #3 -- the issue S-03
+    now owns."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    ship_renamed(tmp_path, gh)
+    gh.calls.clear()
+    result = ship_renamed(tmp_path, gh)
+    assert gh.writes() == []
+    assert result["withdrawn"] == [] and result["created"] == []
+    assert gh.issues[3]["state"] == "open"
+
+
+def test_standing_without_the_rename_map_still_holds_one_key_per_issue(tmp_path):
+    """Once an emission records #3 under S-03, the older S-02 -> #3 line is
+    history, whether or not the caller knows about the supersession."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    ship_renamed(tmp_path, gh)
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert sorted(live) == ["S-01", "S-01-T", "S-03"]

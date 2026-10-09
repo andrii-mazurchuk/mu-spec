@@ -375,7 +375,9 @@ class Runs:
         return run.snapshot() if run else None
 
 
-def standing(log_path: Path, repo: str) -> tuple[dict[str, dict], set[str]]:
+def standing(
+    log_path: Path, repo: str, renamed: "dict[str, tuple[str, ...]] | None" = None
+) -> tuple[dict[str, dict], set[str]]:
     """What is live on a repository: unit key -> issue, and the edges wired.
 
     The one place this is computed. It was two places for exactly as long as
@@ -397,6 +399,17 @@ def standing(log_path: Path, repo: str) -> tuple[dict[str, dict], set[str]]:
     The edges are the latest record's, because every record carries the full
     set: an edge the cut dropped is removed from the tracker and from the
     next record, and a union across records would resurrect it.
+
+    **One key per issue.** Units are keyed by their spec anchor, so
+    superseding an anchor renames its unit. `renamed` maps a unit key to the
+    keys of the anchors it superseded, nearest first; a key with no issue of
+    its own adopts its predecessor's, with that predecessor's edges. Without
+    this the sync withdrew the old issue and opened a new one for the same
+    work -- or, if the old one was picked up, left it live and opened a second
+    copy beside it. And once a record holds an issue under its new key, the
+    older line holding it under the old key is history: read naively, a later
+    press would see the old key gone from the cut and close the issue the new
+    key owns.
     """
     emissions, rollbacks = read_log(log_path)
     mine = [e for e in emissions if e.repo == repo]
@@ -405,16 +418,34 @@ def standing(log_path: Path, repo: str) -> tuple[dict[str, dict], set[str]]:
         for n in record.closed.values()
     }
     known: dict[str, dict] = {}
+    holder: dict[int, str] = {}
     for emission in mine:
-        known.update(emission.issues)
+        for key, issue in emission.issues.items():
+            number = issue.get("number")
+            if number is not None:
+                previous = holder.get(int(number))
+                if previous is not None and previous != key:
+                    known.pop(previous, None)
+                holder[int(number)] = key
+            known[key] = issue
     known = {
         key: issue for key, issue in known.items()
         if issue.get("number") is None or int(issue["number"]) not in closed
     }
-    wired = {
-        pair for pair in (mine[-1].wired if mine else ())
-        if all(key in known for key in pair.split("<-"))
-    }
+    alias: dict[str, str] = {}
+    for key, predecessors in (renamed or {}).items():
+        if key in known:
+            continue
+        for old in predecessors:
+            if old in known:
+                known[key] = known.pop(old)
+                alias[old] = key
+                break
+    wired = set()
+    for pair in (mine[-1].wired if mine else ()):
+        keys = [alias.get(k, k) for k in pair.split("<-")]
+        if all(k in known for k in keys):
+            wired.add(_pair(*keys))
     return known, wired
 
 
@@ -563,6 +594,7 @@ def emit(
     waves: "list[list[str]] | None" = None,
     horizon: int | None = None,
     pickup: "tuple[str, ...] | list[str]" = (),
+    renamed: "dict[str, tuple[str, ...]] | None" = None,
 ) -> dict:
     """Make the tracker say what the cut says (docs/TICKETS.md §3).
 
@@ -581,9 +613,10 @@ def emit(
 
     Every write re-reads the issue first and reads it once more after. A
     pickup label that appeared in between is reported in `raced` -- never
-    silent.
+    silent. `renamed` is passed to `standing`: a unit whose anchor superseded
+    another's takes over that unit's issue rather than getting a new one.
     """
-    live, wired_before = standing(log_path, repo)
+    live, wired_before = standing(log_path, repo, renamed)
 
     if not order:
         return {

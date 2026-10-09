@@ -858,3 +858,39 @@ def test_a_rollback_reports_what_it_has_closed(tmp_path):
     rollback(log_path=log, repo=REPO, cut_seq=2, client=client,
              now_fn=lambda: 2001.0, on_progress=seen.append)
     assert all("closed" in s for s in seen) or not seen
+
+
+def test_a_superseded_anchor_keeps_its_issue_in_the_status_and_the_ship(tmp_path, monkeypatch):
+    """Superseding S-01 with S-02 renames its units, S-01 -> S-02 and S-01-T
+    -> S-02-T. Both are the same work, already out, so neither the pre-flight
+    count nor the press may treat them as new. DARK's S-107 -> S-127."""
+    from mu_spec import service
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    service.emit_tickets(store, "p", client=FakeClient())
+
+    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
+                             title="the contract, corrected", body="build it",
+                             supersedes=parse("S-01"))], slice_name="core")
+    store.append("p", [Entry(id=parse("T-02"), derives_from=(parse("S-02"),),
+                             title="the case", purpose="why",
+                             supersedes=parse("T-01"))])
+    store.set_module("p", "app/thing.py", ["S-02"])
+    store.set_module("p", "tests/test_thing.py", ["T-02"])
+    _cut(store)
+
+    status = service.get_emission(store, "p")
+    assert {k: v["number"] for k, v in status["already"].items()} == {
+        "S-02-T": 1, "S-02": 2}
+
+    client = FakeClient(start=2)
+    result = service.emit_tickets(store, "p", client=client)
+    assert result["emitted"] is True
+    assert result["created"] == [] and client.created == []
+    assert result["withdrawn"] == []
+    assert sorted(t["key"] for t in result["touched"]) == ["S-02", "S-02-T"]

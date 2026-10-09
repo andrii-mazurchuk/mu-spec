@@ -1540,6 +1540,27 @@ TOKEN_ENV = "MU_SPEC_GITHUB_TOKEN"
 # and not a request, and the route must not hold a connection open for it.
 
 
+def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
+    """Unit key -> the unit keys its anchor superseded, nearest first.
+
+    A unit is keyed by its spec anchor, so superseding the anchor renames the
+    unit while the work stays the same. The sync reads this to hand the new
+    key its predecessor's issue instead of opening a second one."""
+    out: dict[str, tuple[str, ...]] = {}
+    for entry in graph.entries():
+        chain: list[Identifier] = []
+        previous = entry.supersedes
+        while previous is not None and previous not in chain:
+            chain.append(previous)
+            old = graph.get(previous)
+            previous = old.supersedes if old is not None else None
+        for tests in (False, True):
+            if chain:
+                out[units.unit_key(entry.id, tests)] = tuple(
+                    units.unit_key(p, tests) for p in chain)
+    return out
+
+
 def emit_tickets(
     store: ProjectStore,
     project: str,
@@ -1661,6 +1682,7 @@ def emit_tickets(
         waves=[list(w) for w in schedule.waves],
         horizon=horizon,
         pickup=manifest.pickup,
+        renamed=_renamed(graph),
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
@@ -1828,7 +1850,9 @@ def get_emission(
     if cut is not None and repo:
         # The same function `emit` skips on, not a second copy of its rule.
         # These were two copies until a withdrawal made them disagree.
-        already, _wired = emitting.standing(store.emissions_path(project), repo)
+        already, _wired = emitting.standing(
+            store.emissions_path(project), repo,
+            _renamed(store.load_graph(project)))
 
     return {
         "project": project,

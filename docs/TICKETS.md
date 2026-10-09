@@ -21,6 +21,13 @@ DARK reached 288 issues for 144 units.
 
 *Live* means this unit created the issue, and has not since recorded closing it.
 
+**A superseded anchor keeps its issue.** A unit key is its spec anchor, so superseding
+`S-107` with `S-127` renames units `S-107`/`S-107-T` to `S-127`/`S-127-T`. The work is the
+same, so the new key takes over the old key's issue and edges: it is edited in place if
+untouched and reported if touched (§2). It is never withdrawn and recreated. The issue's
+title and machine block then carry the new key, and a consumer matching on `repo#key` sees a
+new key on an issue number it already knows.
+
 ## 2. Touched
 
 An issue is **touched** when somebody other than this unit has acted on it. Once
