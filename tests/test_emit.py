@@ -894,3 +894,24 @@ def test_a_superseded_anchor_keeps_its_issue_in_the_status_and_the_ship(tmp_path
     assert result["created"] == [] and client.created == []
     assert result["withdrawn"] == []
     assert sorted(t["key"] for t in result["touched"]) == ["S-02", "S-02-T"]
+
+
+def test_a_dependent_names_its_renamed_blockers_old_keys(tmp_path):
+    """S-02 supersedes S-01, so unit S-02 waits on S-02-T -- whose issue may
+    still carry S-01-T in its block if somebody had touched it."""
+    from mu_spec import service
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+
+    store = _project(tmp_path)
+    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
+                             title="corrected", body="build it",
+                             supersedes=parse("S-01"))], slice_name="core")
+    store.append("p", [Entry(id=parse("T-02"), derives_from=(parse("S-02"),),
+                             title="the case", purpose="why",
+                             supersedes=parse("T-01"))])
+    store.set_module("p", "app/thing.py", ["S-02"])
+    store.set_module("p", "tests/test_thing.py", ["T-02"])
+    unit = service.get_work_unit(store, "p", "S-02")
+    assert unit["follows"] == ["S-02-T"]
+    assert unit["follows_was"] == {"S-02-T": ["S-01-T"]}

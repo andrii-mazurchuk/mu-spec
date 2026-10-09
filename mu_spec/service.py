@@ -1255,6 +1255,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
             "gates": gates,
         }
     projection = units.project(manifest, graph)
+    renamed = _renamed(graph)
     by_key = projection.by_key()
 
     # A unit key is accepted as well as a member entry, because the listing
@@ -1388,6 +1389,10 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         "file_scope": file_scope,
         "cross_cutting": cross,
         "follows": list(projection.edges.get(key, ())),
+        "follows_was": {
+            blocker: list(renamed[blocker])
+            for blocker in projection.edges.get(key, ()) if blocker in renamed
+        },
         "followed_by": sorted(
             other for other, targets in projection.edges.items() if key in targets
         ),

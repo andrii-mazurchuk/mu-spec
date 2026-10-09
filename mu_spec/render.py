@@ -194,6 +194,12 @@ def _machine(
         "slices": list(unit.get("slices") or ()),
         "write_set": write_set,
         "blocked_by": list(payload.get("follows") or ()),
+        # Blocker key -> the keys it had before its anchor was superseded. A
+        # renamed unit keeps its issue (docs/TICKETS.md section 1), but a
+        # touched issue is never edited, so its own block may still carry an
+        # old key: a blocker counts as done under any of these names.
+        "blocked_by_was": {k: list(v) for k, v in
+                           (payload.get("follows_was") or {}).items()},
         "mutex": list(payload.get("overlap") or ()),
         "file_scope": scope,
         "context_ids": list(context_ids or ()),

@@ -101,6 +101,12 @@ consumer's business.
 - **Ordering across presses needs nothing new.** A blocker always sits in an earlier
   wave, or is created in the same press. The consumer admits a unit only when every
   `blocked_by` key is closed `completed`. A blocker not yet shipped just waits.
+- **A blocker may be closed under an old key.** The machine block also carries
+  `blocked_by_was`: blocker key → the keys it had before its anchor was superseded
+  (§1), e.g. `{"S-127-T": ["S-107-T"]}`, and `{}` when no blocker was renamed. A
+  touched issue is never edited, so its own block can still say `S-107-T`. A blocker
+  counts as closed `completed` if a closed `completed` issue's block carries its key **or
+  any key listed for it here**.
 
 ## 6. Batch
 

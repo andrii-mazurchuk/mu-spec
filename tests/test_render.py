@@ -420,3 +420,20 @@ def test_the_fingerprint_moves_when_the_contract_does():
 def test_the_fingerprint_moves_when_the_labels_do():
     assert (render(IMPL).fingerprint
             != render(IMPL, extra_labels=("team:cto",)).fingerprint)
+
+
+def test_a_renamed_blocker_carries_its_old_keys_in_the_dependents_block():
+    """A superseded anchor keeps its issue (docs/TICKETS.md section 1), but a
+    touched one is never edited -- so #301 still says S-107-T while S-127's
+    block says it waits on S-127-T. A consumer resolving blockers by the key in
+    each closed issue's block then waits forever. The alias goes on the side
+    that is still written: the dependent's block names the old keys."""
+    payload = {**IMPL, "follows_was": {"S-01-T": ["S-00-T"]}}
+    data = _block(render(payload, repo="o/n", cut_seq=1).body)
+    assert data["blocked_by"] == ["S-01-T"]
+    assert data["blocked_by_was"] == {"S-01-T": ["S-00-T"]}
+
+
+def test_a_block_with_no_renamed_blocker_carries_an_empty_map():
+    data = _block(render(IMPL, repo="o/n", cut_seq=1).body)
+    assert data["blocked_by_was"] == {}
