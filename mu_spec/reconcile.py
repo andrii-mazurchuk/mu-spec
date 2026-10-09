@@ -124,10 +124,15 @@ def route(
             target = parse(issue.target)
         except InvalidIdentifier:
             return None
-        for name, sl in manifest.slices.items():
-            if target in sl.members:
-                return name
-        return None
+        owned = manifest.slice_of(target)
+        if owned is None and target.layer == "T":
+            # A test takes no slice; its column is its spec entry's. Read
+            # through graph.get so a superseded test -- which is what fixing
+            # the issue produces -- still resolves.
+            entry = graph.get(target)
+            if entry is not None and entry.derives_from:
+                owned = manifest.slice_of(entry.derives_from[0])
+        return owned
 
     escalations: list[Escalation] = []
     routable: list[Issue] = []

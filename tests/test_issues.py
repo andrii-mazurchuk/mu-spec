@@ -372,3 +372,33 @@ def test_the_owning_slice_is_projected_not_trusted_from_the_issue():
     assert len(batches) == 1
     assert batches[0].slice == "accounts"
     assert {i.id for i in batches[0].issues} == {"iss-0009", "iss-0011"}
+
+
+def test_an_issue_against_a_test_routes_to_its_spec_entrys_slice():
+    """A test takes no slice: its column is the column of the spec entry it
+    derives from. The router looked only at manifest membership, so every
+    issue raised against a test -- the scenario a test unit is literally
+    handed -- escalated as unowned, and a fix the pipeline could have
+    dispatched waited on a human. DARK iss-0154 against T-94 was the first.
+    It must route even once the test is superseded, because that is
+    exactly what fixing it does.
+    """
+    from mu_spec.issues import Issue
+
+    graph = Graph(
+        [
+            Entry(id=parse("S-02"), title="ledger"),
+            Entry(id=parse("T-01"), title="old", derives_from=(parse("S-02"),)),
+            Entry(
+                id=parse("T-02"), title="new", derives_from=(parse("S-02"),),
+                supersedes=parse("T-01"),
+            ),
+        ]
+    )
+    issue = Issue(
+        id="iss-0001", project="m", target="T-01", target_slice=None,
+        raised_by=None, kind="semantic", claim="names no example", round=1,
+    )
+    batches, escalations = route(_manifest(), graph, [issue])
+    assert escalations == []
+    assert [b.slice for b in batches] == ["payouts"]
