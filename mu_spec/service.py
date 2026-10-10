@@ -1375,10 +1375,11 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         if name in unit.slices:
             continue
         for identifier_ in sorted(manifest.slices[name].members, key=sort_key):
-            found = graph.get(identifier_)
-            if found is None or identifier_.layer != units.SPEC:
+            # Live only: a superseded entry keeps its membership, and handing
+            # it out beside its successor offers two contracts as binding.
+            if identifier_ not in graph or identifier_.layer != units.SPEC:
                 continue
-            view = _entry_view(found, full=False)
+            view = _entry_view(graph.get(identifier_), full=False)
             view["slice"] = name
             cross.append(view)
 

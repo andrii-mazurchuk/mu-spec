@@ -3836,3 +3836,22 @@ def test_preserves_interface_without_supersedes_is_refused(store, prompts):
                      "preserves_interface": True}],
     })
     assert status in (400, 409)
+
+
+def test_a_work_unit_never_hands_out_a_retired_cross_cutting_contract(store, prompts):
+    """A superseded concern entry stays in its slice's membership -- history
+    is kept -- but a builder handed it alongside its successor reads two
+    contracts as live and cannot tell which one binds."""
+    mid = seed(store, prompts)
+    _audit_column(store, prompts, mid)
+    status, payload = call(
+        store, prompts, "POST", "/projects/m/amendments",
+        {"slice": "audit", "in_response_to": mid,
+         "entries": [{"layer": "S", "title": "audit/log.py appends a signed record",
+                      "derives_from": ["A-02"], "supersedes": "S-02"}]},
+    )
+    assert (status, payload["created"]) == (200, ["S-03"])
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search.py", "implements": ["S-01"]})
+    _, wp = call(store, prompts, "GET", "/projects/m/units/S-01")
+    assert [e["id"] for e in wp["cross_cutting"]] == ["S-03"]
