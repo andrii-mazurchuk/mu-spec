@@ -139,7 +139,8 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
     Two rules, and they are the same rule seen from both ends -- an edge into
     a cross-cutting slice is an emission, and an emission goes nowhere else.
 
-    - **`depends_on` may not point into a cross-cutting slice.** Depending on
+    - **`depends_on` may not point into a cross-cutting slice** from outside
+      it. Depending on
       something means branching on what it gives you back, and a concern
       whose answer you branch on fails the first classification test. The two
       claims cannot both be true, so the edge is a contradiction rather than
@@ -155,9 +156,12 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
         problems: list[str] = []
         stale: list[str] = []
 
+        home = manifest.slice_of(entry.id)
         for target in entry.depends_on:
             owner = manifest.slice_of(target)
-            if owner is not None and owner in cross:
+            # Within the concern there is no caller to branch, only build
+            # order: an entry of the slice may need another of the same slice.
+            if owner is not None and owner in cross and owner != home:
                 # Two claims that cannot both hold, and the message must
                 # not assume which one is false. If the dependency is
                 # spurious, the edge is an emission. If it is real -- the

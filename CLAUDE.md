@@ -126,6 +126,8 @@ is an error the caller sees, not a warning in a log.
   nondeterminism, and the audit property is gone either way.
 - **An edge into a cross-cutting slice is `emits_into`, never `depends_on`;
   a cross-cutting slice has no outbound dependency into a feature slice.**
+  An edge between two entries of the same cross-cutting slice is not *into*
+  it: `depends_on` there is build order, and is admitted.
   An emission imposes no order, which is what keeps a concern derivable
   before everything that emits into it -- and what makes a cycle involving
   one impossible to express.

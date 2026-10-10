@@ -199,6 +199,16 @@ def test_depending_on_a_cross_cutting_slice_is_refused():
     assert "emits_into" in findings[0].detail
 
 
+def test_a_cross_cutting_slice_may_order_its_own_entries():
+    """The refusal is about a caller outside the concern branching on it.
+    Inside the slice there is no caller, only build order -- and without the
+    edge nothing can say one contract of the concern needs another first."""
+    manifest = _manifest(audit=("S-01 S-02", CROSS_CUTTING))
+    graph = Graph([_emit("S-01"), _emit("S-02", depends_on="S-01")])
+    assert edge_gates(manifest, graph) == []
+    assert slice_gates(manifest, graph) == []
+
+
 def test_emitting_into_an_ordinary_slice_is_refused():
     manifest = _manifest(a=("S-01", "slice"), b=("S-02", "slice"))
     graph = Graph([_emit("S-01", emits_into="S-02"), _emit("S-02")])

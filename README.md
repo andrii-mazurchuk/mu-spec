@@ -83,6 +83,7 @@ Enforced, not documented. Violating one is a hard error, not a warning.
   and slices define write ownership.
 - An edge into a cross-cutting slice is `emits_into`, never `depends_on`, and
   a cross-cutting slice holds no outbound dependency into a feature slice.
+  Within one cross-cutting slice, `depends_on` orders its own entries.
 - Slice dependency is projected from entry edges, never authored.
 - No metric ever gates. Gates block on what is definitionally broken; a
   metric is a proxy for a question nobody can answer yet.
