@@ -192,6 +192,7 @@ def parse_entries(text: str) -> list[Entry]:
                     if supersedes is not None
                     else None
                 ),
+                preserves_interface=bool(raw.get("preserves_interface", False)),
             )
         )
     return entries
@@ -222,6 +223,8 @@ def render_entries(entries: list[Entry]) -> str:
             record["body"] = entry.body
         if entry.supersedes is not None:
             record["supersedes"] = str(entry.supersedes)
+        if entry.preserves_interface:
+            record["preserves_interface"] = True
         out.append(json.dumps(record, ensure_ascii=False))
     return "\n".join(out) + "\n" if out else ""
 

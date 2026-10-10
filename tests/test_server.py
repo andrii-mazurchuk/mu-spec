@@ -3804,3 +3804,35 @@ def test_no_identity_lookup_ever_opens_a_socket_in_the_suite(store, prompts,
     _emit_ready(store, prompts)
     _s, payload = call(store, prompts, "GET", "/projects/m/emit")
     assert payload["identity"] is None, "no client was injected, so no lookup"
+
+
+def test_an_interface_preserving_supersession_strands_nothing(store, prompts):
+    """A-01 is reworded without changing what S-01 consumed. Declared
+    interface-preserving, S-01 follows the successor -- read back from disk,
+    so the flag survives storage -- and the graph stays sound."""
+    mid = seed(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/amendments", {
+        "slice": "listings", "in_response_to": mid,
+        "entries": [{"layer": "A", "title": "Search runs through an index, reworded",
+                     "derives_from": ["B-01"], "supersedes": "A-01",
+                     "preserves_interface": True}],
+    })
+    assert status == 200 and payload["admitted"] is True
+    assert payload["stale_references"] == []
+    assert payload["gates"]["sound"] is True
+    _, entry = call(store, prompts, "GET", "/projects/m/entries/S-01")
+    assert entry["derives_from"] == ["A-02"]
+    _, old = call(store, prompts, "GET", "/projects/m/entries/A-02")
+    assert old["preserves_interface"] is True
+
+
+def test_preserves_interface_without_supersedes_is_refused(store, prompts):
+    """The flag says what a supersession leaves intact. On a fresh entry it
+    claims something about nothing, and a reader would trust it."""
+    mid = seed(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/amendments", {
+        "slice": "listings", "in_response_to": mid,
+        "entries": [{"layer": "A", "title": "x", "derives_from": ["B-01"],
+                     "preserves_interface": True}],
+    })
+    assert status in (400, 409)

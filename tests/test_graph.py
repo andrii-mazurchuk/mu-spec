@@ -241,3 +241,65 @@ def test_the_spine_carries_both_edge_kinds():
     row = [r for r in graph.spine() if r["id"] == "A-01"][0]
     assert row["derives_from"] == ["B-01"]
     assert row["depends_on"] == ["A-02"]
+
+
+# -- an interface-preserving supersession ------------------------------------
+
+
+def _preserving_graph(preserves=True):
+    """S-02 depends on S-01 and T-01 judges S-01. S-03 supersedes S-01."""
+    return Graph(
+        [
+            _entry("A-01"),
+            _entry("S-01", "A-01"),
+            Entry(id=parse("S-02"), derives_from=(parse("A-01"),), title="user",
+                  depends_on=(parse("S-01"),)),
+            _entry("T-01", "S-01"),
+            Entry(id=parse("S-03"), derives_from=(parse("A-01"),), title="reworded",
+                  supersedes=parse("S-01"), preserves_interface=preserves),
+        ]
+    )
+
+
+def test_an_interface_preserving_supersession_carries_every_edge_to_the_successor():
+    """Superseding an entry used to strand everything pointing at it, even when
+    what they consumed had not moved. On DARK, rewording one allowlist sentence
+    in S-23 meant 27 spec supersessions and 193 test re-points, each a verbatim
+    copy. When the author declares the interface preserved, edges follow."""
+    graph = _preserving_graph()
+    assert graph.get(parse("S-02")).depends_on == (parse("S-03"),)
+    assert graph.get(parse("T-01")).derives_from == (parse("S-03"),)
+    assert graph.children(parse("S-03")) == (parse("T-01"),)
+
+
+def test_without_the_declaration_a_supersession_still_strands():
+    graph = _preserving_graph(preserves=False)
+    assert graph.get(parse("S-02")).depends_on == (parse("S-01"),)
+    assert graph.get(parse("T-01")).derives_from == (parse("S-01"),)
+
+
+def test_a_carried_edge_follows_only_preserving_hops():
+    """S-01 -> S-03 preserves, S-03 -> S-04 does not: an edge into S-01 lands
+    on S-03 and stops, so the second, meaning-changing supersession strands
+    it as it always has."""
+    graph = Graph(
+        [
+            _entry("A-01"),
+            _entry("S-01", "A-01"),
+            Entry(id=parse("S-02"), derives_from=(parse("A-01"),), title="user",
+                  depends_on=(parse("S-01"),)),
+            Entry(id=parse("S-03"), derives_from=(parse("A-01"),), title="reworded",
+                  supersedes=parse("S-01"), preserves_interface=True),
+            Entry(id=parse("S-04"), derives_from=(parse("A-01"),), title="new meaning",
+                  supersedes=parse("S-03")),
+        ]
+    )
+    assert graph.get(parse("S-02")).depends_on == (parse("S-03"),)
+
+
+def test_the_stored_entry_is_never_rewritten():
+    """The carried edge is a reading of the graph, not an edit: history keeps
+    what was written, and append-only holds."""
+    graph = _preserving_graph()
+    assert graph.get(parse("S-01")).supersedes is None
+    assert graph.superseded_by(parse("S-01")) == parse("S-03")

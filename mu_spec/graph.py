@@ -66,6 +66,13 @@ class Entry:
     # append-only: the superseded entry stays in the file and stays
     # retrievable, it just stops participating in the live graph.
     supersedes: Identifier | None = None
+    # Declared by the author of a supersession, never inferred: the
+    # replacement changes nothing an entry pointing at the old one consumed --
+    # a reworded sentence, a stated exemption, an added dependency. Edges into
+    # the retired entry then resolve to this one instead of stranding. The
+    # call is a judgement about meaning, recorded the way an issue's
+    # additive/semantic kind is; getting it wrong is the author's to answer for.
+    preserves_interface: bool = False
 
     @property
     def display_title(self) -> str:
@@ -101,6 +108,30 @@ class Graph:
             for ident, entry in self._entries.items()
             if ident not in self._superseded
         }
+
+        # An edge into an entry retired by an interface-preserving
+        # supersession is read as an edge into its successor -- one hop at a
+        # time, and only across preserving hops. The stored record keeps what
+        # was written; this is how the live graph reads it.
+        def carried(target: Identifier) -> Identifier:
+            seen = {target}
+            while target in self._superseded:
+                successor = self._superseded[target]
+                if not self._entries[successor].preserves_interface or successor in seen:
+                    break
+                seen.add(successor)
+                target = successor
+            return target
+
+        for ident, entry in list(self._live.items()):
+            edges = {
+                name: tuple(carried(t) for t in getattr(entry, name))
+                for name in ("derives_from", "depends_on", "emits_into")
+            }
+            if any(edges[n] != getattr(entry, n) for n in edges):
+                entry = dataclasses.replace(entry, **edges)
+                self._live[ident] = entry
+                self._entries[ident] = entry
 
         # Reverse edges, live entries only, so children() is a lookup rather
         # than a scan of every entry on every call.

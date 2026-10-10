@@ -86,6 +86,8 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
     # on every other entry in the graph.
     if entry.purpose:
         view["purpose"] = entry.purpose
+    if entry.preserves_interface:
+        view["preserves_interface"] = True
     if full:
         view["body"] = entry.body
     return view
@@ -432,8 +434,14 @@ def submit_amendment(
                     if item.get("supersedes")
                     else None
                 ),
+                preserves_interface=item.get("preserves_interface") is True,
             )
         )
+        if item.get("preserves_interface") is True and not item.get("supersedes"):
+            raise ServiceError(
+                f"entries[{position}]: 'preserves_interface' says what a "
+                "supersession leaves intact, and this entry supersedes nothing"
+            )
 
     # One session writes one layer. A repair session wrote a behaviour and
     # the architecture deriving from it in a single amendment, so that
