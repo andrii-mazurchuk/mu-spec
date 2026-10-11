@@ -754,6 +754,7 @@ def emit(
     touched: list[dict] = []
     settled: list[dict] = []
     follow_ups: list[dict] = []
+    swept: list[dict] = []
     raced: list[dict] = []
     skipped: list[dict] = []
     failed: list[dict] = []
@@ -778,7 +779,10 @@ def emit(
             "total": len(work),
             "processed": len(created) + len(edited) + len(skipped)
                          + len(failed) + len(touched) + len(settled)
-                         + len(follow_ups),
+                         + len(follow_ups)
+                         # a follow-up adopted rather than created is a unit
+                         # processed too; uncounted, the bar stopped short
+                         + sum(1 for a in adopted if a.get("follow_up")),
             "created": len(created),
             "edited": len(edited),
             "withdrawn": len(withdrawn),
@@ -789,6 +793,7 @@ def emit(
             "unwired": len(unwired),
             "to_wire": pace["to_wire"],
             "adopted": len(adopted),
+            "swept": len(swept),
         })
 
     def fetched(key: str) -> dict:
@@ -821,7 +826,6 @@ def emit(
                           "reason": f"{what} while it was being picked up"})
 
     closed: dict[str, int] = {}
-    swept: list[dict] = []
     now_wired = {p for p in wired_before if all(k in issues for k in p.split("<-"))}
     try:
         # -- units that left the cut: withdraw, highest number first --------------
@@ -889,7 +893,7 @@ def emit(
                 if found:
                     issues[key] = {**_adopt(found[0], pickup), "follow_up_of": of}
                     adopted.append({"key": key, "number": found[0]["number"],
-                                    "url": found[0].get("url", "")})
+                                    "url": found[0].get("url", ""), "follow_up": True})
                     tick("editing")
                     continue
                 title, body = _follow_up(ticket, of)
@@ -1062,6 +1066,7 @@ def emit(
                         failed.append({"key": key, "reason": f"orphan #{n} could not be closed: {exc}"})
                         continue
                     swept.append({"key": key, "number": n, "url": issue.get("url", "")})
+                    tick("sweeping")
 
     finally:
         # Recorded even when the run went badly: otherwise a re-run duplicates the

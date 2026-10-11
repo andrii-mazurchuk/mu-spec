@@ -2969,6 +2969,8 @@ function shipTally(c){
     `<div class="${kind||""}"><b>${n}</b><span>${label}</span></div>`;
   return `<div class="tally">
     ${box(c.created||0, "created", (c.created||0) ? "good" : "")}
+    ${(c.adopted||0) ? box(c.adopted, "reused — already open on GitHub", "good") : ""}
+    ${(c.swept||0) ? box(c.swept, "orphans closed — duplicates nothing owns", "") : ""}
     ${(c.edited||0) ? box(c.edited, "edited in place", "good") : ""}
     ${(c.withdrawn||0) ? box(c.withdrawn, "withdrawn", "") : ""}
     ${(c.follow_ups||0) ? box(c.follow_ups, "follow-ups to closed issues", "good") : ""}
@@ -3002,7 +3004,10 @@ function shipProgress(e){
         ? `<span><b>${done}</b> of <b>${total}</b> dependencies — one GitHub call each</span>`
         : `<span><b>${done}</b> of <b>${total || "?"}</b> work units</span>`}
       <span>created <b>${e.created || 0}</b></span>
+      ${(e.adopted||0) ? `<span>reused <b>${e.adopted}</b></span>` : ""}
+      ${(e.edited||0) ? `<span>edited <b>${e.edited}</b></span>` : ""}
       <span>orders <b>${e.wired || 0}</b></span>
+      ${(e.swept||0) ? `<span>orphans closed <b>${e.swept}</b></span>` : ""}
       ${(e.failed||0) ? `<span style="color:var(--down)">failed <b>${e.failed}</b></span>` : ""}
       ${(e.skipped||0) ? `<span style="color:var(--warn)">skipped <b>${e.skipped}</b></span>` : ""}
     </div>`;
@@ -3173,7 +3178,7 @@ function drawShip(){
         <div class="bignum ${pf.fresh ? "" : "zero"}">
           <b>${pf.fresh}</b><span>new issue${pf.fresh===1?"":"s"}</span></div>
         ${pf.already
-          ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out</span></div>`
+          ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out (on record)</span></div>`
           : ""}
         ${pf.held
           ? `<div class="bignum quiet"><b>${pf.held}</b><span>held for later waves</span></div>`

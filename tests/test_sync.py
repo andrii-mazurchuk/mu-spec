@@ -482,6 +482,22 @@ def test_an_open_follow_up_whose_record_was_lost_is_adopted(tmp_path):
     assert live["S-02"]["number"] == 4 and live["S-02"]["follow_up_of"] == 3
 
 
+def test_progress_reaches_the_total_when_a_follow_up_is_adopted(tmp_path):
+    """DARK showed 'processed' stopping short of the unit count: a follow-up
+    adopted rather than created was processed but never counted."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    ship(tmp_path, gh, bodies={"S-02": "grown"})
+    _lose_records_after(tmp_path, 1)
+    seen = []
+    emit(log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3, order=list(ORDER),
+         edges=EDGES, waves=WAVES, fetch=lambda k: payload(k, EDGES.get(k, ()), "grown" if k == "S-02" else "the contract"),
+         client=gh, now_fn=lambda: 1.0, pickup=PICKUP, project="dark", on_progress=seen.append)
+    last = [s for s in seen if s["step"] != "wiring"][-1]
+    assert last["processed"] == last["total"] == 3
+
+
 def test_a_follow_up_the_contract_no_longer_calls_for_is_swept(tmp_path):
     """DARK: 46 follow-ups opened against an empty comparison. With the
     contract unchanged the key is settled, and its open follow-up is an
