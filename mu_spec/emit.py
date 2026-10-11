@@ -1016,10 +1016,13 @@ def emit(
                 try:
                     client.add_blocked_by(repo, issues[blocked]["number"], there["id"])
                 except GitHubError as exc:
-                    unwired.append({"blocked": blocked, "blocker": blocker,
-                                    "reason": str(exc)})
-                    tick("wiring")
-                    continue
+                    # GitHub refuses a link it already holds; that is the
+                    # order being in place, which is what was asked for.
+                    if not (exc.status == 422 and "already been taken" in str(exc)):
+                        unwired.append({"blocked": blocked, "blocker": blocker,
+                                        "reason": str(exc)})
+                        tick("wiring")
+                        continue
                 now_wired.add(pair)
                 wired.append({"blocked": blocked, "blocker": blocker,
                               "blocked_number": issues[blocked]["number"],

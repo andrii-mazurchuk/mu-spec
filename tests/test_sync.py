@@ -482,6 +482,30 @@ def test_an_open_follow_up_whose_record_was_lost_is_adopted(tmp_path):
     assert live["S-02"]["number"] == 4 and live["S-02"]["follow_up_of"] == 3
 
 
+class AlreadyLinked(Tracker):
+    """GitHub refuses a blocked-by link that already exists -- what a press
+    whose record was lost leaves behind."""
+
+    def add_blocked_by(self, repo, number, blocker_id):
+        if blocker_id - 1000 in self.issues[number]["blocked_by"]:
+            raise GitHubError("GitHub answered 422: An error occurred while adding the blocking "
+                              "issue to the issue. Validation failed: Target issue has already "
+                              "been taken", status=422)
+        super().add_blocked_by(repo, number, blocker_id)
+
+
+def test_an_order_github_already_holds_counts_as_wired(tmp_path):
+    """DARK's repair press reported 144 orders 'not declared' that were all in
+    place. Unrecorded, every later press would have tried them again."""
+    gh = AlreadyLinked()
+    ship(tmp_path, gh)
+    _lose_records_after(tmp_path, 0)
+    result = ship(tmp_path, gh)
+    assert result["unwired"] == [] and len(result["wired"]) == 2
+    again = ship(tmp_path, gh)
+    assert again["wired"] == [] and again["unwired"] == []
+
+
 def test_progress_reaches_the_total_when_a_follow_up_is_adopted(tmp_path):
     """DARK showed 'processed' stopping short of the unit count: a follow-up
     adopted rather than created was processed but never counted."""
