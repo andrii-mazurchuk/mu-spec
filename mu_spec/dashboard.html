@@ -2931,21 +2931,24 @@ function shipPreflight(){
      that still hold a unit with no live issue. Edits and withdrawals are not
      counted here -- whether content changed is known only server-side. */
   const waves = ((cut && cut.waves) || []).map(w => w.units || []);
-  /* How far the tracker already reaches: the furthest wave holding a live
-     issue. "shipped" fills up to there and opens nothing beyond. */
-  const reach = waves.reduce((r, w, i) => w.some(k => already[k]) ? i : r, -1);
+  /* What work already on the tracker waits on, transitively and not yet
+     issued: the gaps under the frontier. "shipped" creates exactly these. */
+  const edges = (cut && cut.edges) || {};
+  const gaps = new Set(), stack = keys.filter(k => already[k]);
+  while(stack.length) for(const b of edges[stack.pop()] || [])
+    if(!gaps.has(b)){ gaps.add(b); stack.push(b); }
+  const blocking = [...gaps].filter(k => !already[k]).length;
   const mode = horizonMode(out);
-  let inside, span;
+  let inside, span = 0;
   if(mode === "shipped"){
-    inside = waves.slice(0, reach + 1).flat().filter(k => !already[k]).length;
-    span = reach + 1;
+    inside = blocking;
   } else {
     const open = waves.filter(w => w.some(k => !already[k]));
     const n = Math.max(1, STATE.horizon || 1);
     inside = open.slice(0, n).flat().filter(k => !already[k]).length;
     span = Math.min(n, open.length);
   }
-  return {total: keys.length, already: out, fresh: inside, mode, reach, of: waves.length,
+  return {total: keys.length, already: out, fresh: inside, mode, blocking,
           held: keys.length - out - inside, waves: span};
 }
 
@@ -3149,13 +3152,14 @@ function drawShip(){
         ${pf.held
           ? `<div class="bignum quiet"><b>${pf.held}</b><span>held for later waves</span></div>`
           : ""}
-        <div class="shiphelp" style="margin-top:6px">${pf.reach >= 0
-          ? `On GitHub now: waves <b>1–${pf.reach + 1}</b> of ${pf.of}.`
+        <div class="shiphelp" style="margin-top:6px">${pf.already
+          ? `<b>${pf.blocking}</b> unit${pf.blocking===1?"":"s"} with no issue yet
+             block${pf.blocking===1?"s":""} work already on GitHub.`
           : `Nothing on GitHub yet.`}</div>
         <label class="shiphelp" style="display:block;margin-top:4px">
           <input type="radio" name="horizon-mode" id="hm-shipped" ${pf.mode === "shipped" ? "checked" : ""}
-            ${pf.reach < 0 ? "disabled" : ""}>
-          only the waves already on GitHub${pf.reach >= 0 ? ` (1–${pf.reach + 1})` : ""}</label>
+            ${pf.already ? "" : "disabled"}>
+          only what work already on GitHub waits on — no new work</label>
         <label class="shiphelp" style="display:block">
           <input type="radio" name="horizon-mode" id="hm-more" ${pf.mode === "more" ? "checked" : ""}>
           the next <input id="horizon-in" type="number" min="1" step="1" value="${esc(STATE.horizon)}"
@@ -3168,7 +3172,7 @@ function drawShip(){
           running ? "in flight"
           : blocked ? "not ready"
           : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"} ${pf.mode === "shipped"
-               ? `inside waves 1–${pf.waves}, opening no new wave`
+               ? `that work already out is blocked by, opening no new work`
                : `across ${pf.waves} wave${pf.waves===1?"":"s"}`},
              and edits or withdraws whatever changed`}</span>
       </div>

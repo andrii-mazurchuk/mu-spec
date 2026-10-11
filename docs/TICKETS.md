@@ -95,12 +95,14 @@ consumer's business.
 
 - The press creates issues for units in the **first N waves that still contain a
   unit with no live issue**. Units outside the horizon get no issue yet.
-- **Or the horizon is `"shipped"`**: create only inside the waves already on the
-  tracker -- up to the furthest wave holding a live issue -- and open no new wave. It is
-  the press to make after a spec change, when new units appeared among waves already
-  out, and it means nobody has to remember how far the last press reached. The
-  dashboard offers it by default once anything is out, and shows that reach
-  ("On GitHub now: waves 1–R of W"). With nothing out it creates nothing.
+- **Or the horizon is `"shipped"`**: create only the units that work already on the
+  tracker waits on, transitively -- the gaps under the frontier, never past it. Wave
+  numbers are a view and a re-cut renumbers them (DARK's waves 1–3 spread across 15
+  after a slice reclassification), so the rule follows edges, not wave indices. It is
+  the press to make after a spec change, and nobody has to remember how far the last
+  press reached. A new unit nothing shipped waits on is new work and waits for a
+  numeric press. The dashboard offers it by default once anything is out and shows how
+  many units block shipped work. With nothing out it creates nothing.
 - Edits and closes always apply to *every* live issue, whatever the horizon. The horizon
   limits creation only.
 - **Why it exists:** later waves are derived before the code of earlier waves exists.

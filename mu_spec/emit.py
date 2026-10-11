@@ -609,10 +609,10 @@ def emit(
     `order` is the unit keys in dependency order; `edges` maps a unit to the
     units it follows; `waves` is that order grouped, for `horizon` -- the
     number of waves still holding an unshipped unit that this press creates
-    issues for. `horizon="shipped"` is the other reading: create only inside
-    the waves already out -- up to the furthest wave holding a live issue --
-    so a press after a spec change fills gaps and opens no new wave, and
-    nobody has to remember how far the last press reached. The horizon limits
+    issues for. `horizon="shipped"` is the other reading: create only the units
+    a live issue waits on, transitively -- the gaps under what is already out,
+    never past it, however a re-cut renumbered the waves -- so nobody has to
+    remember how far the last press reached. The horizon limits
     creation only: an edit or a withdrawal is never held back. `pickup` is the labels a consumer adds on pickup; with
     none, nothing is edited or closed, because untouched cannot be told from
     admitted.
@@ -640,9 +640,14 @@ def emit(
     missing = [key for key in order if key not in live]
     held: list[str] = []
     if horizon == "shipped":
-        reach = max((i for i, wave in enumerate(waves or ()) if any(k in live for k in wave)),
-                    default=-1)
-        allowed = {k for wave in (waves or ())[: reach + 1] for k in wave}
+        # Everything a live issue waits on, transitively: the gaps under the
+        # frontier, never past it.
+        allowed, stack = set(), [k for k in order if k in live]
+        while stack:
+            for blocker in edges.get(stack.pop(), ()):
+                if blocker not in allowed:
+                    allowed.add(blocker)
+                    stack.append(blocker)
         held = [key for key in missing if key not in allowed]
         missing = [key for key in missing if key in allowed]
     elif horizon is not None and waves:
