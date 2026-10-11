@@ -374,7 +374,8 @@ def test_a_sound_project_emits_its_units_with_the_test_unit_first(tmp_path, monk
 
 def test_a_press_may_ask_for_the_waves_already_out(tmp_path, monkeypatch):
     """`waves: "shipped"` reaches exactly as far as the tracker already does:
-    with nothing out it creates nothing; after one wave it fills that wave."""
+    with nothing out it creates nothing; once a unit's tests are out, it
+    fills the implementation they test."""
     from mu_spec import service
 
     store = _project(tmp_path)
@@ -386,7 +387,7 @@ def test_a_press_may_ask_for_the_waves_already_out(tmp_path, monkeypatch):
     assert nothing["created"] == [] and sorted(nothing["held"]) == ["S-01", "S-01-T"]
     service.emit_tickets(store, "p", client=client, body={"waves": 1})
     filled = service.emit_tickets(store, "p", client=client, body={"waves": "shipped"})
-    assert filled["created"] == [] and filled["held"] == ["S-01"]
+    assert [c["key"] for c in filled["created"]] == ["S-01"] and filled["held"] == []
 
 
 def test_any_other_word_for_waves_is_refused(tmp_path, monkeypatch):

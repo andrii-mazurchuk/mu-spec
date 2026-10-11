@@ -733,8 +733,11 @@ def emit(
     held: list[str] = []
     if horizon == "shipped":
         # Everything a live issue waits on, transitively: the gaps under the
-        # frontier, never past it.
-        allowed, stack = set(), [k for k in order if k in live]
+        # frontier, never past it. An implementation whose own tests are out
+        # counts as waited on -- merged tests with no code are broken whether or
+        # not anything follows it -- and brings only what it waits on.
+        mates = [k for k in order if k not in live and not k.endswith("-T") and f"{k}-T" in live]
+        allowed, stack = set(mates), [k for k in order if k in live] + mates
         while stack:
             for blocker in edges.get(stack.pop(), ()):
                 if blocker not in allowed:
@@ -997,6 +1000,40 @@ def emit(
             for blocker in edges.get(blocked, ()) or ()
             if _pair(blocked, blocker) not in now_wired)
         tick("wiring")
+        # The order as GitHub holds it, for every open issue nobody picked up:
+        # the record keeps pairs of keys, not which issue a link points at, so
+        # a key that moved issue -- a swept follow-up -- left links the pairs
+        # call wired. Read, then add what is missing and remove links to our
+        # own issues that no longer belong. Links to anyone else's are kept.
+        open_labels = {int(i["number"]): list(i.get("labels") or ())
+                       for found in (ours or {}).values() for i in found}
+        open_numbers = set(open_labels)
+        synced: set[str] = set()
+        if ours is not None and hasattr(client, "blocked_by"):
+            for blocked in order:
+                if blocked not in issues or blocked in frozen                         or int(issues[blocked].get("number") or 0) not in open_numbers                         or any(l in pickup for l in open_labels.get(int(issues[blocked]["number"]), ())):
+                    continue
+                try:
+                    native = client.blocked_by(repo, int(issues[blocked]["number"]))
+                except GitHubError:
+                    continue
+                synced.add(blocked)
+                want = {int(issues[b]["id"]) for b in edges.get(blocked, ()) or () if b in issues}
+                have = {int(x["id"]) for x in native}
+                for link in native:
+                    if int(link["id"]) in want or not any(
+                            str(l).startswith(LABEL_NAMESPACE + ":") for l in link.get("labels") or ()):
+                        continue
+                    try:
+                        client.remove_blocked_by(repo, int(issues[blocked]["number"]), int(link["id"]))
+                    except GitHubError as exc:
+                        unwired.append({"blocked": blocked, "blocker": f"#{link.get('number')}",
+                                        "reason": f"a stale order could not be removed: {exc}"})
+                        continue
+                    removed.append({"blocked": blocked, "blocker": f"#{link.get('number')}"})
+                now_wired = {p for p in now_wired if p.partition("<-")[0] != blocked}
+                now_wired.update(_pair(blocked, b) for b in edges.get(blocked, ()) or ()
+                                 if b in issues and int(issues[b]["id"]) in have)
         for blocked in order:
             if blocked not in issues or blocked in frozen:
                 continue
@@ -1034,7 +1071,7 @@ def emit(
         # `not_planned` as never satisfied.
         for pair in sorted(wired_before):
             blocked, _, blocker = pair.partition("<-")
-            if pair in wanted or blocked not in issues or blocked in frozen:
+            if pair in wanted or blocked not in issues or blocked in frozen or blocked in synced:
                 continue
             source = live.get(blocker)
             if not source:

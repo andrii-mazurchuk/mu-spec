@@ -450,6 +450,17 @@ def test_open_issues_pages_through_and_leaves_pull_requests_out():
     assert "state=open" in rec.requests[0].full_url and "page=2" in rec.requests[1].full_url
 
 
+def test_blocked_by_reads_the_links_github_holds_with_their_labels():
+    """What Ship compares its record against: the record keeps pairs of keys,
+    and only this says which issue a link actually points at."""
+    page = [{"id": 1001, "number": 1, "state": "closed", "labels": [{"name": "mu-spec:S-01"}]}]
+    gh, rec, _ = client(FakeResponse({"data": page}, status=200))
+    assert gh.blocked_by(REPO, 12) == [{"id": 1001, "number": 1, "state": "closed",
+                                        "labels": ["mu-spec:S-01"]}]
+    assert rec.requests[0].get_method() == "GET"
+    assert f"/repos/{REPO}/issues/12/dependencies/blocked_by" in rec.requests[0].full_url
+
+
 def test_update_issue_is_one_patch_of_title_body_and_labels():
     gh, rec, _ = client(FakeResponse({}, status=200))
     gh.update_issue(REPO, 12, "S-01 — a.py", "new body", ["kind:test"])

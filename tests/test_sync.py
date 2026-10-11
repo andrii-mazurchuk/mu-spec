@@ -66,6 +66,12 @@ class Tracker:
         self.issues[number]["blocked_by"].discard(blocker_id - 1000)
         self.calls.append(("unwire", number, blocker_id - 1000))
 
+    def blocked_by(self, repo, number):
+        self.calls.append(("read", number))
+        return [{"id": 1000 + n, "number": n, "state": self.issues[n]["state"],
+                 "labels": list(self.issues[n]["labels"])}
+                for n in sorted(self.issues[number]["blocked_by"])]
+
     def issue_state(self, repo, number):
         if number in self.fail_reads:
             raise GitHubError("GitHub answered 502", status=502)
@@ -500,8 +506,10 @@ def test_an_order_github_already_holds_counts_as_wired(tmp_path):
     gh = AlreadyLinked()
     ship(tmp_path, gh)
     _lose_records_after(tmp_path, 0)
+    mark = len(gh.calls)
     result = ship(tmp_path, gh)
-    assert result["unwired"] == [] and len(result["wired"]) == 2
+    assert result["unwired"] == [] and not [c for c in gh.calls[mark:] if c[0] == "wire"]
+    assert len(standing(tmp_path / "emissions.jsonl", REPO)[1]) == 2
     again = ship(tmp_path, gh)
     assert again["wired"] == [] and again["unwired"] == []
 
@@ -585,6 +593,18 @@ def test_shipped_holds_a_new_unit_nothing_out_waits_on(tmp_path):
     result = ship(tmp_path, gh, horizon="shipped", order=["S-01-T", "S-01", "S-01b", "S-02"],
                   edges=grown, waves=[["S-01-T"], ["S-01", "S-01b"], ["S-02"]])
     assert result["created"] == [] and result["held"] == ["S-01b"]
+
+
+def test_shipped_includes_an_implementation_whose_tests_are_out(tmp_path):
+    """Tests on the tracker with no implementation to make them pass are broken
+    by definition, whether or not anything waits on that implementation. Only
+    the unit and what it waits on come with it -- never what waits on it."""
+    gh = Tracker()
+    ship(tmp_path, gh, order=["S-01-T"], edges={}, waves=[["S-01-T"]])
+    result = ship(tmp_path, gh, horizon="shipped", order=ORDER4, edges=EDGES4, waves=WAVES4)
+    assert [c["key"] for c in result["created"]] == ["S-01"]
+    assert result["held"] == ["S-02", "S-03"]
+    assert gh.issues[2]["blocked_by"] == {1}
 
 
 def test_shipped_with_nothing_out_creates_nothing(tmp_path):
@@ -696,3 +716,47 @@ def test_standing_without_the_rename_map_still_holds_one_key_per_issue(tmp_path)
     ship_renamed(tmp_path, gh)
     live, _ = standing(tmp_path / "emissions.jsonl", REPO)
     assert sorted(live) == ["S-01", "S-01-T", "S-03"]
+
+
+# -- the order as GitHub holds it ----------------------------------------------
+
+
+def _stale(gh):
+    """S-02's issue linked to a closed issue of ours under S-01's label -- a
+    swept follow-up -- instead of S-01's live issue. The record still says the
+    pair is wired, which is exactly what hid this on DARK."""
+    gh.n += 1
+    gh.issues[gh.n] = {"title": "S-01 (follow-up to #2)", "body": "", "labels": ["mu-spec:S-01"],
+                       "state": "closed", "state_reason": "not_planned", "blocked_by": set()}
+    gh.issues[3]["blocked_by"] = {gh.n}
+    return gh.n
+
+
+def test_a_link_to_an_issue_the_key_no_longer_lives_on_is_repointed(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    stale = _stale(gh)
+    result = ship(tmp_path, gh)
+    assert gh.issues[3]["blocked_by"] == {2}
+    assert ("unwire", 3, stale) in gh.calls
+    assert result["unwired"] == []
+
+
+def test_a_link_to_someone_elses_issue_is_left_alone(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.n += 1
+    gh.issues[gh.n] = {"title": "hand-made", "body": "", "labels": ["bug"],
+                       "state": "open", "state_reason": "", "blocked_by": set()}
+    gh.issues[3]["blocked_by"].add(gh.n)
+    ship(tmp_path, gh)
+    assert gh.issues[3]["blocked_by"] == {2, gh.n}
+
+
+def test_a_picked_up_issues_links_are_never_repaired(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    stale = _stale(gh)
+    gh.issues[3]["labels"].append("cto:admitted")
+    ship(tmp_path, gh)
+    assert gh.issues[3]["blocked_by"] == {stale}

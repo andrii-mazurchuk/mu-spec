@@ -2938,7 +2938,10 @@ function shipPreflight(){
   /* What work already on the tracker waits on, transitively and not yet
      issued: the gaps under the frontier. "shipped" creates exactly these. */
   const edges = (cut && cut.edges) || {};
-  const gaps = new Set(), stack = keys.filter(k => already[k]);
+  /* An implementation whose own tests are out counts too: merged tests with
+     no code are broken whether or not anything waits on it. */
+  const mates = keys.filter(k => !already[k] && !k.endsWith("-T") && already[k + "-T"]);
+  const gaps = new Set(mates), stack = keys.filter(k => already[k]).concat(mates);
   while(stack.length) for(const b of edges[stack.pop()] || [])
     if(!gaps.has(b)){ gaps.add(b); stack.push(b); }
   const blocking = [...gaps].filter(k => !already[k]).length;

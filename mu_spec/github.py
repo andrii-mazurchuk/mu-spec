@@ -276,6 +276,27 @@ class GitHub:
                 return out
             page += 1
 
+    def blocked_by(self, repo: str, number: int) -> list[dict]:
+        """The issues GitHub says `number` is blocked by, with their labels --
+        what Ship reconciles its record against, since the record holds pairs
+        of keys and not the issue each link points at."""
+        out: list[dict] = []
+        page = 1
+        while True:
+            raw = self._get(f"/repos/{repo}/issues/{int(number)}/dependencies/blocked_by"
+                            f"?per_page=100&page={page}")
+            items = raw.get("data") if isinstance(raw.get("data"), list) else []
+            out.extend({
+                "id": int(item.get("id") or 0),
+                "number": int(item.get("number") or 0),
+                "state": str(item.get("state") or ""),
+                "labels": [str(l.get("name") if isinstance(l, dict) else l)
+                           for l in item.get("labels") or ()],
+            } for item in items if isinstance(item, dict))
+            if len(items) < 100:
+                return out
+            page += 1
+
     def update_issue(
         self, repo: str, number: int, title: str, body: str,
         labels: "list[str] | tuple[str, ...] | None" = None,

@@ -97,6 +97,12 @@ Pressing Ship compares the current cut with what is live, and acts per unit:
   has is removed (`DELETE …/dependencies/blocked_by/{id}`). Leaving one behind would be
   a real fault, not just clutter. The consumer treats a blocker closed `not_planned` as
   never satisfied, so a stale edge to a withdrawn unit blocks its dependent forever.
+- **`blocked_by` as GitHub holds it.** The record keeps pairs of keys, not which issue a
+  link points at, so a key that moved issue left links the pairs called wired (DARK:
+  24 links to swept follow-ups). Each press reads the native `blocked_by` of every open
+  issue nobody picked up, adds what is missing, and removes links to *our* issues
+  (`mu-spec:` label) the cut does not want. Links to anyone else's issues are kept;
+  a picked-up issue's links are never touched.
 - **Read before writing, and read again after.** Each edit or close re-reads the issue
   immediately before writing. Afterwards it reads once more. If a pickup label appeared
   in that gap, the result reports the issue as **edited during admission**. The
@@ -127,8 +133,11 @@ consumer's business.
   numbers are a view and a re-cut renumbers them (DARK's waves 1–3 spread across 15
   after a slice reclassification), so the rule follows edges, not wave indices. It is
   the press to make after a spec change, and nobody has to remember how far the last
-  press reached. A new unit nothing shipped waits on is new work and waits for a
-  numeric press. The dashboard offers it by default once anything is out and shows how
+  press reached. An implementation whose own test unit is out is included too, with
+  what it waits on (never what waits on it): merged tests with no code are broken
+  whether or not anything follows it -- DARK's `tests/test_health.py` could not even
+  be collected. Any other new unit nothing shipped waits on is new work and waits for
+  a numeric press. The dashboard offers it by default once anything is out and shows how
   many units block shipped work. With nothing out it creates nothing.
 - Edits and closes always apply to *every* live issue, whatever the horizon. The horizon
   limits creation only.
