@@ -592,7 +592,7 @@ def emit(
     labels: "tuple[str, ...] | list[str]" = (),
     on_progress: Callable[[dict], None] | None = None,
     waves: "list[list[str]] | None" = None,
-    horizon: int | None = None,
+    horizon: "int | str | None" = None,
     pickup: "tuple[str, ...] | list[str]" = (),
     renamed: "dict[str, tuple[str, ...]] | None" = None,
 ) -> dict:
@@ -609,8 +609,11 @@ def emit(
     `order` is the unit keys in dependency order; `edges` maps a unit to the
     units it follows; `waves` is that order grouped, for `horizon` -- the
     number of waves still holding an unshipped unit that this press creates
-    issues for. The horizon limits creation only: an edit or a withdrawal is
-    never held back. `pickup` is the labels a consumer adds on pickup; with
+    issues for. `horizon="shipped"` is the other reading: create only inside
+    the waves already out -- up to the furthest wave holding a live issue --
+    so a press after a spec change fills gaps and opens no new wave, and
+    nobody has to remember how far the last press reached. The horizon limits
+    creation only: an edit or a withdrawal is never held back. `pickup` is the labels a consumer adds on pickup; with
     none, nothing is edited or closed, because untouched cannot be told from
     admitted.
 
@@ -636,7 +639,13 @@ def emit(
 
     missing = [key for key in order if key not in live]
     held: list[str] = []
-    if horizon is not None and waves:
+    if horizon == "shipped":
+        reach = max((i for i, wave in enumerate(waves or ()) if any(k in live for k in wave)),
+                    default=-1)
+        allowed = {k for wave in (waves or ())[: reach + 1] for k in wave}
+        held = [key for key in missing if key not in allowed]
+        missing = [key for key in missing if key in allowed]
+    elif horizon is not None and waves:
         chosen = [wave for wave in waves if any(k not in live for k in wave)]
         allowed = {k for wave in chosen[: max(0, int(horizon))] for k in wave}
         held = [key for key in missing if key not in allowed]

@@ -1666,7 +1666,9 @@ def emit_tickets(
 
     raw = (body or {}).get("waves")
     horizon = None
-    if raw is not None:
+    if raw == "shipped":
+        horizon = "shipped"
+    elif raw is not None:
         try:
             horizon = int(raw)
         except (TypeError, ValueError):
@@ -1676,7 +1678,7 @@ def emit_tickets(
                 "emitted": False,
                 "project": project,
                 "repo": manifest.repo,
-                "reason": f"'waves' must be a whole number of at least 1, not {raw!r}",
+                "reason": f"'waves' must be a whole number of at least 1, or \"shipped\" for only the waves already out, not {raw!r}",
             }
 
     if client is None:

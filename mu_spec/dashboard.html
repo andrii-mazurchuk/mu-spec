@@ -789,6 +789,8 @@ const STATE = {
   pickup:[],            // labels the consumer adds on pickup -- never edited after
   pickupDraft:null,
   horizon:1,            // waves to create issues for in one press (docs/TICKETS.md section 5)
+  horizonMode:null,     // "shipped" = only waves already out; "more" = the next `horizon` waves.
+                        // null until chosen: "shipped" once anything is out, else "more"
   shipFlash:null        // the outcome of the last press, outliving its reload
 };
 
@@ -2929,11 +2931,26 @@ function shipPreflight(){
      that still hold a unit with no live issue. Edits and withdrawals are not
      counted here -- whether content changed is known only server-side. */
   const waves = ((cut && cut.waves) || []).map(w => w.units || []);
-  const open = waves.filter(w => w.some(k => !already[k]));
-  const n = Math.max(1, STATE.horizon || 1);
-  const inside = open.slice(0, n).flat().filter(k => !already[k]).length;
-  return {total: keys.length, already: out, fresh: inside,
-          held: keys.length - out - inside, waves: Math.min(n, open.length)};
+  /* How far the tracker already reaches: the furthest wave holding a live
+     issue. "shipped" fills up to there and opens nothing beyond. */
+  const reach = waves.reduce((r, w, i) => w.some(k => already[k]) ? i : r, -1);
+  const mode = horizonMode(out);
+  let inside, span;
+  if(mode === "shipped"){
+    inside = waves.slice(0, reach + 1).flat().filter(k => !already[k]).length;
+    span = reach + 1;
+  } else {
+    const open = waves.filter(w => w.some(k => !already[k]));
+    const n = Math.max(1, STATE.horizon || 1);
+    inside = open.slice(0, n).flat().filter(k => !already[k]).length;
+    span = Math.min(n, open.length);
+  }
+  return {total: keys.length, already: out, fresh: inside, mode, reach, of: waves.length,
+          held: keys.length - out - inside, waves: span};
+}
+
+function horizonMode(already){
+  return STATE.horizonMode || (already ? "shipped" : "more");
 }
 
 /* Counts before lists. Zero failures is the thing being looked for, so it has
@@ -2951,7 +2968,7 @@ function shipTally(c){
     ${(c.raced||0) ? box(c.raced, "written during pickup", "bad") : ""}
     ${box(c.wired||0, "orders wired", (c.wired||0) ? "good" : "")}
     ${(c.removed||0) ? box(c.removed, "orders removed", "") : ""}
-    ${(c.held||0) ? box(c.held, "beyond the horizon", "quiet") : ""}
+    ${(c.held||0) ? box(c.held, "held for later waves", "quiet") : ""}
     ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
     ${box(c.unwired||0, "orders not declared", (c.unwired||0) ? "bad" : "")}
     ${/* "already out" is the standing count in the launch band; this is what
@@ -3130,11 +3147,19 @@ function drawShip(){
           ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out</span></div>`
           : ""}
         ${pf.held
-          ? `<div class="bignum quiet"><b>${pf.held}</b><span>beyond the horizon</span></div>`
+          ? `<div class="bignum quiet"><b>${pf.held}</b><span>held for later waves</span></div>`
           : ""}
-        <label class="shiphelp" style="display:block;margin-top:6px">waves this press
-          <input id="horizon-in" type="number" min="1" step="1" value="${esc(STATE.horizon)}"
-            style="width:4em"></label>
+        <div class="shiphelp" style="margin-top:6px">${pf.reach >= 0
+          ? `On GitHub now: waves <b>1–${pf.reach + 1}</b> of ${pf.of}.`
+          : `Nothing on GitHub yet.`}</div>
+        <label class="shiphelp" style="display:block;margin-top:4px">
+          <input type="radio" name="horizon-mode" id="hm-shipped" ${pf.mode === "shipped" ? "checked" : ""}
+            ${pf.reach < 0 ? "disabled" : ""}>
+          only the waves already on GitHub${pf.reach >= 0 ? ` (1–${pf.reach + 1})` : ""}</label>
+        <label class="shiphelp" style="display:block">
+          <input type="radio" name="horizon-mode" id="hm-more" ${pf.mode === "more" ? "checked" : ""}>
+          the next <input id="horizon-in" type="number" min="1" step="1" value="${esc(STATE.horizon)}"
+            style="width:3.5em"> waves still missing issues</label>
       </div>
       <div class="go">
         <button class="shipgo" id="do-ship" ${blocked || running ? "disabled" : ""}>${
@@ -3142,8 +3167,10 @@ function drawShip(){
         <span class="gonote">${
           running ? "in flight"
           : blocked ? "not ready"
-          : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"} across ${pf.waves}
-             wave${pf.waves===1?"":"s"}, and edits or withdraws whatever changed`}</span>
+          : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"} ${pf.mode === "shipped"
+               ? `inside waves 1–${pf.waves}, opening no new wave`
+               : `across ${pf.waves} wave${pf.waves===1?"":"s"}`},
+             and edits or withdraws whatever changed`}</span>
       </div>
     </div>`;
 
@@ -3184,7 +3211,11 @@ function drawShip(){
   if(psave) psave.onclick = () => setLabels(null, pinput.value);
   const hinput = $("horizon-in");
   if(hinput) hinput.onchange = () => {
-    STATE.horizon = Math.max(1, parseInt(hinput.value, 10) || 1); drawShip(); };
+    STATE.horizon = Math.max(1, parseInt(hinput.value, 10) || 1);
+    STATE.horizonMode = "more"; drawShip(); };
+  const hms = $("hm-shipped"), hmm = $("hm-more");
+  if(hms) hms.onchange = () => { STATE.horizonMode = "shipped"; drawShip(); };
+  if(hmm) hmm.onchange = () => { STATE.horizonMode = "more"; drawShip(); };
   if(save) save.onclick = () => setRepo(input.value);
   const go = $("do-ship");
   if(go) go.onclick = shipTickets;
@@ -3269,7 +3300,8 @@ async function shipTickets(){
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({waves: Math.max(1, STATE.horizon || 1)})
+      body: JSON.stringify({waves: shipPreflight().mode === "shipped"
+        ? "shipped" : Math.max(1, STATE.horizon || 1)})
     });
     const text = await res.text();
     let payload = null;

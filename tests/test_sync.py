@@ -325,6 +325,44 @@ def test_the_horizon_never_holds_back_an_edit(tmp_path):
     assert [c["key"] for c in result["created"]] == ["S-02"]
 
 
+# Four waves, so a unit can be added inside the shipped reach and another
+# beyond it.
+ORDER4 = ["S-01-T", "S-01", "S-02", "S-03"]
+EDGES4 = {"S-01": ("S-01-T",), "S-02": ("S-01",), "S-03": ("S-02",)}
+WAVES4 = [["S-01-T"], ["S-01"], ["S-02"], ["S-03"]]
+
+
+def test_shipped_fills_only_the_waves_already_out(tmp_path):
+    """The press a person makes after a spec change: give new units in the
+    waves already on the tracker their issues, open no new wave. Nobody has to
+    remember how far the last press reached -- the log already knows."""
+    gh = Tracker()
+    ship(tmp_path, gh, horizon=2)                     # S-01-T, S-01 out
+    wave_two_grew = {"S-01": ("S-01-T",), "S-01b": ("S-01-T",), "S-02": ("S-01",), "S-03": ("S-02",)}
+    result = ship(tmp_path, gh, horizon="shipped",
+                  order=["S-01-T", "S-01", "S-01b", "S-02", "S-03"], edges=wave_two_grew,
+                  waves=[["S-01-T"], ["S-01", "S-01b"], ["S-02"], ["S-03"]])
+    assert [c["key"] for c in result["created"]] == ["S-01b"]
+    assert sorted(result["held"]) == ["S-02", "S-03"]
+
+
+def test_shipped_with_nothing_out_creates_nothing(tmp_path):
+    gh = Tracker()
+    result = ship(tmp_path, gh, horizon="shipped", order=ORDER4, edges=EDGES4, waves=WAVES4)
+    assert result["created"] == [] and gh.n == 0
+    assert sorted(result["held"]) == sorted(ORDER4)
+
+
+def test_shipped_reaches_the_furthest_wave_out_even_with_a_gap(tmp_path):
+    """Reach is the furthest wave holding a live issue, not a count of waves:
+    after a re-cut, an issued unit can sit in a later wave than an unissued one."""
+    gh = Tracker()
+    ship(tmp_path, gh, order=["S-03"], edges={}, waves=[["S-03"]])
+    result = ship(tmp_path, gh, horizon="shipped", order=ORDER4, edges=EDGES4, waves=WAVES4)
+    assert [c["key"] for c in result["created"]] == ["S-01-T", "S-01", "S-02"]
+    assert result["held"] == []
+
+
 def test_what_the_horizon_held_back_is_reported(tmp_path):
     gh = Tracker()
     result = ship(tmp_path, gh, horizon=1)
