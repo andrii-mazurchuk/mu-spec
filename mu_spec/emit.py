@@ -601,7 +601,10 @@ def emit(
     Per unit: unchanged -> nothing, and no call at all; changed and untouched
     -> edited in place; changed and touched -> reported; new -> created;
     gone from the cut and untouched -> closed `not_planned`; gone and touched
-    -> reported. Then every dependency is made to match the cut.
+    -> reported. A CLOSED issue, changed or gone, is `settled`: never written
+    and never a warning -- it is done with, whatever its text would now say.
+    `touched` is left for open work somebody holds, the one case where
+    releasing it means anything. Then every dependency is made to match the cut.
 
     `order` is the unit keys in dependency order; `edges` maps a unit to the
     units it follows; `waves` is that order grouped, for `horizon` -- the
@@ -643,6 +646,7 @@ def emit(
     edited: list[dict] = []
     withdrawn: list[dict] = []
     touched: list[dict] = []
+    settled: list[dict] = []
     raced: list[dict] = []
     skipped: list[dict] = []
     failed: list[dict] = []
@@ -662,7 +666,7 @@ def emit(
             "step": step,
             "total": len(work),
             "processed": len(created) + len(edited) + len(skipped)
-                         + len(failed) + len(touched),
+                         + len(failed) + len(touched) + len(settled),
             "created": len(created),
             "edited": len(edited),
             "withdrawn": len(withdrawn),
@@ -698,8 +702,9 @@ def emit(
     for key in gone:
         why, _state = look(key)
         if why is not None:
-            touched.append({"key": key, "number": live[key].get("number"),
-                            "reason": f"gone from the cut, not closed: {why}"})
+            (settled if _state.get("state") == "closed" else touched).append(
+                {"key": key, "number": live[key].get("number"),
+                 "reason": f"gone from the cut, not closed: {why}"})
             frozen.add(key)
             tick("withdrawing")
             continue
@@ -744,8 +749,9 @@ def emit(
         if why is not None:
             # Its old fingerprint is kept, so the change stays reported until
             # somebody releases the issue.
-            touched.append({"key": key, "number": live[key].get("number"),
-                            "reason": f"changed, not edited: {why}"})
+            (settled if state.get("state") == "closed" else touched).append(
+                {"key": key, "number": live[key].get("number"),
+                 "reason": f"changed, not edited: {why}"})
             frozen.add(key)
             tick("editing")
             continue
@@ -885,6 +891,7 @@ def emit(
         "edited": edited,
         "withdrawn": withdrawn,
         "touched": touched,
+        "settled": settled,
         "raced": raced,
         "held": held,
         "skipped": skipped,
@@ -898,6 +905,7 @@ def emit(
             "edited": len(edited),
             "withdrawn": len(withdrawn),
             "touched": len(touched),
+            "settled": len(settled),
             "raced": len(raced),
             "held": len(held),
             "skipped": len(skipped),

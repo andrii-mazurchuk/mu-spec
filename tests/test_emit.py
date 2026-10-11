@@ -126,7 +126,7 @@ def test_the_result_names_every_issue_it_made(tmp_path):
     assert result["counts"] == {
         "units": 3, "created": 3, "skipped": 0, "failed": 0,
         "wired": 2, "unwired": 0, "edited": 0, "withdrawn": 0,
-        "touched": 0, "raced": 0, "held": 0, "removed": 0,
+        "touched": 0, "settled": 0, "raced": 0, "held": 0, "removed": 0,
     }
 
 

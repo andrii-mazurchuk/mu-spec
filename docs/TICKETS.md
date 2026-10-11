@@ -41,6 +41,10 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
   because an edit after admission makes the consumer admit the unit twice.
 - The whole check takes one GitHub read: the issue's state, its `state_reason`, and its
   labels.
+- **A closed touched issue is `settled`, not reported.** It is done with, whatever its
+  text would now say: never edited, never reopened, and no warning on Ship -- only a
+  count in the result. The report (`touched`) is kept for **open** issues somebody holds,
+  the one case where "release it and ship again" is advice anyone can act on.
 - **With no `pickup_labels` configured, nothing is ever edited.** A changed, open issue
   is reported as changed but left alone. Without a pickup signal, "untouched" can't be
   told apart from "admitted", so the safe reading is that every open issue is admitted.
@@ -52,9 +56,9 @@ Pressing Ship compares the current cut with what is live, and acts per unit:
 | | untouched | touched |
 |---|---|---|
 | content unchanged | nothing | nothing |
-| content changed | **edit in place**: title, body, our labels, `blocked_by` | report |
+| content changed | **edit in place**: title, body, our labels, `blocked_by` | report if open; settled if closed |
 | unit is new | **create** | — |
-| unit gone from the cut | **close `not_planned`** | report |
+| unit gone from the cut | **close `not_planned`** | report if open; settled if closed |
 
 - **"Changed" is measured on what the ticket says.** The hash covers the title, the
   body and our labels, rendered *without* `cut_seq` and `batch`. A new cut whose content

@@ -188,13 +188,29 @@ def test_a_touched_issue_is_reported_again_until_released(tmp_path):
     assert [e["key"] for e in released["edited"]] == ["S-02"]
 
 
-def test_an_issue_somebody_closed_is_touched_whatever_the_reason(tmp_path):
+def test_an_issue_somebody_closed_is_settled_not_reported(tmp_path):
+    """A closed issue is done with, whatever its text would now say: never
+    edited, and not a warning either. `touched` is for open work somebody
+    holds -- the one case where releasing it means anything."""
     gh = Tracker()
     ship(tmp_path, gh)
     gh.issues[3].update(state="closed", state_reason="completed")
     result = ship(tmp_path, gh, bodies={"S-02": "changed"})
     assert ("edit", 3) not in gh.calls
-    assert "completed" in result["touched"][0]["reason"]
+    assert result["touched"] == []
+    assert [(t["key"], t["number"]) for t in result["settled"]] == [("S-02", 3)]
+    assert result["counts"]["settled"] == 1
+
+
+def test_a_closed_issue_whose_unit_left_the_cut_is_settled_not_reported(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, order=["S-01-T", "S-01"], edges={"S-01": ("S-01-T",)},
+                  waves=[["S-01-T"], ["S-01"]])
+    assert ("close", 3) not in [c[:2] for c in gh.calls]
+    assert result["touched"] == [] and result["withdrawn"] == []
+    assert [t["key"] for t in result["settled"]] == ["S-02"]
 
 
 def test_without_a_pickup_label_nothing_is_edited(tmp_path):
@@ -385,7 +401,7 @@ def test_a_superseded_anchor_whose_issue_was_finished_is_reported_not_duplicated
     gh.calls.clear()
     result = ship_renamed(tmp_path, gh)
     assert result["created"] == []
-    assert [t["key"] for t in result["touched"]] == ["S-03"]
+    assert [t["key"] for t in result["settled"]] == ["S-03"] and result["touched"] == []
     assert [c for c in gh.writes() if c[0] in ("create", "edit", "close")] == []
 
 
