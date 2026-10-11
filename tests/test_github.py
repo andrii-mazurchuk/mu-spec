@@ -407,8 +407,47 @@ def test_issue_state_carries_the_labels_too():
     }, status=200))
     assert gh.issue_state(REPO, 5) == {
         "state": "open", "state_reason": "",
-        "labels": ["cto:admitted", "kind:test"],
+        "labels": ["cto:admitted", "kind:test"], "body": "",
     }
+
+
+def test_issue_state_carries_the_body_in_the_same_read():
+    """A closed issue's contract is compared against its own text. The fake
+    in test_sync returned a body and this client did not, so every legacy
+    closed issue compared against nothing and got a follow-up (DARK, 46
+    spurious). Pinned here, on the real client."""
+    gh, _rec, _ = client(FakeResponse({"state": "closed", "state_reason": "completed",
+                                       "labels": [], "body": "## Contract\n\nx"}, status=200))
+    assert gh.issue_state(REPO, 5)["body"] == "## Contract\n\nx"
+
+
+def test_a_read_that_times_out_is_retried():
+    gh, rec, slept = client(TimeoutError("The read operation timed out"),
+                            FakeResponse({"state": "open", "labels": []}, status=200), attempts=2)
+    assert gh.issue_state(REPO, 5)["state"] == "open"
+    assert len(rec.requests) == 2
+
+
+def test_a_write_that_times_out_is_a_GitHubError_and_is_not_repeated():
+    """The write may have landed. Repeating a create is how a duplicate is
+    made; the caller finds what landed by listing, not by trying again."""
+    gh, rec, _ = client(TimeoutError("The read operation timed out"), attempts=3)
+    with pytest.raises(GitHubError, match="may have landed"):
+        gh.create_issue(REPO, "t", "b")
+    assert len(rec.requests) == 1
+
+
+def test_open_issues_pages_through_and_leaves_pull_requests_out():
+    page1 = [{"id": 1000 + n, "number": n, "html_url": f"u/{n}", "title": f"t{n}",
+              "labels": [{"name": "mu-spec:S-01"}], "body": "b"} for n in range(1, 101)]
+    page1[5]["pull_request"] = {}
+    page2 = [{"id": 2000, "number": 200, "html_url": "u/200", "title": "last",
+              "labels": [], "body": None}]
+    gh, rec, _ = client(FakeResponse({"data": page1}, status=200), FakeResponse({"data": page2}, status=200))
+    got = gh.open_issues(REPO)
+    assert len(got) == 100 and 6 not in [i["number"] for i in got]
+    assert got[-1] == {"id": 2000, "number": 200, "url": "u/200", "title": "last", "labels": [], "body": ""}
+    assert "state=open" in rec.requests[0].full_url and "page=2" in rec.requests[1].full_url
 
 
 def test_update_issue_is_one_patch_of_title_body_and_labels():

@@ -62,6 +62,22 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
 
 ## 3. Reissue is a sync
 
+**The tracker is read once per press, and what it says outranks a lost record.** Before
+deciding anything, Ship lists the repository's open issues and keeps this project's
+(a `mu-spec:` label and a machine block naming the project). A key with no recorded
+issue but an open one of ours **adopts** it -- the oldest -- instead of creating a
+second; an open follow-up is adopted the same way. At the end of the press, an open
+issue of ours that **no key owns** and nobody picked up is **swept**: closed
+`not_planned`. A picked-up orphan is left alone and reported. The record is written
+even when a press dies part-way, and a write that timed out is reported, never
+repeated, because it may have landed.
+
+Why: on DARK, cut 8, a read timeout killed two presses after their issues were
+created and before their record was written; the retry created the same thirty
+again, and a follow-up comparison against an empty body opened forty-six more.
+Adopt-then-sweep is what lets the next press repair that without anyone closing
+issues by hand.
+
 Pressing Ship compares the current cut with what is live, and acts per unit:
 
 | | untouched | touched |

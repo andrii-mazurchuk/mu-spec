@@ -244,7 +244,37 @@ class GitHub:
                 str(label.get("name") if isinstance(label, dict) else label)
                 for label in raw.get("labels") or ()
             ],
+            # Also in the same read: a closed issue's contract is compared
+            # against its own text when the record predates contract
+            # fingerprints.
+            "body": str(raw.get("body") or ""),
         }
+
+    def open_issues(self, repo: str) -> list[dict]:
+        """Every open issue on the repository, pull requests left out, a page
+        of a hundred at a time. Read once per press, so a key that already has
+        an open issue -- from a run whose record was lost -- is adopted rather
+        than created twice."""
+        out: list[dict] = []
+        page = 1
+        while True:
+            raw = self._get(f"/repos/{repo}/issues?state=open&per_page=100&page={page}")
+            items = raw.get("data") if isinstance(raw.get("data"), list) else []
+            for item in items:
+                if not isinstance(item, dict) or "pull_request" in item:
+                    continue
+                out.append({
+                    "id": int(item.get("id") or 0),
+                    "number": int(item.get("number") or 0),
+                    "url": str(item.get("html_url") or ""),
+                    "title": str(item.get("title") or ""),
+                    "labels": [str(l.get("name") if isinstance(l, dict) else l)
+                               for l in item.get("labels") or ()],
+                    "body": str(item.get("body") or ""),
+                })
+            if len(items) < 100:
+                return out
+            page += 1
 
     def update_issue(
         self, repo: str, number: int, title: str, body: str,
@@ -361,6 +391,18 @@ class GitHub:
                 self._sleep(self._wait(exc, attempt))
             except urllib.error.URLError as exc:
                 last = GitHubError(f"GitHub was unreachable: {exc.reason}")
+                if attempt == self._attempts - 1:
+                    raise last from exc
+                self._sleep(self._wait(None, attempt))
+            except OSError as exc:
+                # A read that timed out, a reset connection. It escaped as a
+                # bare TimeoutError and killed a whole DARK press after its
+                # issues were created. A read is safe to repeat; a write may
+                # already have landed, and repeating a create makes a duplicate.
+                if request.get_method() != "GET":
+                    raise GitHubError(f"GitHub did not answer in time ({exc}); "
+                                      "the write may have landed") from exc
+                last = GitHubError(f"GitHub did not answer in time: {exc}")
                 if attempt == self._attempts - 1:
                     raise last from exc
                 self._sleep(self._wait(None, attempt))

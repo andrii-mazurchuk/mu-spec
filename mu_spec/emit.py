@@ -289,7 +289,7 @@ class Run:
                 # while the work it counts is happening.
                 "step", "total", "processed", "created", "skipped",
                 "failed", "wired", "unwired", "closed", "edited",
-                "withdrawn", "touched",
+                "withdrawn", "touched", "to_wire", "adopted", "swept",
             ):
                 if field in progress:
                     self._state[field] = progress[field]
@@ -478,6 +478,52 @@ def _follow_up(ticket, of: int) -> "tuple[str, str]":
             + ticket.body)
 
 
+_FOLLOW_TITLE = re.compile(r"\(follow-up to #(\d+)\)\s*$")
+
+
+def _machine_block(body: str) -> dict:
+    try:
+        block = json.loads((body or "").split("```json")[-1].split("```")[0])
+    except (ValueError, IndexError):
+        return {}
+    return block if isinstance(block, dict) else {}
+
+
+def _open_by_key(client, repo: str, project: "str | None") -> "dict[str, list[dict]] | None":
+    """This project's open issues on the tracker, by unit key, oldest first.
+    None when they cannot be listed -- then nothing is adopted or swept,
+    because absence of an answer is not an empty repository."""
+    if not project or not hasattr(client, "open_issues"):
+        return None
+    try:
+        listed = client.open_issues(repo)
+    except GitHubError:
+        return None
+    out: dict[str, list[dict]] = {}
+    for issue in listed:
+        if not any(str(l).startswith(LABEL_NAMESPACE + ":") for l in issue.get("labels") or ()):
+            continue
+        block = _machine_block(issue.get("body") or "")
+        if block.get("project") != project or not block.get("key"):
+            continue
+        out.setdefault(canonical_key(str(block["key"])), []).append(issue)
+    for found in out.values():
+        found.sort(key=lambda i: int(i["number"]))
+    return out
+
+
+def _adopt(issue: dict, pickup) -> dict:
+    """A record for an issue this unit made but did not record. Its
+    fingerprint is unknown, so the press re-renders and edits it if untouched."""
+    record = {"id": issue["id"], "number": issue["number"], "url": issue.get("url", ""),
+              "fingerprint": "", "contract": contract_of(issue.get("body") or ""),
+              "labels": [l for l in issue.get("labels") or () if l not in pickup]}
+    follow = _FOLLOW_TITLE.search(issue.get("title") or "")
+    if follow:
+        record["follow_up_of"] = int(follow.group(1))
+    return record
+
+
 def _touched(client, repo: str, number, pickup) -> "tuple[str | None, dict]":
     """Why this issue is not ours to write (None if it is), and what was read.
 
@@ -624,6 +670,7 @@ def emit(
     horizon: "int | str | None" = None,
     pickup: "tuple[str, ...] | list[str]" = (),
     renamed: "dict[str, tuple[str, ...]] | None" = None,
+    project: "str | None" = None,
 ) -> dict:
     """Make the tracker say what the cut says (docs/TICKETS.md §3).
 
@@ -650,6 +697,13 @@ def emit(
     pickup label that appeared in between is reported in `raced` -- never
     silent. `renamed` is passed to `standing`: a unit whose anchor superseded
     another's takes over that unit's issue rather than getting a new one.
+
+    With `project`, the press first lists the repository's open issues once.
+    A key with no recorded issue but an open one of ours ADOPTS it instead of
+    creating a second -- a press that died before writing its record left
+    issues nobody here knew about. At the end, an open issue of ours that no
+    key owns and nobody picked up is closed `not_planned` (`swept`). The
+    record is written even when the press dies part-way.
     """
     live, wired_before = standing(log_path, repo, renamed)
 
@@ -665,6 +719,15 @@ def emit(
     # ticket written in this press is stamped with.
     batch = _next_seq(log_path)
     in_cut = set(order)
+
+    ours = _open_by_key(client, repo, project)
+    adopted: list[dict] = []
+    for key in order:
+        if key in live or not (ours or {}).get(key):
+            continue
+        first = ours[key][0]
+        live[key] = _adopt(first, pickup)
+        adopted.append({"key": key, "number": first["number"], "url": first.get("url", "")})
 
     missing = [key for key in order if key not in live]
     held: list[str] = []
@@ -701,6 +764,10 @@ def emit(
     # Issues whose dependencies are frozen: picked up, or unreadable.
     frozen: set[str] = set()
     work = [k for k in order if k in live or k in missing]
+    # How many orders the wiring step will declare, once it is known. That
+    # step is one GitHub call per edge and can outlast everything before it;
+    # without a total the page sat at "109 of 109" for thirteen minutes.
+    pace = {"to_wire": 0}
 
     def tick(step: str) -> None:
         """Per item, not per phase: the point is watching a run advance."""
@@ -720,6 +787,8 @@ def emit(
             "failed": len(failed),
             "wired": len(wired),
             "unwired": len(unwired),
+            "to_wire": pace["to_wire"],
+            "adopted": len(adopted),
         })
 
     def fetched(key: str) -> dict:
@@ -751,224 +820,262 @@ def emit(
             raced.append({"key": key, "number": issues[key]["number"],
                           "reason": f"{what} while it was being picked up"})
 
-    # -- units that left the cut: withdraw, highest number first --------------
-    gone = sorted((k for k in live if k not in in_cut),
-                  key=lambda k: -int(live[k].get("number") or 0))
     closed: dict[str, int] = {}
-    for key in gone:
-        why, _state = look(key)
-        if why is not None:
-            (settled if _state.get("state") == "closed" else touched).append(
-                {"key": key, "number": live[key].get("number"),
-                 "reason": f"gone from the cut, not closed: {why}"})
-            frozen.add(key)
-            tick("withdrawing")
-            continue
-        try:
-            client.close_issue(repo, int(live[key]["number"]))
-        except (GitHubError, TypeError, ValueError) as exc:
-            failed.append({"key": key, "reason": f"could not be withdrawn: {exc}"})
-            frozen.add(key)
-        else:
-            after(key, "withdrawn")
-            closed[key] = int(live[key]["number"])
-            withdrawn.append({"key": key, "number": closed[key]})
-            issues.pop(key, None)
-        tick("withdrawing")
-
-    # -- units already out: compare, edit what changed ------------------------
-    for key in order:
-        if key not in live:
-            continue
-        try:
-            ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                            extra_labels=labels, batch=batch)
-        except (ValueError, KeyError) as exc:
-            failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
-            frozen.add(key)
-            tick("editing")
-            continue
-        if ticket.fingerprint == live[key].get("fingerprint"):
-            skipped.append({"key": key, "number": live[key].get("number"),
-                            "url": live[key].get("url", ""),
-                            "reason": f"already emitted as #{live[key].get('number')}, "
-                                      "unchanged"})
-            tick("editing")
-            continue
-        if ticket.oversized:
-            failed.append({"key": key, "reason": f"the rendered body is too large "
-                           f"for the tracker ({len(ticket.body)} characters)"})
-            frozen.add(key)
-            tick("editing")
-            continue
-        why, state = look(key)
-        if why is not None and state.get("state") == "closed":
-            before = live[key].get("contract") or contract_of(state.get("body") or "")
-            if before == contract_of(ticket.body):
-                settled.append({"key": key, "number": live[key].get("number"),
-                                "reason": f"context changed, contract did not: {why}"})
+    swept: list[dict] = []
+    now_wired = {p for p in wired_before if all(k in issues for k in p.split("<-"))}
+    try:
+        # -- units that left the cut: withdraw, highest number first --------------
+        gone = sorted((k for k in live if k not in in_cut),
+                      key=lambda k: -int(live[k].get("number") or 0))
+        for key in gone:
+            why, _state = look(key)
+            if why is not None:
+                (settled if _state.get("state") == "closed" else touched).append(
+                    {"key": key, "number": live[key].get("number"),
+                     "reason": f"gone from the cut, not closed: {why}"})
                 frozen.add(key)
-                tick("editing")
+                tick("withdrawing")
                 continue
-            # The contract moved after its work merged. A fresh open issue is
-            # the only shape that gets the difference built.
-            of = int(live[key]["number"])
-            title, body = _follow_up(ticket, of)
             try:
-                issue = client.create_issue(repo, title, body, ticket.labels)
-            except GitHubError as exc:
-                failed.append({"key": key, "reason": f"follow-up to #{of} not created: {exc}"})
+                client.close_issue(repo, int(live[key]["number"]))
+            except (GitHubError, TypeError, ValueError) as exc:
+                failed.append({"key": key, "reason": f"could not be withdrawn: {exc}"})
+                frozen.add(key)
+            else:
+                after(key, "withdrawn")
+                closed[key] = int(live[key]["number"])
+                withdrawn.append({"key": key, "number": closed[key]})
+                issues.pop(key, None)
+            tick("withdrawing")
+
+        # -- units already out: compare, edit what changed ------------------------
+        for key in order:
+            if key not in live:
+                continue
+            try:
+                ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
+                                extra_labels=labels, batch=batch)
+            except (ValueError, KeyError) as exc:
+                failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
                 frozen.add(key)
                 tick("editing")
                 continue
+            if ticket.fingerprint == live[key].get("fingerprint"):
+                skipped.append({"key": key, "number": live[key].get("number"),
+                                "url": live[key].get("url", ""),
+                                "reason": f"already emitted as #{live[key].get('number')}, "
+                                          "unchanged"})
+                tick("editing")
+                continue
+            if ticket.oversized:
+                failed.append({"key": key, "reason": f"the rendered body is too large "
+                               f"for the tracker ({len(ticket.body)} characters)"})
+                frozen.add(key)
+                tick("editing")
+                continue
+            why, state = look(key)
+            if why is not None and state.get("state") == "closed":
+                before = live[key].get("contract") or contract_of(state.get("body") or "")
+                if before == contract_of(ticket.body):
+                    settled.append({"key": key, "number": live[key].get("number"),
+                                    "reason": f"context changed, contract did not: {why}"})
+                    frozen.add(key)
+                    tick("editing")
+                    continue
+                # The contract moved after its work merged. A fresh open issue is
+                # the only shape that gets the difference built.
+                of = int(live[key]["number"])
+                found = [i for i in (ours or {}).get(key, ()) if int(i["number"]) != of]
+                if found:
+                    issues[key] = {**_adopt(found[0], pickup), "follow_up_of": of}
+                    adopted.append({"key": key, "number": found[0]["number"],
+                                    "url": found[0].get("url", "")})
+                    tick("editing")
+                    continue
+                title, body = _follow_up(ticket, of)
+                try:
+                    issue = client.create_issue(repo, title, body, ticket.labels)
+                except GitHubError as exc:
+                    failed.append({"key": key, "reason": f"follow-up to #{of} not created: {exc}"})
+                    frozen.add(key)
+                    tick("editing")
+                    continue
+                issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
+                               "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
+                               "batch": batch, "labels": list(ticket.labels), "follow_up_of": of}
+                follow_ups.append({"key": key, "title": title, "number": issue.number,
+                                   "url": issue.url, "follow_up_of": of,
+                                   "labels": list(ticket.labels)})
+                tick("editing")
+                continue
+            if why is not None:
+                # Its old fingerprint is kept, so the change stays reported until
+                # somebody releases the issue.
+                touched.append({"key": key, "number": live[key].get("number"),
+                                "reason": f"changed, not edited: {why}"})
+                frozen.add(key)
+                tick("editing")
+                continue
+            try:
+                # Labels by difference, never by replacement: a PATCH of the whole
+                # set would erase a pickup label added since our read, and the
+                # issue would look untouched to every Ship after.
+                number = int(live[key]["number"])
+                of = live[key].get("follow_up_of")
+                title, body = _follow_up(ticket, of) if of else (ticket.title, ticket.body)
+                client.update_issue(repo, number, title, body)
+                current = list(state.get("labels") or ())
+                add = [l for l in ticket.labels if l not in current]
+                if add:
+                    client.add_labels(repo, number, add)
+                wrote = tuple(live[key].get("labels") or ()) + tuple(labels)
+                for label in current:
+                    if _ours(label, wrote) and label not in ticket.labels:
+                        client.remove_label(repo, number, label)
+            except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+                failed.append({"key": key, "reason": f"could not be edited: {exc}"})
+                frozen.add(key)
+                tick("editing")
+                continue
+            after(key, "edited")
+            issues[key] = {**live[key], "fingerprint": ticket.fingerprint,
+                           "contract": contract_of(ticket.body),
+                           "batch": batch, "labels": list(ticket.labels)}
+            edited.append({"key": key, "number": live[key]["number"],
+                           "url": live[key].get("url", "")})
+            tick("editing")
+
+        # -- new units, within the horizon ----------------------------------------
+        for key in missing:
+            try:
+                ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
+                                extra_labels=labels, batch=batch)
+            except (ValueError, KeyError) as exc:
+                # An unsound graph refuses one unit at a time. One bad unit must
+                # not cost the other hundred and forty-three.
+                failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
+                tick("creating")
+                continue
+            if ticket.oversized:
+                skipped.append({"key": key, "reason": f"the rendered body is too large "
+                                f"for the tracker ({len(ticket.body)} characters)"})
+                tick("creating")
+                continue
+            try:
+                issue = client.create_issue(repo, ticket.title, ticket.body, ticket.labels)
+            except GitHubError as exc:
+                failed.append({"key": key, "reason": str(exc)})
+                tick("creating")
+                continue
+            # The labels written are recorded so a later edit can remove the ones
+            # this unit put there -- a project label renamed since is still ours.
             issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
                            "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
-                           "batch": batch, "labels": list(ticket.labels), "follow_up_of": of}
-            follow_ups.append({"key": key, "title": title, "number": issue.number,
-                               "url": issue.url, "follow_up_of": of,
-                               "labels": list(ticket.labels)})
-            tick("editing")
-            continue
-        if why is not None:
-            # Its old fingerprint is kept, so the change stays reported until
-            # somebody releases the issue.
-            touched.append({"key": key, "number": live[key].get("number"),
-                            "reason": f"changed, not edited: {why}"})
-            frozen.add(key)
-            tick("editing")
-            continue
-        try:
-            # Labels by difference, never by replacement: a PATCH of the whole
-            # set would erase a pickup label added since our read, and the
-            # issue would look untouched to every Ship after.
-            number = int(live[key]["number"])
-            of = live[key].get("follow_up_of")
-            title, body = _follow_up(ticket, of) if of else (ticket.title, ticket.body)
-            client.update_issue(repo, number, title, body)
-            current = list(state.get("labels") or ())
-            add = [l for l in ticket.labels if l not in current]
-            if add:
-                client.add_labels(repo, number, add)
-            wrote = tuple(live[key].get("labels") or ()) + tuple(labels)
-            for label in current:
-                if _ours(label, wrote) and label not in ticket.labels:
-                    client.remove_label(repo, number, label)
-        except (GitHubError, TypeError, ValueError, AttributeError) as exc:
-            failed.append({"key": key, "reason": f"could not be edited: {exc}"})
-            frozen.add(key)
-            tick("editing")
-            continue
-        after(key, "edited")
-        issues[key] = {**live[key], "fingerprint": ticket.fingerprint,
-                       "contract": contract_of(ticket.body),
-                       "batch": batch, "labels": list(ticket.labels)}
-        edited.append({"key": key, "number": live[key]["number"],
-                       "url": live[key].get("url", "")})
-        tick("editing")
+                           "batch": batch, "labels": list(ticket.labels)}
+            created.append({"key": key, "title": ticket.title, "number": issue.number,
+                            "url": issue.url, "labels": list(ticket.labels)})
+            tick("creating")
 
-    # -- new units, within the horizon ----------------------------------------
-    for key in missing:
-        try:
-            ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                            extra_labels=labels, batch=batch)
-        except (ValueError, KeyError) as exc:
-            # An unsound graph refuses one unit at a time. One bad unit must
-            # not cost the other hundred and forty-three.
-            failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
-            tick("creating")
-            continue
-        if ticket.oversized:
-            skipped.append({"key": key, "reason": f"the rendered body is too large "
-                            f"for the tracker ({len(ticket.body)} characters)"})
-            tick("creating")
-            continue
-        try:
-            issue = client.create_issue(repo, ticket.title, ticket.body, ticket.labels)
-        except GitHubError as exc:
-            failed.append({"key": key, "reason": str(exc)})
-            tick("creating")
-            continue
-        # The labels written are recorded so a later edit can remove the ones
-        # this unit put there -- a project label renamed since is still ours.
-        issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
-                       "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
-                       "batch": batch, "labels": list(ticket.labels)}
-        created.append({"key": key, "title": ticket.title, "number": issue.number,
-                        "url": issue.url, "labels": list(ticket.labels)})
-        tick("creating")
-
-    # -- the order: declare what the cut has, remove what it dropped ---------
-    wanted = {
-        _pair(blocked, blocker)
-        for blocked in order if blocked in issues
-        for blocker in edges.get(blocked, ()) or ()
-    }
-    # A follow-up is a new issue under an old key: every order touching that
-    # key is declared again, against the new number.
-    renewed = {f["key"] for f in follow_ups}
-    now_wired = {p for p in wired_before
-                 if all(k in issues for k in p.split("<-"))
-                 and not renewed.intersection(p.split("<-"))}
-    for blocked in order:
-        if blocked not in issues or blocked in frozen:
-            continue
-        for blocker in edges.get(blocked, ()) or ():
-            pair = _pair(blocked, blocker)
-            if pair in now_wired:
+        # -- the order: declare what the cut has, remove what it dropped ---------
+        wanted = {
+            _pair(blocked, blocker)
+            for blocked in order if blocked in issues
+            for blocker in edges.get(blocked, ()) or ()
+        }
+        # A follow-up is a new issue under an old key: every order touching that
+        # key is declared again, against the new number.
+        renewed = {f["key"] for f in follow_ups}
+        now_wired = {p for p in wired_before
+                     if all(k in issues for k in p.split("<-"))
+                     and not renewed.intersection(p.split("<-"))}
+        pace["to_wire"] = sum(
+            1 for blocked in order if blocked in issues and blocked not in frozen
+            for blocker in edges.get(blocked, ()) or ()
+            if _pair(blocked, blocker) not in now_wired)
+        tick("wiring")
+        for blocked in order:
+            if blocked not in issues or blocked in frozen:
                 continue
-            there = issues.get(blocker)
-            if not there:
-                # Order is the point of the feature, so an order that silently
-                # did not happen is the worst available outcome.
-                unwired.append({"blocked": blocked, "blocker": blocker,
-                                "reason": f"{blocker} has no issue, so this order "
-                                          "could not be declared"})
+            for blocker in edges.get(blocked, ()) or ():
+                pair = _pair(blocked, blocker)
+                if pair in now_wired:
+                    continue
+                there = issues.get(blocker)
+                if not there:
+                    # Order is the point of the feature, so an order that silently
+                    # did not happen is the worst available outcome.
+                    unwired.append({"blocked": blocked, "blocker": blocker,
+                                    "reason": f"{blocker} has no issue, so this order "
+                                              "could not be declared"})
+                    tick("wiring")
+                    continue
+                try:
+                    client.add_blocked_by(repo, issues[blocked]["number"], there["id"])
+                except GitHubError as exc:
+                    unwired.append({"blocked": blocked, "blocker": blocker,
+                                    "reason": str(exc)})
+                    tick("wiring")
+                    continue
+                now_wired.add(pair)
+                wired.append({"blocked": blocked, "blocker": blocker,
+                              "blocked_number": issues[blocked]["number"],
+                              "blocker_id": there["id"]})
                 tick("wiring")
+        # Removal walks the edges as they were BEFORE this press: a blocker
+        # withdrawn just now is gone from `issues`, and its edge is exactly the
+        # one that must leave the tracker -- a consumer treats a blocker closed
+        # `not_planned` as never satisfied.
+        for pair in sorted(wired_before):
+            blocked, _, blocker = pair.partition("<-")
+            if pair in wanted or blocked not in issues or blocked in frozen:
+                continue
+            source = live.get(blocker)
+            if not source:
                 continue
             try:
-                client.add_blocked_by(repo, issues[blocked]["number"], there["id"])
+                client.remove_blocked_by(repo, issues[blocked]["number"], source["id"])
             except GitHubError as exc:
                 unwired.append({"blocked": blocked, "blocker": blocker,
-                                "reason": str(exc)})
-                tick("wiring")
+                                "reason": f"a dropped order could not be removed: {exc}"})
                 continue
-            now_wired.add(pair)
-            wired.append({"blocked": blocked, "blocker": blocker,
-                          "blocked_number": issues[blocked]["number"],
-                          "blocker_id": there["id"]})
-            tick("wiring")
-    # Removal walks the edges as they were BEFORE this press: a blocker
-    # withdrawn just now is gone from `issues`, and its edge is exactly the
-    # one that must leave the tracker -- a consumer treats a blocker closed
-    # `not_planned` as never satisfied.
-    for pair in sorted(wired_before):
-        blocked, _, blocker = pair.partition("<-")
-        if pair in wanted or blocked not in issues or blocked in frozen:
-            continue
-        source = live.get(blocker)
-        if not source:
-            continue
-        try:
-            client.remove_blocked_by(repo, issues[blocked]["number"], source["id"])
-        except GitHubError as exc:
-            unwired.append({"blocked": blocked, "blocker": blocker,
-                            "reason": f"a dropped order could not be removed: {exc}"})
-            continue
-        now_wired.discard(pair)
-        removed.append({"blocked": blocked, "blocker": blocker})
+            now_wired.discard(pair)
+            removed.append({"blocked": blocked, "blocker": blocker})
 
-    # Recorded even when the run went badly: otherwise a re-run duplicates the
-    # issues that DID land, which is the one thing the guard exists to stop.
-    if created or edited or wired or removed or withdrawn:
-        _append(log_path, Emission(
-            seq=batch, at=now_fn(), cut_seq=cut_seq, repo=repo,
-            issues=issues, wired=tuple(sorted(now_wired)),
-        ))
-    if closed:
-        _append(log_path, Rollback(
-            seq=_next_seq(log_path), at=now_fn(), cut_seq=cut_seq, repo=repo,
-            undone=(), closed=closed,
-        ))
+        # Orphans: open issues of ours that no key owns -- duplicates a lost
+        # record left behind, follow-ups the contract no longer calls for.
+        if ours is not None and pickup:
+            owned = {int(v["number"]) for v in issues.values() if v.get("number") is not None}
+            gone_now = set(closed.values())
+            for key, found in sorted(ours.items()):
+                for issue in found:
+                    n = int(issue["number"])
+                    if n in owned or n in gone_now:
+                        continue
+                    if any(l in pickup for l in issue.get("labels") or ()):
+                        touched.append({"key": key, "number": n, "reason":
+                                        "an open issue no unit owns any more, but it is "
+                                        "picked up -- left alone"})
+                        continue
+                    try:
+                        client.close_issue(repo, n)
+                    except GitHubError as exc:
+                        failed.append({"key": key, "reason": f"orphan #{n} could not be closed: {exc}"})
+                        continue
+                    swept.append({"key": key, "number": n, "url": issue.get("url", "")})
+
+    finally:
+        # Recorded even when the run went badly: otherwise a re-run duplicates the
+        # issues that DID land, which is the one thing the guard exists to stop.
+        if created or edited or wired or removed or withdrawn or follow_ups or adopted:
+            _append(log_path, Emission(
+                seq=batch, at=now_fn(), cut_seq=cut_seq, repo=repo,
+                issues=issues, wired=tuple(sorted(now_wired)),
+            ))
+        if closed:
+            _append(log_path, Rollback(
+                seq=_next_seq(log_path), at=now_fn(), cut_seq=cut_seq, repo=repo,
+                undone=(), closed=closed,
+            ))
 
     return {
         "emitted": True,
@@ -982,6 +1089,8 @@ def emit(
         "touched": touched,
         "settled": settled,
         "follow_ups": follow_ups,
+        "adopted": adopted,
+        "swept": swept,
         "raced": raced,
         "held": held,
         "skipped": skipped,
@@ -997,6 +1106,8 @@ def emit(
             "touched": len(touched),
             "settled": len(settled),
             "follow_ups": len(follow_ups),
+            "adopted": len(adopted),
+            "swept": len(swept),
             "raced": len(raced),
             "held": len(held),
             "skipped": len(skipped),

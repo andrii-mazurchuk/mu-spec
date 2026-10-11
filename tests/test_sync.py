@@ -77,6 +77,12 @@ class Tracker:
             issue["labels"].append("cto:admitted")
         return state
 
+    def open_issues(self, repo):
+        self.calls.append(("list", 0))
+        return [{"id": 1000 + n, "number": n, "url": f"u/{n}", "title": i["title"],
+                 "labels": list(i["labels"]), "body": i["body"]}
+                for n, i in sorted(self.issues.items()) if i["state"] == "open"]
+
     def update_issue(self, repo, number, title, body, labels=None):
         self.issues[number].update(title=title, body=body)
         if labels is not None:
@@ -97,7 +103,7 @@ class Tracker:
 
     # -- what a test reads --
     def writes(self):
-        return [c for c in self.calls if c[0] != "read"]
+        return [c for c in self.calls if c[0] not in ("read", "list")]
 
     def open_numbers(self):
         return sorted(n for n, i in self.issues.items() if i["state"] == "open")
@@ -110,7 +116,7 @@ def ship(tmp_path, tracker, *, order=ORDER, edges=EDGES, waves=WAVES,
         log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
         order=list(order), edges=edges, waves=waves, horizon=horizon,
         fetch=lambda k: payload(k, edges.get(k, ()), bodies.get(k, "the contract")),
-        client=tracker, now_fn=lambda: 1.0, pickup=pickup, labels=labels,
+        client=tracker, now_fn=lambda: 1.0, pickup=pickup, labels=labels, project="dark",
     )
 
 
@@ -386,6 +392,109 @@ def test_withdrawing_a_blocker_unwires_its_live_dependent(tmp_path):
     import json
     block = gh.issues[3]["body"].split("```json")[-1].split("```")[0]
     assert json.loads(block)["blocked_by"] == []
+
+
+# -- a press that lost its record --------------------------------------------
+
+
+def _lose_records_after(tmp_path, keep):
+    log = tmp_path / "emissions.jsonl"
+    log.write_text("".join(l + chr(10) for l in log.read_text().splitlines()[:keep]))
+
+
+class Dies(Tracker):
+    """GitHub stops answering while the order is being declared."""
+
+    def add_blocked_by(self, repo, number, blocker_id):
+        raise TimeoutError("The read operation timed out")
+
+
+def test_a_press_that_dies_midway_still_records_what_it_created(tmp_path):
+    """DARK, cut 8: a read timeout escaped during wiring, the record was never
+    written, and the retry created the same thirty issues again."""
+    import pytest
+    gh = Dies()
+    with pytest.raises(TimeoutError):
+        ship(tmp_path, gh)
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert sorted(live) == sorted(ORDER), "every issue that landed is on record"
+    gh.__class__ = Tracker
+    again = ship(tmp_path, gh)
+    assert again["created"] == [] and gh.n == 3
+
+
+def test_an_open_issue_for_a_key_is_adopted_not_created_twice(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    _lose_records_after(tmp_path, 0)
+    result = ship(tmp_path, gh)
+    assert result["created"] == [] and gh.n == 3
+    assert sorted(a["number"] for a in result["adopted"]) == [1, 2, 3]
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert {k: v["number"] for k, v in live.items()} == {"S-01-T": 1, "S-01": 2, "S-02": 3}
+
+
+def test_an_orphan_duplicate_is_swept_and_the_first_one_kept(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    _lose_records_after(tmp_path, 0)
+    gh.n = 4
+    gh.issues[4] = {**gh.issues[2], "labels": list(gh.issues[2]["labels"]), "blocked_by": set()}
+    result = ship(tmp_path, gh)
+    assert [a["number"] for a in result["adopted"] if a["key"] == "S-01"] == [2]
+    assert [w["number"] for w in result["swept"]] == [4]
+    assert gh.issues[4]["state"] == "closed" and gh.issues[4]["state_reason"] == "not_planned"
+    assert gh.issues[2]["state"] == "open"
+
+
+def test_a_picked_up_orphan_is_left_alone_and_reported(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.n = 4
+    gh.issues[4] = {**gh.issues[2], "labels": list(gh.issues[2]["labels"]) + ["cto:admitted"],
+                    "blocked_by": set()}
+    result = ship(tmp_path, gh)
+    assert result["swept"] == [] and gh.issues[4]["state"] == "open"
+    assert [t["number"] for t in result["touched"]] == [4]
+
+
+def test_an_issue_of_another_project_is_never_swept(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.n = 4
+    gh.issues[4] = {**gh.issues[2], "body": gh.issues[2]["body"].replace('"project": "dark"', '"project": "other"'),
+                    "labels": list(gh.issues[2]["labels"]), "blocked_by": set()}
+    assert '"project": "other"' in gh.issues[4]["body"]
+    result = ship(tmp_path, gh)
+    assert result["swept"] == [] and gh.issues[4]["state"] == "open"
+
+
+def test_an_open_follow_up_whose_record_was_lost_is_adopted(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    ship(tmp_path, gh, bodies={"S-02": "grown"})                 # follow-up #4
+    _lose_records_after(tmp_path, 1)
+    result = ship(tmp_path, gh, bodies={"S-02": "grown"})
+    assert result["follow_ups"] == [] and gh.n == 4
+    assert [(a["key"], a["number"]) for a in result["adopted"]] == [("S-02", 4)]
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert live["S-02"]["number"] == 4 and live["S-02"]["follow_up_of"] == 3
+
+
+def test_a_follow_up_the_contract_no_longer_calls_for_is_swept(tmp_path):
+    """DARK: 46 follow-ups opened against an empty comparison. With the
+    contract unchanged the key is settled, and its open follow-up is an
+    orphan."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    gh.n = 4
+    gh.issues[4] = {**gh.issues[3], "state": "open", "state_reason": "",
+                    "title": gh.issues[3]["title"] + " (follow-up to #3)",
+                    "labels": list(gh.issues[3]["labels"]), "blocked_by": set()}
+    result = ship(tmp_path, gh, labels=("team:x",))
+    assert result["follow_ups"] == [] and [w["number"] for w in result["swept"]] == [4]
 
 
 # -- the horizon --------------------------------------------------------------

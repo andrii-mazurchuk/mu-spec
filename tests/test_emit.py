@@ -126,7 +126,8 @@ def test_the_result_names_every_issue_it_made(tmp_path):
     assert result["counts"] == {
         "units": 3, "created": 3, "skipped": 0, "failed": 0,
         "wired": 2, "unwired": 0, "edited": 0, "withdrawn": 0,
-        "touched": 0, "settled": 0, "follow_ups": 0, "raced": 0, "held": 0, "removed": 0,
+        "touched": 0, "settled": 0, "follow_ups": 0, "adopted": 0, "swept": 0,
+        "raced": 0, "held": 0, "removed": 0,
     }
 
 
@@ -399,6 +400,25 @@ def test_any_other_word_for_waves_is_refused(tmp_path, monkeypatch):
     assert result["emitted"] is False and "shipped" in result["reason"]
 
 
+def test_a_press_through_the_service_adopts_what_a_lost_record_left(tmp_path, monkeypatch):
+    """The project reaches emit, so adoption is on in production -- the case
+    it exists for is exactly a press made through this door."""
+    from mu_spec import service
+    from test_sync import Tracker
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    store.set_labels("p", [], ["cto:admitted"])
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    gh = Tracker()
+    service.emit_tickets(store, "p", client=gh)
+    store.emissions_path("p").write_text("")
+    again = service.emit_tickets(store, "p", client=gh)
+    assert again["created"] == [] and gh.n == 2
+    assert sorted(a["number"] for a in again["adopted"]) == [1, 2]
+
+
 def test_the_run_is_recorded_against_the_project(tmp_path, monkeypatch):
     from mu_spec import service
 
@@ -432,8 +452,10 @@ def test_a_run_reports_its_progress_while_it_goes(tmp_path):
         fetch=lambda k: payload(k, EDGES.get(k, ())), client=FakeClient(),
         now_fn=lambda: 1.0, on_progress=seen.append,
     )
-    # One after each unit and each edge, so 3 + 2.
-    assert len(seen) == 5
+    # One after each unit, one announcing how many orders wiring will declare
+    # -- the step that outlasted everything else on DARK -- and one per edge.
+    assert len(seen) == 3 + 1 + 2
+    assert seen[3]["step"] == "wiring" and seen[3]["to_wire"] == 2
     assert seen[0]["step"] == "creating"
     assert seen[-1]["step"] == "wiring"
     assert [s["processed"] for s in seen[:3]] == [1, 2, 3]

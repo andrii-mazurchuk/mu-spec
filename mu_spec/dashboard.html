@@ -2989,12 +2989,18 @@ function shipTally(c){
 }
 
 function shipProgress(e){
-  const total = e.total || 0, done = e.processed || 0;
+  /* Two phases with two totals: the units, then the order between them --
+     one GitHub call per edge, often the longer half. */
+  const wiring = e.step === "wiring" && (e.to_wire || 0) > 0;
+  const total = wiring ? e.to_wire : (e.total || 0);
+  const done = wiring ? Math.min(e.wired || 0, e.to_wire) : (e.processed || 0);
   const pct = total ? Math.round(100 * done / total) : 0;
   return `<div class="prog"><i style="width:${pct}%"></i></div>
     <div class="progline">
-      <span class="step">${esc(e.step || "starting")}</span>
-      <span><b>${done}</b> of <b>${total || "?"}</b> work units</span>
+      <span class="step">${wiring ? "declaring order" : esc(e.step || "starting")}</span>
+      ${wiring
+        ? `<span><b>${done}</b> of <b>${total}</b> dependencies — one GitHub call each</span>`
+        : `<span><b>${done}</b> of <b>${total || "?"}</b> work units</span>`}
       <span>created <b>${e.created || 0}</b></span>
       <span>orders <b>${e.wired || 0}</b></span>
       ${(e.failed||0) ? `<span style="color:var(--down)">failed <b>${e.failed}</b></span>` : ""}

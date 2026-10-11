@@ -1699,6 +1699,7 @@ def emit_tickets(
         horizon=horizon,
         pickup=manifest.pickup,
         renamed=_renamed(graph),
+        project=project,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
