@@ -2971,6 +2971,7 @@ function shipTally(c){
     ${box(c.created||0, "created", (c.created||0) ? "good" : "")}
     ${(c.edited||0) ? box(c.edited, "edited in place", "good") : ""}
     ${(c.withdrawn||0) ? box(c.withdrawn, "withdrawn", "") : ""}
+    ${(c.follow_ups||0) ? box(c.follow_ups, "follow-ups to closed issues", "good") : ""}
     ${(c.touched||0) ? box(c.touched, "picked up — left alone", "warn") : ""}
     ${(c.raced||0) ? box(c.raced, "written during pickup", "bad") : ""}
     ${box(c.wired||0, "orders wired", (c.wired||0) ? "good" : "")}
@@ -3068,6 +3069,9 @@ function shipTrouble(r){
 }
 
 function shipCreated(r){
+  /* A follow-up is a creation too: a new open issue for a closed one whose
+     contract changed. Listed with the rest, its title says which. */
+  r = {...r, created: [...(r.created||[]), ...(r.follow_ups||[])]};
   if(!(r.created||[]).length) return "";
   return `<div class="qsec"><h3>Created <span class="n">${r.created.length}</span>
     <span class="muted" style="font-weight:400">in dependency order, so a test unit sits

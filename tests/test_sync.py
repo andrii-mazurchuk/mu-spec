@@ -71,7 +71,7 @@ class Tracker:
             raise GitHubError("GitHub answered 502", status=502)
         issue = self.issues[number]
         state = {"state": issue["state"], "state_reason": issue["state_reason"],
-                 "labels": list(issue["labels"])}
+                 "labels": list(issue["labels"]), "body": issue["body"]}
         if number in self.admit_after_read:
             self.admit_after_read.discard(number)
             issue["labels"].append("cto:admitted")
@@ -189,17 +189,102 @@ def test_a_touched_issue_is_reported_again_until_released(tmp_path):
 
 
 def test_an_issue_somebody_closed_is_settled_not_reported(tmp_path):
-    """A closed issue is done with, whatever its text would now say: never
-    edited, and not a warning either. `touched` is for open work somebody
-    holds -- the one case where releasing it means anything."""
+    """A closed issue whose CONTEXT changed -- labels, blockers, renamed ids --
+    is done with: never edited, and not a warning either. `touched` is for
+    open work somebody holds, the one case where releasing it means anything."""
     gh = Tracker()
     ship(tmp_path, gh)
     gh.issues[3].update(state="closed", state_reason="completed")
-    result = ship(tmp_path, gh, bodies={"S-02": "changed"})
+    result = ship(tmp_path, gh, labels=("team:x",))
     assert ("edit", 3) not in gh.calls
-    assert result["touched"] == []
-    assert [(t["key"], t["number"]) for t in result["settled"]] == [("S-02", 3)]
-    assert result["counts"]["settled"] == 1
+    assert result["touched"] == [] and result["follow_ups"] == []
+    assert ("S-02", 3) in [(t["key"], t["number"]) for t in result["settled"]]
+
+
+def test_a_closed_issue_whose_contract_changed_gets_a_follow_up(tmp_path):
+    """The work it asked for is merged, and the contract now asks for more.
+    Silence would lose that work; a warning on a closed issue asks for an
+    action nobody can take. A fresh open issue is the only shape that gets
+    it built."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, bodies={"S-02": "the contract, and two new settings"})
+    assert ("edit", 3) not in gh.calls, "the closed issue is left as it was"
+    [follow] = result["follow_ups"]
+    assert follow["key"] == "S-02" and follow["follow_up_of"] == 3 and follow["number"] == 4
+    assert "follow-up to #3" in gh.issues[4]["title"]
+    assert "#3" in gh.issues[4]["body"] and "two new settings" in gh.issues[4]["body"]
+    assert gh.issues[4]["state"] == "open"
+    assert result["settled"] == [] and result["touched"] == []
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert live["S-02"]["number"] == 4
+
+
+def test_a_follow_up_is_opened_once_and_then_edited_in_place(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    ship(tmp_path, gh, bodies={"S-02": "more"})
+    again = ship(tmp_path, gh, bodies={"S-02": "more"})
+    assert again["created"] == [] and again["follow_ups"] == [] and gh.n == 4
+    edited = ship(tmp_path, gh, bodies={"S-02": "more still"})
+    assert [e["number"] for e in edited["edited"]] == [4]
+
+
+def test_a_dependent_waits_on_the_follow_up_not_the_merged_issue(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[2].update(state="closed", state_reason="completed")       # S-01
+    result = ship(tmp_path, gh, bodies={"S-01": "a changed contract"})
+    [follow] = result["follow_ups"]
+    assert ("wire", 3, follow["number"]) in gh.calls, "S-02 now blocked by the follow-up"
+
+
+def test_a_dependent_stops_naming_the_merged_key_once_its_blocker_has_a_follow_up(tmp_path):
+    """`blocked_by_was` says a blocker closed `completed` under an old key
+    counts as done. For a blocker with a follow-up that is exactly wrong: the
+    old key's work is merged and the follow-up's is not."""
+    import json
+    gh = Tracker()
+
+    def fetch(key, bodies):
+        unit = payload(key, EDGES.get(key, ()), bodies.get(key, "the contract"))
+        if key == "S-02":
+            unit["follows_was"] = {"S-01": ["S-00"]}
+        return unit
+
+    def press(bodies):
+        return emit(log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
+                    order=list(ORDER), edges=EDGES, waves=WAVES, horizon=None,
+                    fetch=lambda k: fetch(k, bodies), client=gh, now_fn=lambda: 1.0,
+                    pickup=PICKUP)
+
+    press({})
+    block = lambda n: json.loads(gh.issues[n]["body"].split("```json")[-1].split("```")[0])
+    assert block(3)["blocked_by_was"] == {"S-01": ["S-00"]}
+    gh.issues[2].update(state="closed", state_reason="completed")
+    press({"S-01": "a changed contract"})
+    assert block(3)["blocked_by_was"] == {}
+
+
+def test_a_legacy_record_compares_against_the_closed_issues_own_text(tmp_path):
+    """Records written before contracts were fingerprinted carry none, so the
+    closed issue's Contract section is read in the same call as its state."""
+    import json
+    gh = Tracker()
+    ship(tmp_path, gh)
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    for line in lines:
+        for issue in (line.get("issues") or {}).values():
+            issue.pop("contract", None)
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    gh.issues[3].update(state="closed", state_reason="completed")
+    same = ship(tmp_path, gh, labels=("team:x",))
+    assert same["follow_ups"] == [] and [t["key"] for t in same["settled"]] == ["S-02"]
+    changed = ship(tmp_path, gh, bodies={"S-02": "grown"})
+    assert [f["key"] for f in changed["follow_ups"]] == ["S-02"]
 
 
 def test_a_closed_issue_whose_unit_left_the_cut_is_settled_not_reported(tmp_path):

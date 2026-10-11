@@ -41,9 +41,20 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
   because an edit after admission makes the consumer admit the unit twice.
 - The whole check takes one GitHub read: the issue's state, its `state_reason`, and its
   labels.
-- **A closed touched issue is `settled`, not reported.** It is done with, whatever its
-  text would now say: never edited, never reopened, and no warning on Ship -- only a
-  count in the result. The report (`touched`) is kept for **open** issues somebody holds,
+- **A closed touched issue is `settled`, not reported -- unless its contract changed.**
+  Ship fingerprints the `## Contract` section separately (identifiers masked, so a
+  renumbering is not a change). If only the context moved -- blockers, renamed keys,
+  labels, the other contracts a file serves -- the issue is done with: never edited,
+  never reopened, no warning, only a count in the result. If the **contract** moved
+  after the work merged, Ship opens a **follow-up**: a new open issue under the same
+  key, titled `… (follow-up to #N)`, saying to build the difference or close it as
+  already satisfied. The key now lives on the follow-up, every order touching it is
+  wired again to the new number, and dependents' `blocked_by_was` stops naming the old
+  key, whose merged work is not the follow-up's. Records written before contracts were
+  fingerprinted are compared against the closed issue's own Contract section, read in
+  the same call as its state. mu-spec cannot tell whether merged code already satisfies
+  a changed contract -- that needs reading code -- so the follow-up says to close it
+  if so. The report (`touched`) is kept for **open** issues somebody holds,
   the one case where "release it and ship again" is advice anyone can act on.
 - **With no `pickup_labels` configured, nothing is ever edited.** A changed, open issue
   is reported as changed but left alone. Without a pickup signal, "untouched" can't be

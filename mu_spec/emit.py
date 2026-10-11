@@ -32,7 +32,9 @@ went wrong.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
+import re
 import threading
 import time
 import uuid
@@ -449,6 +451,33 @@ def standing(
     return known, wired
 
 
+# An identifier in a contract renumbers when its entry is superseded; that is a
+# rename, not a change to what is asked for.
+_IDENT = re.compile(r"\b[IBAST][·\-]\d+(?:-T)?\b")
+
+
+def contract_of(body: str) -> str:
+    """Fingerprint of what a ticket asks to be built: its `## Contract`
+    section, identifiers masked, whitespace collapsed. Context -- blockers,
+    the read set, the other contracts a file serves, labels -- is not in it,
+    so a closed issue whose context moved stays settled and one whose
+    contract moved gets a follow-up."""
+    text = (body or "").replace("\r\n", "\n")
+    _, found, rest = text.partition("## Contract")
+    section = rest.split("\n## ", 1)[0] if found else ""
+    return hashlib.sha256(" ".join(_IDENT.sub("#", section).split()).encode()).hexdigest()
+
+
+def _follow_up(ticket, of: int) -> "tuple[str, str]":
+    """Title and body of a follow-up: the ticket as rendered, pointing back."""
+    return (f"{ticket.title} (follow-up to #{of})",
+            f"> **Follow-up to #{of}.** That issue is closed and its work merged; this "
+            f"contract changed after it. Build the difference against what #{of} "
+            "merged -- everything below is the contract as it now stands. If what "
+            f"#{of} merged already satisfies it, close this as already satisfied.\n\n"
+            + ticket.body)
+
+
 def _touched(client, repo: str, number, pickup) -> "tuple[str | None, dict]":
     """Why this issue is not ours to write (None if it is), and what was read.
 
@@ -661,6 +690,7 @@ def emit(
     withdrawn: list[dict] = []
     touched: list[dict] = []
     settled: list[dict] = []
+    follow_ups: list[dict] = []
     raced: list[dict] = []
     skipped: list[dict] = []
     failed: list[dict] = []
@@ -680,7 +710,8 @@ def emit(
             "step": step,
             "total": len(work),
             "processed": len(created) + len(edited) + len(skipped)
-                         + len(failed) + len(touched) + len(settled),
+                         + len(failed) + len(touched) + len(settled)
+                         + len(follow_ups),
             "created": len(created),
             "edited": len(edited),
             "withdrawn": len(withdrawn),
@@ -690,6 +721,17 @@ def emit(
             "wired": len(wired),
             "unwired": len(unwired),
         })
+
+    def fetched(key: str) -> dict:
+        """The unit, with `follows_was` cut at any blocker that has a follow-up:
+        that blocker's old key is closed `completed` for work the follow-up has
+        not done, and a consumer reading the old key would count it done."""
+        unit = fetch(key)
+        was = unit.get("follows_was") if isinstance(unit, dict) else None
+        if was:
+            unit = {**unit, "follows_was": {
+                k: v for k, v in was.items() if not issues.get(k, {}).get("follow_up_of")}}
+        return unit
 
     def look(key: str) -> "tuple[str | None, dict]":
         if not pickup:
@@ -739,7 +781,7 @@ def emit(
         if key not in live:
             continue
         try:
-            ticket = render(fetch(key), repo=repo, cut_seq=cut_seq,
+            ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
                             extra_labels=labels, batch=batch)
         except (ValueError, KeyError) as exc:
             failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
@@ -760,12 +802,38 @@ def emit(
             tick("editing")
             continue
         why, state = look(key)
+        if why is not None and state.get("state") == "closed":
+            before = live[key].get("contract") or contract_of(state.get("body") or "")
+            if before == contract_of(ticket.body):
+                settled.append({"key": key, "number": live[key].get("number"),
+                                "reason": f"context changed, contract did not: {why}"})
+                frozen.add(key)
+                tick("editing")
+                continue
+            # The contract moved after its work merged. A fresh open issue is
+            # the only shape that gets the difference built.
+            of = int(live[key]["number"])
+            title, body = _follow_up(ticket, of)
+            try:
+                issue = client.create_issue(repo, title, body, ticket.labels)
+            except GitHubError as exc:
+                failed.append({"key": key, "reason": f"follow-up to #{of} not created: {exc}"})
+                frozen.add(key)
+                tick("editing")
+                continue
+            issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
+                           "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
+                           "batch": batch, "labels": list(ticket.labels), "follow_up_of": of}
+            follow_ups.append({"key": key, "title": title, "number": issue.number,
+                               "url": issue.url, "follow_up_of": of,
+                               "labels": list(ticket.labels)})
+            tick("editing")
+            continue
         if why is not None:
             # Its old fingerprint is kept, so the change stays reported until
             # somebody releases the issue.
-            (settled if state.get("state") == "closed" else touched).append(
-                {"key": key, "number": live[key].get("number"),
-                 "reason": f"changed, not edited: {why}"})
+            touched.append({"key": key, "number": live[key].get("number"),
+                            "reason": f"changed, not edited: {why}"})
             frozen.add(key)
             tick("editing")
             continue
@@ -774,7 +842,9 @@ def emit(
             # set would erase a pickup label added since our read, and the
             # issue would look untouched to every Ship after.
             number = int(live[key]["number"])
-            client.update_issue(repo, number, ticket.title, ticket.body)
+            of = live[key].get("follow_up_of")
+            title, body = _follow_up(ticket, of) if of else (ticket.title, ticket.body)
+            client.update_issue(repo, number, title, body)
             current = list(state.get("labels") or ())
             add = [l for l in ticket.labels if l not in current]
             if add:
@@ -790,6 +860,7 @@ def emit(
             continue
         after(key, "edited")
         issues[key] = {**live[key], "fingerprint": ticket.fingerprint,
+                       "contract": contract_of(ticket.body),
                        "batch": batch, "labels": list(ticket.labels)}
         edited.append({"key": key, "number": live[key]["number"],
                        "url": live[key].get("url", "")})
@@ -798,7 +869,7 @@ def emit(
     # -- new units, within the horizon ----------------------------------------
     for key in missing:
         try:
-            ticket = render(fetch(key), repo=repo, cut_seq=cut_seq,
+            ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
                             extra_labels=labels, batch=batch)
         except (ValueError, KeyError) as exc:
             # An unsound graph refuses one unit at a time. One bad unit must
@@ -820,8 +891,8 @@ def emit(
         # The labels written are recorded so a later edit can remove the ones
         # this unit put there -- a project label renamed since is still ours.
         issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
-                       "fingerprint": ticket.fingerprint, "batch": batch,
-                       "labels": list(ticket.labels)}
+                       "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
+                       "batch": batch, "labels": list(ticket.labels)}
         created.append({"key": key, "title": ticket.title, "number": issue.number,
                         "url": issue.url, "labels": list(ticket.labels)})
         tick("creating")
@@ -832,8 +903,12 @@ def emit(
         for blocked in order if blocked in issues
         for blocker in edges.get(blocked, ()) or ()
     }
+    # A follow-up is a new issue under an old key: every order touching that
+    # key is declared again, against the new number.
+    renewed = {f["key"] for f in follow_ups}
     now_wired = {p for p in wired_before
-                 if all(k in issues for k in p.split("<-"))}
+                 if all(k in issues for k in p.split("<-"))
+                 and not renewed.intersection(p.split("<-"))}
     for blocked in order:
         if blocked not in issues or blocked in frozen:
             continue
@@ -906,6 +981,7 @@ def emit(
         "withdrawn": withdrawn,
         "touched": touched,
         "settled": settled,
+        "follow_ups": follow_ups,
         "raced": raced,
         "held": held,
         "skipped": skipped,
@@ -920,6 +996,7 @@ def emit(
             "withdrawn": len(withdrawn),
             "touched": len(touched),
             "settled": len(settled),
+            "follow_ups": len(follow_ups),
             "raced": len(raced),
             "held": len(held),
             "skipped": len(skipped),
