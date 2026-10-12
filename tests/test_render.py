@@ -256,6 +256,25 @@ def test_an_oversized_body_is_reported_and_never_truncated():
     assert "x" * (BODY_LIMIT + 1) in ticket.body
 
 
+def test_a_ticket_just_under_the_limit_leaves_room_for_a_follow_up():
+    """DARK's S-264-T rendered at 65,522 characters, inline, fourteen under the
+    ceiling -- and its follow-up, which is that body plus a note pointing back,
+    took a 422. Near the ceiling the other contracts go as titles instead."""
+    from mu_spec.emit import _follow_up
+    from mu_spec.render import BODY_LIMIT, _render
+
+    def scoped(body):
+        return {**IMPL, "file_scope": {"dark/config/declare.py": [
+            {"id": "S-02", "title": "neighbour", "body": body}]}}
+
+    base = len(_render(scoped("y"), None, None, (), None, inline=True).body)
+    near = scoped("y" * (BODY_LIMIT - base - 20))
+    assert len(_render(near, None, None, (), None, inline=True).body) < BODY_LIMIT
+    ticket = render(near)
+    assert "y" * 100 not in ticket.body, "the neighbour went as a title"
+    assert len(_follow_up(ticket, 385)[1]) <= BODY_LIMIT
+
+
 def test_list_items_are_single_spaced():
     """Parts are joined with a blank line, which is right between blocks and
     wrong between list items -- markdown renders those as a loose list, and it

@@ -44,6 +44,10 @@ MAX_TITLE = 120
 # measured is 44,880, which is comfortable and not so comfortable that nobody
 # should ever check.
 BODY_LIMIT = 65536
+# What a follow-up puts above the body (emit's `_follow_up`), with room to
+# spare. A ticket inline within this of the ceiling goes as titles instead:
+# DARK's S-264-T was 14 characters under it and its follow-up took a 422.
+FOLLOW_UP_ROOM = 1024
 
 IMPLEMENTATION = "implementation"
 TEST = "test"
@@ -247,7 +251,7 @@ def render(
     and argued about before any issue exists.
     """
     ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=True)
-    if ticket.oversized:
+    if len(ticket.body) > BODY_LIMIT - FOLLOW_UP_ROOM:
         ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=False)
     return ticket
 

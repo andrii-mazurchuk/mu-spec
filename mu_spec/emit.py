@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable
 
 from mu_spec.github import GitHubError
-from mu_spec.render import LABEL_NAMESPACE, render
+from mu_spec.render import BODY_LIMIT, LABEL_NAMESPACE, render
 from mu_spec.units import canonical_key
 
 
@@ -900,6 +900,12 @@ def emit(
                     tick("editing")
                     continue
                 title, body = _follow_up(ticket, of)
+                if len(body) > BODY_LIMIT:
+                    failed.append({"key": key, "reason": f"follow-up to #{of} is too large "
+                                   f"for the tracker ({len(body)} characters)"})
+                    frozen.add(key)
+                    tick("editing")
+                    continue
                 try:
                     issue = client.create_issue(repo, title, body, ticket.labels)
                 except GitHubError as exc:
