@@ -280,6 +280,30 @@ def test_a_dependent_stops_naming_the_merged_key_once_its_blocker_has_a_follow_u
     assert block(3)["blocked_by_was"] == {}
 
 
+def test_a_blocker_whose_follow_up_predates_its_rename_keeps_its_old_key(tmp_path):
+    """The blocker's issue is an old follow-up opened under the key it was
+    renamed from, and nothing new was opened. That old key is the only name
+    the issue answers to, so cutting it leaves the dependent waiting forever."""
+    import json
+    gh = Tracker()
+
+    def press():
+        return emit(log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
+                    order=list(ORDER), edges=EDGES, waves=WAVES, horizon=None,
+                    fetch=lambda k: {**payload(k, EDGES.get(k, ())),
+                                     **({"follows_was": {"S-01": ["S-00"]}} if k == "S-02" else {})},
+                    client=gh, now_fn=lambda: 1.0, pickup=PICKUP)
+
+    press()
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    lines[-1]["issues"]["S-01"].update(follow_up_of=1, labels=["mu-spec:S-00", "kind:implementation"])
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    press()
+    block = json.loads(gh.issues[3]["body"].split("```json")[-1].split("```")[0])
+    assert block["blocked_by_was"] == {"S-01": ["S-00"]}
+
+
 def test_a_legacy_record_compares_against_the_closed_issues_own_text(tmp_path):
     """Records written before contracts were fingerprinted carry none, so the
     closed issue's Contract section is read in the same call as its state."""

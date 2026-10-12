@@ -43,7 +43,7 @@ from typing import Callable
 
 from mu_spec.github import GitHubError
 from mu_spec.render import BODY_LIMIT, LABEL_NAMESPACE, render
-from mu_spec.units import canonical_key
+from mu_spec.units import anchor_of, canonical_key
 
 
 # Every line in the log carries a kind. An emission omits it, because the
@@ -806,8 +806,20 @@ def emit(
         unit = fetch(key)
         was = unit.get("follows_was") if isinstance(unit, dict) else None
         if was:
-            unit = {**unit, "follows_was": {
-                k: v for k, v in was.items() if not issues.get(k, {}).get("follow_up_of")}}
+            kept = {}
+            for k, v in was.items():
+                issue = issues.get(k, {})
+                if not issue.get("follow_up_of"):
+                    kept[k] = v
+                    continue
+                # A follow-up opened before the blocker was renamed answers
+                # to the old key it was opened under: keep the chain up to it.
+                opened = [l[len(LABEL_NAMESPACE) + 1:] for l in issue.get("labels") or ()
+                          if l.startswith(LABEL_NAMESPACE + ":")]
+                own = opened[0] + k[len(anchor_of(k)):] if len(opened) == 1 else None
+                if own in v:
+                    kept[k] = v[:v.index(own) + 1]
+            unit = {**unit, "follows_was": kept}
         return unit
 
     def look(key: str) -> "tuple[str | None, dict]":
