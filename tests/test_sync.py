@@ -323,6 +323,40 @@ def test_a_legacy_record_compares_against_the_closed_issues_own_text(tmp_path):
     assert [f["key"] for f in changed["follow_ups"]] == ["S-02"]
 
 
+def test_a_change_below_a_heading_inside_the_spec_body_is_a_contract_change(tmp_path):
+    """DARK S-299's body has `## ` headings of its own. The contract ended at the
+    first one, so everything below it -- most of the entry -- was context, and a
+    rewritten schema settled as 'contract did not change'."""
+    gh = Tracker()
+    ship(tmp_path, gh, bodies={"S-02": "intro\n\n## Section\n\nthe old rule"})
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, bodies={"S-02": "intro\n\n## Section\n\nthe new rule"})
+    assert [f["key"] for f in result["follow_ups"]] == ["S-02"]
+
+
+def test_a_record_fingerprinted_the_old_way_compares_against_the_issues_own_text(tmp_path):
+    """A record written before the contract ran to `## Files you may write`
+    holds a hash of the first chunk only. Comparing that with the full section
+    would open a follow-up for every closed issue whose body has a heading."""
+    import json
+    from mu_spec.emit import _contract_v1
+    gh = Tracker()
+    body = "intro\n\n## Section\n\nthe rule"
+    ship(tmp_path, gh, bodies={"S-02": body})
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    for line in lines:
+        for issue in (line.get("issues") or {}).values():
+            if issue.get("contract"):
+                issue["contract"] = _contract_v1(gh.issues[issue["number"]]["body"])
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    gh.issues[3].update(state="closed", state_reason="completed")
+    same = ship(tmp_path, gh, bodies={"S-02": body}, labels=("team:x",))
+    assert same["follow_ups"] == [] and [t["key"] for t in same["settled"]] == ["S-02"]
+    changed = ship(tmp_path, gh, bodies={"S-02": "intro\n\n## Section\n\nthe rule, grown"})
+    assert [f["key"] for f in changed["follow_ups"]] == ["S-02"]
+
+
 def test_a_closed_issue_whose_unit_left_the_cut_is_settled_not_reported(tmp_path):
     gh = Tracker()
     ship(tmp_path, gh)

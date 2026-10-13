@@ -456,6 +456,17 @@ def standing(
 _IDENT = re.compile(r"\b[IBAST][·\-]\d+(?:-T)?\b")
 
 
+# The section the renderer writes straight after the contract. The contract
+# runs up to it, not to the next `## `: a spec body may carry headings of its
+# own, and ending there left most of such an entry outside the fingerprint.
+_AFTER_CONTRACT = "\n## Files you may write"
+_V2 = "2:"
+
+
+def _digest(section: str) -> str:
+    return hashlib.sha256(" ".join(_IDENT.sub("#", section).split()).encode()).hexdigest()
+
+
 def contract_of(body: str) -> str:
     """Fingerprint of what a ticket asks to be built: its `## Contract`
     section, identifiers masked, whitespace collapsed. Context -- blockers,
@@ -464,8 +475,27 @@ def contract_of(body: str) -> str:
     contract moved gets a follow-up."""
     text = (body or "").replace("\r\n", "\n")
     _, found, rest = text.partition("## Contract")
-    section = rest.split("\n## ", 1)[0] if found else ""
-    return hashlib.sha256(" ".join(_IDENT.sub("#", section).split()).encode()).hexdigest()
+    return _V2 + _digest(rest.split(_AFTER_CONTRACT, 1)[0] if found else "")
+
+
+def _contract_v1(body: str) -> str:
+    """The fingerprint records held before the contract ran to the next
+    renderer section: up to the first `## ` of any kind."""
+    text = (body or "").replace("\r\n", "\n")
+    _, found, rest = text.partition("## Contract")
+    return _digest(rest.split("\n## ", 1)[0] if found else "")
+
+
+def _contract_moved(recorded: "str | None", issue_body: str, ticket_body: str) -> bool:
+    """Whether the contract a closed issue was emitted with differs from the
+    ticket as it renders now. A record from before the current fingerprint is
+    compared through the issue's own text rather than its hash, so the change
+    of fingerprint is not mistaken for a change of contract."""
+    if recorded and recorded.startswith(_V2):
+        return recorded != contract_of(ticket_body)
+    if issue_body:
+        return contract_of(issue_body) != contract_of(ticket_body)
+    return recorded != _contract_v1(ticket_body)
 
 
 def _follow_up(ticket, of: int) -> "tuple[str, str]":
@@ -894,8 +924,7 @@ def emit(
                 continue
             why, state = look(key)
             if why is not None and state.get("state") == "closed":
-                before = live[key].get("contract") or contract_of(state.get("body") or "")
-                if before == contract_of(ticket.body):
+                if not _contract_moved(live[key].get("contract"), state.get("body") or "", ticket.body):
                     settled.append({"key": key, "number": live[key].get("number"),
                                     "reason": f"context changed, contract did not: {why}"})
                     frozen.add(key)
