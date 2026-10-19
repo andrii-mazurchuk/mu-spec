@@ -48,7 +48,9 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
   never reopened, no warning, only a count in the result. If the **contract** moved
   after the work merged, Ship opens a **follow-up**: a new open issue under the same
   key, titled `… (follow-up to #N)`, saying to build the difference or close it as
-  already satisfied. The key now lives on the follow-up, every order touching it is
+  already satisfied. Above its contract it carries `## Changed since #N`: each entry
+  added, removed, renumbered (from each entry's `was`, the ids it superseded) or changed,
+  with the changed text as a diff -- diffs dropped, ids kept, near the size ceiling. The key now lives on the follow-up, every order touching it is
   wired again to the new number, and dependents' `blocked_by_was` stops naming the old
   key, whose merged work is not the follow-up's. Records written before contracts were
   fingerprinted are compared against the closed issue's own Contract section, read in

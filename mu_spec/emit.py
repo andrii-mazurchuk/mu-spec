@@ -32,6 +32,7 @@ went wrong.
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import hashlib
 import json
 import re
@@ -498,14 +499,62 @@ def _contract_moved(recorded: "str | None", issue_body: str, ticket_body: str) -
     return recorded != _contract_v1(ticket_body)
 
 
-def _follow_up(ticket, of: int) -> "tuple[str, str]":
-    """Title and body of a follow-up: the ticket as rendered, pointing back."""
+def _follow_up(ticket, of: int, delta: str = "") -> "tuple[str, str]":
+    """Title and body of a follow-up: the ticket as rendered, pointing back,
+    with what changed since `of` between the two."""
     return (f"{ticket.title} (follow-up to #{of})",
             f"> **Follow-up to #{of}.** That issue is closed and its work merged; this "
             f"contract changed after it. Build the difference against what #{of} "
             "merged -- everything below is the contract as it now stands. If what "
             f"#{of} merged already satisfies it, close this as already satisfied.\n\n"
-            + ticket.body)
+            + (delta + "\n\n" if delta else "") + ticket.body)
+
+
+# An entry's heading in a rendered `## Contract`, as render writes it.
+_ENTRY_HEAD = re.compile(r"^### ([IBAST][·\-]\d+) — ", re.M)
+
+
+def _entries_of(body: str) -> dict[str, str]:
+    """A rendered contract as entry id -> its text, title line onward."""
+    text = (body or "").replace("\r\n", "\n")
+    _, found, rest = text.partition("## Contract")
+    parts = _ENTRY_HEAD.split(rest.split(_AFTER_CONTRACT, 1)[0]) if found else []
+    return {parts[i].replace("·", "-"): parts[i + 1].strip()
+            for i in range(1, len(parts) - 1, 2)}
+
+
+def _delta(old_body: str, ticket_body: str, entries, of: int, diffs: bool = True) -> str:
+    """`## Changed since #of`: each entry of the contract added, removed,
+    renumbered or changed since the issue it follows, with the changed text
+    as a diff -- so nobody re-derives it by diffing issue bodies (DARK
+    S-286-T, S-309-T). Renumbering is read from each entry's `was`; text is
+    compared as the contract fingerprint compares it, identifiers masked.
+    Empty when the old contract cannot be read: no section beats a wrong one."""
+    old, new = _entries_of(old_body), _entries_of(ticket_body)
+    if not old:
+        return ""
+    was = {str(e.get("id")): [str(w) for w in e.get("was") or ()] for e in entries or ()}
+    lines: list[str] = []
+    claimed: set[str] = set()
+    for ident, text in new.items():
+        before = ident if ident in old else next(
+            (w for w in was.get(ident, ()) if w in old), None)
+        if before is None:
+            lines.append(f"- `{ident}` — added")
+            continue
+        claimed.add(before)
+        if _digest(old[before]) == _digest(text):
+            if before != ident:
+                lines.append(f"- `{ident}` — renumbered from `{before}`, text unchanged")
+            continue
+        lines.append(f"- `{ident}` — changed" + (f" (was `{before}`)" if before != ident else ""))
+        if diffs:
+            diff = list(difflib.unified_diff(old[before].splitlines(), text.splitlines(),
+                                             lineterm="", n=1))[2:]
+            lines.append("````diff\n" + "\n".join(diff) + "\n````")
+    lines += [f"- `{ident}` — removed" for ident in old if ident not in claimed and ident not in new]
+    return (f"## Changed since #{of}\n\n" + ("\n".join(lines) if lines else
+            "No entry was added, removed or changed; only identifiers or layout moved."))
 
 
 _FOLLOW_TITLE = re.compile(r"\(follow-up to #(\d+)\)\s*$")
@@ -870,6 +919,23 @@ def emit(
             seen[int(issues[key]["number"])] = state
         return why, state
 
+    def followed(ticket, key: str, of: int) -> "tuple[str, str]":
+        """A follow-up with its delta against the merged issue `of` -- read
+        once, and already read when the follow-up is first opened. Near the
+        size ceiling the delta keeps its ids and drops the diffs."""
+        state = seen.get(int(of))
+        if state is None:
+            try:
+                state = seen[int(of)] = client.issue_state(repo, int(of))
+            except (GitHubError, TypeError, ValueError, AttributeError):
+                state = {}
+        entries = (asks.get(key) or {}).get("entries")
+        title, body = _follow_up(ticket, of, _delta(state.get("body") or "", ticket.body, entries, of))
+        if len(body) > BODY_LIMIT:
+            title, body = _follow_up(ticket, of, _delta(state.get("body") or "", ticket.body,
+                                                       entries, of, diffs=False))
+        return title, body
+
     def verify(open_now: set[int]) -> None:
         """After the press, as a consumer would read it: every blocker an open,
         unpicked issue of ours names must be carried -- under that key or one
@@ -997,7 +1063,7 @@ def emit(
                                     "url": found[0].get("url", ""), "follow_up": True})
                     tick("editing")
                     continue
-                title, body = _follow_up(ticket, of)
+                title, body = followed(ticket, key, of)
                 if len(body) > BODY_LIMIT:
                     failed.append({"key": key, "reason": f"follow-up to #{of} is too large "
                                    f"for the tracker ({len(body)} characters)"})
@@ -1033,7 +1099,7 @@ def emit(
                 # issue would look untouched to every Ship after.
                 number = int(live[key]["number"])
                 of = live[key].get("follow_up_of")
-                title, body = _follow_up(ticket, of) if of else (ticket.title, ticket.body)
+                title, body = followed(ticket, key, of) if of else (ticket.title, ticket.body)
                 client.update_issue(repo, number, title, body)
                 current = list(state.get("labels") or ())
                 add = [l for l in ticket.labels if l not in current]

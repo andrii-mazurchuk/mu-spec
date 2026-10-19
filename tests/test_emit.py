@@ -966,3 +966,8 @@ def test_a_dependent_names_its_renamed_blockers_old_keys(tmp_path):
     unit = service.get_work_unit(store, "p", "S-02")
     assert unit["follows"] == ["S-02-T"]
     assert unit["follows_was"] == {"S-02-T": ["S-01-T"]}
+    # Each entry names the ids it superseded, nearest first, so a follow-up
+    # can say "renumbered from" instead of "removed" and "added".
+    assert [e.get("was") for e in unit["entries"]] == [["S-01"]]
+    tests = service.get_work_unit(store, "p", "S-02-T")
+    assert [e.get("was") for e in tests["entries"]] == [["T-01"]]

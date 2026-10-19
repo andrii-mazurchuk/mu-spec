@@ -1388,8 +1388,12 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         "issued": True,
         "unit": unit.to_json(),
         "write_set": list(unit.modules),
+        # Each with the ids it superseded, nearest first, so a follow-up can
+        # tell a renumbering from a removal and an addition.
         "entries": [
-            _entry_view(graph.get(i), full=True) for i in unit.entries
+            {**_entry_view(graph.get(i), full=True),
+             **({"was": was} if (was := _was(graph, i)) else {})}
+            for i in unit.entries
         ],
         "justification": justification,
         "read_set": sorted(read_set, key=lambda v: v["id"]),
@@ -1554,6 +1558,18 @@ TOKEN_ENV = "MU_SPEC_GITHUB_TOKEN"
 # and not a request, and the route must not hold a connection open for it.
 
 
+def _was(graph: Graph, identifier: Identifier) -> list[str]:
+    """The ids `identifier` superseded, nearest first."""
+    chain: list[Identifier] = []
+    entry = graph.get(identifier)
+    previous = entry.supersedes if entry is not None else None
+    while previous is not None and previous not in chain:
+        chain.append(previous)
+        old = graph.get(previous)
+        previous = old.supersedes if old is not None else None
+    return [str(p) for p in chain]
+
+
 def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
     """Unit key -> the unit keys its anchor superseded, nearest first.
 
@@ -1562,12 +1578,7 @@ def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
     key its predecessor's issue instead of opening a second one."""
     out: dict[str, tuple[str, ...]] = {}
     for entry in graph.entries():
-        chain: list[Identifier] = []
-        previous = entry.supersedes
-        while previous is not None and previous not in chain:
-            chain.append(previous)
-            old = graph.get(previous)
-            previous = old.supersedes if old is not None else None
+        chain = [parse(p) for p in _was(graph, entry.id)]
         for tests in (False, True):
             if chain:
                 out[units.unit_key(entry.id, tests)] = tuple(

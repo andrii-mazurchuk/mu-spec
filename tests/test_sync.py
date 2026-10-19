@@ -882,3 +882,78 @@ def test_a_sound_press_reports_nothing_dead(tmp_path):
     assert ship(tmp_path, gh)["dead"] == []
     gh.issues[1].update(state="closed", state_reason="completed")        # S-01-T merged
     assert ship(tmp_path, gh)["dead"] == []
+
+
+# -- a follow-up states what changed since the issue it follows -----------------
+
+
+def _scenarios(tmp_path, gh, entries):
+    """S-01-T holding the scenarios given as (id, body, was)."""
+    def fetch(key):
+        unit = payload(key, EDGES.get(key, ()))
+        if key == "S-01-T":
+            unit["entries"] = [{"id": i, "title": f"{i} title", "body": b,
+                                **({"was": list(w)} if w else {})} for i, b, w in entries]
+        return unit
+    return emit(log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
+                order=list(ORDER), edges=EDGES, waves=WAVES, horizon=None,
+                fetch=fetch, client=gh, now_fn=lambda: 1.0, pickup=PICKUP, project="dark")
+
+
+def _changed(body):
+    head, found, rest = body.partition("## Changed since #")
+    assert found, "a follow-up carries its delta"
+    assert "## Contract" not in head, "the delta comes before the contract"
+    return rest.split("\n## Contract", 1)[0]
+
+
+def test_a_follow_up_names_the_one_entry_added_since_the_merged_issue(tmp_path):
+    """DARK u0707-6 / u0810-4: S-286-T and S-309-T re-rendered every scenario
+    with one new, and the CTO diffed old issue bodies by hand to find it."""
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first case", ()), ("T-02", "second case", ())])
+    gh.issues[1].update(state="closed", state_reason="completed")
+    result = _scenarios(tmp_path, gh, [("T-01", "first case", ()), ("T-02", "second case", ()),
+                                       ("T-03", "third case", ())])
+    [follow] = result["follow_ups"]
+    delta = _changed(gh.issues[follow["number"]]["body"])
+    assert delta.startswith("1")
+    assert "`T-03` — added" in delta
+    assert "T-01" not in delta and "T-02" not in delta
+
+
+def test_a_follow_up_says_which_ids_were_renumbered_and_which_left(tmp_path):
+    """DARK u0701-5 / u0904-8: T-346 became T-689 with the same text, and
+    implementers matched renumbered scenarios by guesswork."""
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first case", ()), ("T-02", "second case", ())])
+    gh.issues[1].update(state="closed", state_reason="completed")
+    result = _scenarios(tmp_path, gh, [("T-04", "second case", ("T-02",)),
+                                       ("T-03", "third case", ())])
+    delta = _changed(gh.issues[result["follow_ups"][0]["number"]]["body"])
+    assert "`T-04` — renumbered from `T-02`, text unchanged" in delta
+    assert "`T-03` — added" in delta
+    assert "`T-01` — removed" in delta
+
+
+def test_a_follow_up_shows_the_changed_text_of_an_entry(tmp_path):
+    """DARK u0501-4: the follow-up never said what in the contract moved."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[2].update(state="closed", state_reason="completed")       # S-01
+    result = ship(tmp_path, gh, bodies={"S-01": "a changed contract"})
+    delta = _changed(gh.issues[result["follow_ups"][0]["number"]]["body"])
+    assert "`S-01` — changed" in delta
+    assert "-the contract" in delta and "+a changed contract" in delta
+
+
+def test_an_edited_follow_up_still_states_its_delta_against_the_merged_issue(tmp_path):
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first case", ())])
+    gh.issues[1].update(state="closed", state_reason="completed")
+    first = _scenarios(tmp_path, gh, [("T-01", "first case", ()), ("T-02", "second", ())])
+    number = first["follow_ups"][0]["number"]
+    _scenarios(tmp_path, gh, [("T-01", "first case", ()), ("T-02", "second", ()),
+                              ("T-03", "third", ())])
+    delta = _changed(gh.issues[number]["body"])
+    assert "`T-02` — added" in delta and "`T-03` — added" in delta
