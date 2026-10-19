@@ -572,6 +572,25 @@ def test_an_order_github_already_holds_counts_as_wired(tmp_path):
     assert again["wired"] == [] and again["unwired"] == []
 
 
+class AlreadyLinkedUnread(AlreadyLinked):
+    """The native read that would have shown the links fails, so the press
+    asks for them again and GitHub answers 422."""
+
+    def blocked_by(self, repo, number):
+        raise GitHubError("GitHub answered 502", status=502)
+
+
+def test_a_422_already_taken_is_recorded_as_wired_not_unwired(tmp_path):
+    """796feb9: since the native read, only a failed read reaches the 422 --
+    and there it must still count as the order in place."""
+    gh = AlreadyLinkedUnread()
+    ship(tmp_path, gh)
+    _lose_records_after(tmp_path, 0)
+    result = ship(tmp_path, gh)
+    assert result["unwired"] == []
+    assert len(standing(tmp_path / "emissions.jsonl", REPO)[1]) == 2
+
+
 def test_progress_reaches_the_total_when_a_follow_up_is_adopted(tmp_path):
     """DARK showed 'processed' stopping short of the unit count: a follow-up
     adopted rather than created was processed but never counted."""
