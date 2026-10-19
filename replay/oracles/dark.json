@@ -1,0 +1,264 @@
+{
+  "project": "dark",
+  "snapshot": "C:/agents/teams/forge/analysis/dark-retro/snapshot/node",
+  "sources": "C:/agents/teams/forge/analysis/dark-retro/findings.jsonl (verify_note overrides happened), patterns.jsonl",
+  "about": "Hand-mapped faults from the DARK retrospective. expected_ids are the entries (or slice:<name>) the ideal gate for the ticket should flag; earliest_step_visible is the events.json seq from which every expected id is live and the fault is present in the graph. The harness refuses a case whose ids are missing, unborn or retired at that event.",
+  "cases": [
+    {
+      "finding_id": "u0401-1",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-35"],
+      "earliest_step_visible": 127,
+      "note": "S-35's body imports Observed from dark.inconsistency.apply, the module S-18's Module line declares (S-18 born 112); S-35 has no depends_on at all. Visible from S-35's birth until it retired at 1310 (cut 7)."
+    },
+    {
+      "finding_id": "u04-6",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-130"],
+      "earliest_step_visible": 1265,
+      "note": "S-130 imports RunStore/Record/DerivedStore (S·26/S·32/S·33) and Role/store_root (S·52) by id, depends_on is empty. The cited ids were already retired (into S-74/S-109/S-75/S-88), so the gate must resolve a body id to its live successor's module."
+    },
+    {
+      "finding_id": "u0508-4",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-259"],
+      "earliest_step_visible": 1757,
+      "note": "S-259's fixtures build source runs through dark/control/cell.py (S-250, live from 1724) and T-429 flies the loop; the contract names the loop 'in prose rather than as an edge' to avoid a slice cycle. Neither S-250 nor the loop entry is in depends_on."
+    },
+    {
+      "finding_id": "u0703-4",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-270"],
+      "earliest_step_visible": 1842,
+      "note": "S-270 lacks S-228 (dark/experiment/admissibility.py, live since 1669). The contract never states the call; it lives only in the T-287 scenario, so a gate reading S bodies alone cannot catch this one."
+    },
+    {
+      "finding_id": "u04-10",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-127"],
+      "earliest_step_visible": 1252,
+      "note": "T-664 (under S-127, born 1252) imports dark.metrics.catalogue (S-115 at the time) and dark.record.outcome (S-29); S-127 has no depends_on. S-127 sits in legibility, cross-cutting until event 1504, so no outbound depends_on was expressible at all (see the M8 case)."
+    },
+    {
+      "finding_id": "u0507-5",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-207"],
+      "earliest_step_visible": 1724,
+      "note": "S-207 imports 'Rates (S·cell)', an unresolved placeholder id; its tests import dark.control.cell, declared by S-250 from 1724. S-207's depends_on never gains S-250."
+    },
+    {
+      "finding_id": "u0701-2",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-264"],
+      "earliest_step_visible": 1832,
+      "note": "T-698 judges S-264 against the declaration in dark/estimation/filtered.py (S-268, born 1832); S-264 has no edge to it. S-264 retired at 1844."
+    },
+    {
+      "finding_id": "u0508-6",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-77"],
+      "earliest_step_visible": 1724,
+      "note": "T-447 needs dark.control.cell (S-250, from 1724) and the builders delegate to direct.py / filtered.py; S-77 depends only on S-34."
+    },
+    {
+      "finding_id": "u04-14",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-04"],
+      "earliest_step_visible": 105,
+      "note": "S-04's resolve.py imports schema.py (S-03); the body says 'Not expressible as an edge -- the same-slice depends_on restriction'. Both are in legibility, and today's rules admit a same-slice edge, so the gate flags the missing one."
+    },
+    {
+      "finding_id": "u0809-16",
+      "pattern_id": "muspec-spec-01",
+      "gate_ticket": "M2",
+      "expected_ids": ["S-308"],
+      "earliest_step_visible": 2016,
+      "note": "S-308's tests (T-575/T-576) can only run once S-305's dark/report/render.py exists (S-305 born 1994); S-308 has no depends_on to S-305."
+    },
+    {
+      "finding_id": "u0704-8",
+      "pattern_id": "muspec-spec-03",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-244"],
+      "earliest_step_visible": 1708,
+      "note": "S-244 names configs/thin.toml as the smallest admissible configuration; no Module line in the whole history declares that path (S-10/S-16/S-71 named it from 108)."
+    },
+    {
+      "finding_id": "u03-11",
+      "pattern_id": "muspec-spec-03",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-06"],
+      "earliest_step_visible": 105,
+      "note": "S-06 specifies the package surface in dark/config/__init__.py (T-93 checks it); no Module line ever declares dark/config/__init__.py."
+    },
+    {
+      "finding_id": "u04-9",
+      "pattern_id": "muspec-spec-03",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-127"],
+      "earliest_step_visible": 1250,
+      "note": "S-127 re-exports SweepConfig/ReportConfig through dark/config/__init__.py, which no Module line declares (verify_note: the 'no unit' claim came from the implementer, but the snapshot agrees)."
+    },
+    {
+      "finding_id": "u03-5",
+      "pattern_id": "muspec-spec-03",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-07"],
+      "earliest_step_visible": 106,
+      "note": "S-07 places the exit-code policy in dark/health/__main__.py while its Module line holds only verdict.py; the path is first declared by S-134 at 1304, which retires S-07 at 1305."
+    },
+    {
+      "finding_id": "m1207-2",
+      "pattern_id": "muspec-ship-16",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-278"],
+      "earliest_step_visible": 1882,
+      "note": "S-278 names .github/workflows/ci.yml (its lineage has since S-12 at 108); no Module line declares it -- S-287 later claims it in prose only."
+    },
+    {
+      "finding_id": "u0708-3",
+      "pattern_id": "muspec-spec-03",
+      "gate_ticket": "M3",
+      "expected_ids": ["S-31"],
+      "earliest_step_visible": 126,
+      "note": "S-31's contract has RunRegion.seal (region.py, S-25) call summarise and read.py (S-32) pass the summary through, but its Module line holds only events.py. The files are owned, by others: this is the 'in the declaring unit's write set when it modifies them' half of the gate."
+    },
+    {
+      "finding_id": "p09-7",
+      "pattern_id": "muspec-ship-23",
+      "gate_ticket": "M5",
+      "expected_ids": ["S-12"],
+      "earliest_step_visible": 108,
+      "note": "S-12 (project-health) depends_on S-08 (experiment-definition), both wave 0 and authored concurrently; the id was allocated to the other slice at commit. Lived from 108 to 113, before cut 1 -- only a per-amendment replay sees it."
+    },
+    {
+      "finding_id": "m1108-14",
+      "pattern_id": "muspec-ship-23",
+      "gate_ticket": "M5",
+      "expected_ids": ["A-11", "A-12", "A-13", "A-14", "A-15"],
+      "earliest_step_visible": 53,
+      "note": "The run-record session's first block depends_on project-health's A-05/A-06/A-08 (born 52), a wave-0 sibling being written at the same time; admitted sound. The finding counts five edges, the snapshot shows six on these five entries. Same event as m1103-1. A-11/A-12/A-15 retired at 55."
+    },
+    {
+      "finding_id": "u01-2",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-34", "S-69"],
+      "earliest_step_visible": 155,
+      "note": "S-34's sweep allows variant-name literals only in variant.py and the four variant modules; S-69 requires dark/config/schema.py to hold VARIANT_NAMES as a literal tuple. The sweep's test is T-347 (from 262)."
+    },
+    {
+      "finding_id": "u02-4",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-60", "S-116"],
+      "earliest_step_visible": 1212,
+      "note": "S-60's sweep fails any '.create(' under dark/metrics and dark/report; S-116 must memoise through Corpus.derived().create."
+    },
+    {
+      "finding_id": "u0708-5",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-114", "S-247", "S-271"],
+      "earliest_step_visible": 1844,
+      "note": "S-114's import allowlist refuses dark.record.facts/region and admits dark.record.read only in central.py and tuning.py; S-247 (anchor.py) and S-271 (central.py) require imports it refuses."
+    },
+    {
+      "finding_id": "u0707-2",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-285", "T-669"],
+      "earliest_step_visible": 1908,
+      "note": "S-285 tells loop.py to emit policy facts 'unless direct'; the variant-name sweep (T-669, successor of T-347) bans that literal in loop.py and the contract names no other discriminator."
+    },
+    {
+      "finding_id": "u0703-9",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-269", "T-669"],
+      "earliest_step_visible": 1840,
+      "note": "S-269's filtered.py defines _ekf/_ukf/_naive builders; the variant-naming sweep (T-669) allowlists only direct/ekf/ukf/central and forbids variant-name literals in filtered.py."
+    },
+    {
+      "finding_id": "u01-8",
+      "pattern_id": "muspec-spec-08",
+      "gate_ticket": "M7",
+      "expected_ids": ["S-23", "T-04"],
+      "earliest_step_visible": 221,
+      "note": "S-23 gives the AMBIENT regex as a literal containing 'urllib' and 'requests'; placed verbatim in determining.py it matches its own line under T-04's sweep. The sweep collides with the entry that declares it."
+    },
+    {
+      "finding_id": "m1104-2",
+      "pattern_id": "muspec-ship-16",
+      "gate_ticket": "M10",
+      "expected_ids": ["S-73", "S-77", "S-78", "S-97", "S-103"],
+      "earliest_step_visible": 285,
+      "note": "The live spec entries with no Module line at cut 3 (work_units event 285); 'complete' was true. The plan's '68 at cut 3' is not reproducible: verify_note says the figure is not in the records, 68 is cut 1's whole live S count, and the snapshot has no module-declaration history -- every other S body carried a Module line from birth."
+    },
+    {
+      "finding_id": "u0710-1",
+      "pattern_id": "muspec-spec-10",
+      "gate_ticket": "M4",
+      "expected_ids": ["S-196"],
+      "earliest_step_visible": 1605,
+      "note": "S-196 types FIGURES and regenerate() over Analysis; no live entry defines Analysis's module, fields or constructor."
+    },
+    {
+      "finding_id": "u0709-9",
+      "pattern_id": "muspec-spec-10",
+      "gate_ticket": "M4",
+      "expected_ids": ["S-195"],
+      "earliest_step_visible": 1603,
+      "note": "S-195 says a declared prediction naming a cell outside the space raises at construction (T-564) but defines no prediction type, constructor or exception."
+    },
+    {
+      "finding_id": "u0508-7",
+      "pattern_id": "muspec-spec-07",
+      "gate_ticket": "M6",
+      "expected_ids": ["S-77"],
+      "earliest_step_visible": 167,
+      "note": "S-77 declares ChannelSpec('command', '<f8', (cell.n_drones, 3)); Cell (S-38 at the time, later S-250) has no n_drones field."
+    },
+    {
+      "finding_id": "u0406-1",
+      "pattern_id": "muspec-spec-07",
+      "gate_ticket": "M6",
+      "expected_ids": ["S-251"],
+      "earliest_step_visible": 1726,
+      "note": "S-251 records truth.state as (n, 6), position and velocity, straight from plant.truth(); the Plant (S-87) returns S-13's Snapshot(t, positions) with no velocity (T-255 needs it too)."
+    },
+    {
+      "finding_id": "m1107-4",
+      "pattern_id": "muspec-spec-02",
+      "gate_ticket": "M8",
+      "expected_ids": ["slice:legibility"],
+      "earliest_step_visible": 48,
+      "note": "legibility is cross-cutting until the classification at 1504 although callers branch on what it returns (resolve, ConfigError, RunConfig): 23 of 56 A entries consume A-01. A ratification-time check flags the slice, not an entry."
+    },
+    {
+      "finding_id": "m1208-11",
+      "pattern_id": "muspec-ship-23",
+      "gate_ticket": "M9",
+      "expected_ids": ["A-145"],
+      "earliest_step_visible": 2103,
+      "note": "At cut 42 (work_units 2103) every gate was clean, yet A-145 requires every tuning to be reported and tune() had no caller: no S entry provides the observable."
+    },
+    {
+      "finding_id": "m1210-7",
+      "pattern_id": "muspec-ship-23",
+      "gate_ticket": "M9",
+      "expected_ids": ["B-44"],
+      "earliest_step_visible": 2103,
+      "note": "B-44's observable test is 'one documented command' producing a result; at cut 42 there was no study sweep, config or just recipe (verify_note: B-44's wording is not in the cited records, but it is the entry's own text in the snapshot)."
+    }
+  ]
+}
