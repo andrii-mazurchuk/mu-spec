@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1632,5 +1633,31 @@ def build_handler(
     return _Handler
 
 
+class _ExclusiveServer(ThreadingHTTPServer):
+    """A server that will not share its port.
+
+    The stdlib sets SO_REUSEADDR, and on Windows that lets a second process
+    bind a port that is already serving: two builds then split the requests,
+    and a stale one keeps answering after the kill caught only the other
+    (two processes on :9016, m1102-18). Where SO_EXCLUSIVEADDRUSE exists the
+    port is taken exclusively instead. Elsewhere SO_REUSEADDR never allows two
+    listeners, and keeping it lets a restart rebind past TIME_WAIT.
+    """
+
+    allow_reuse_address = not hasattr(socket, "SO_EXCLUSIVEADDRUSE")
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def make_server(
+    host: str, port: int, store: ProjectStore, prompts_dir: Path
+) -> ThreadingHTTPServer:
+    """Bound and ready. Raises OSError when the port is taken."""
+    return _ExclusiveServer((host, port), build_handler(store, prompts_dir))
+
+
 def serve(host: str, port: int, store: ProjectStore, prompts_dir: Path) -> None:
-    ThreadingHTTPServer((host, port), build_handler(store, prompts_dir)).serve_forever()
+    make_server(host, port, store, prompts_dir).serve_forever()

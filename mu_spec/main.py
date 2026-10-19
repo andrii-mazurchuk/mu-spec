@@ -69,7 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mu-spec serving on http://{args.host}:{args.port} (root: {root})")
     store = ProjectStore(root)
     root.mkdir(parents=True, exist_ok=True)
-    serve(args.host, args.port, store, Path(args.prompts_dir))
+    try:
+        serve(args.host, args.port, store, Path(args.prompts_dir))
+    except OSError as exc:
+        # Exit rather than share: a second server on a taken port leaves it
+        # unclear which store answers.
+        print(f"mu-spec cannot bind {args.host}:{args.port}: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

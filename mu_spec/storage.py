@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 from pathlib import Path
 
@@ -79,6 +80,10 @@ UNITS_FILE = "units.jsonl"
 # and the only reason a second run does not create every issue again -- so
 # unlike every other absence in this unit, an unreadable one is a hard error.
 EMISSIONS_FILE = "emissions.jsonl"
+# Directories a store may not be rooted in, os.pathsep-separated. The test
+# suite sets it to the real state dir (tests/conftest.py), so a test or a
+# seeding script it launches cannot open the live projects for writing.
+REFUSE_ROOTS_ENV = "MU_SPEC_REFUSE_ROOTS"
 MANIFEST_FILE = "manifest.json"
 
 # Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
@@ -410,6 +415,15 @@ class ProjectStore:
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
+        # A hard error, not a degrade: a seeding run aimed at the live store
+        # writes entries nobody asked for and burns identifiers for good.
+        resolved = self._root.resolve()
+        for refused in filter(None, os.environ.get(REFUSE_ROOTS_ENV, "").split(os.pathsep)):
+            if resolved.is_relative_to(Path(refused).resolve()):
+                raise ValueError(
+                    f"the store refuses {self._root}: it is inside {refused}, "
+                    f"which {REFUSE_ROOTS_ENV} marks as holding real projects"
+                )
 
     # -- projects -----------------------------------------------------------
 

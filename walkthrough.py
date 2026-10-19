@@ -27,10 +27,9 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from mu_spec.server import build_handler
+from mu_spec.server import make_server
 from mu_spec.storage import ProjectStore
 
 BASE = ""
@@ -147,9 +146,9 @@ def main(argv=None) -> int:
 
     server = None
     if args.http:
-        server = ThreadingHTTPServer(
-            ("127.0.0.1", args.port), build_handler(store, Path("prompts"))
-        )
+        # Refuses a taken port rather than sharing it with whatever server
+        # already holds it -- and holds a real store.
+        server = make_server("127.0.0.1", args.port, store, Path("prompts"))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         BASE = f"http://127.0.0.1:{args.port}"
         print(f"server up on {BASE}, storage at {root.resolve()}")
