@@ -837,3 +837,48 @@ def test_a_picked_up_issues_links_are_never_repaired(tmp_path):
     gh.issues[3]["labels"].append("cto:admitted")
     ship(tmp_path, gh)
     assert gh.issues[3]["blocked_by"] == {stale}
+
+
+# -- after the press: every order names a key a live issue carries -------------
+
+
+def test_a_blocker_whose_only_issue_was_closed_not_planned_is_reported_dead(tmp_path):
+    """DARK m1205-3 / m1206-1: keys whose only issue was closed `not_planned`
+    deadlocked ~30 units, and the press reported nothing -- the link pointed
+    where the record said, so it looked wired. A consumer treats a blocker
+    closed `not_planned` as never satisfied."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[2].update(state="closed", state_reason="not_planned")      # S-01
+    result = ship(tmp_path, gh)
+    assert [(d["blocked"], d["blocker"]) for d in result["dead"]] == [("S-02", "S-01")]
+    assert result["counts"]["dead"] == 1
+
+
+def test_a_blocker_closed_under_a_key_the_dependent_does_not_name_is_reported_dead(tmp_path):
+    """DARK s03-12 / m1206-5: #503 carried S-260-T, #643 waited on S-273-T
+    with no `blocked_by_was` naming the old key -- a key no issue carried."""
+    import json
+    gh = Tracker()
+
+    def press(was):
+        return emit(log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
+                    order=list(ORDER), edges=EDGES, waves=WAVES, horizon=None,
+                    fetch=lambda k: {**payload(k, EDGES.get(k, ())),
+                                     **({"follows_was": was} if k == "S-02" else {})},
+                    client=gh, now_fn=lambda: 1.0, pickup=PICKUP, project="dark")
+
+    press({})
+    body = gh.issues[2]["body"]
+    assert '"key": "S-01"' in body
+    gh.issues[2].update(state="closed", state_reason="completed",
+                        body=body.replace('"key": "S-01"', '"key": "S-00"'))
+    assert [d["blocker"] for d in press({})["dead"]] == ["S-01"]
+    assert press({"S-01": ["S-00"]})["dead"] == []
+
+
+def test_a_sound_press_reports_nothing_dead(tmp_path):
+    gh = Tracker()
+    assert ship(tmp_path, gh)["dead"] == []
+    gh.issues[1].update(state="closed", state_reason="completed")        # S-01-T merged
+    assert ship(tmp_path, gh)["dead"] == []

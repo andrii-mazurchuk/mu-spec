@@ -2984,6 +2984,7 @@ function shipTally(c){
     ${(c.held||0) ? box(c.held, "held for later waves", "quiet") : ""}
     ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
     ${box(c.unwired||0, "orders not declared", (c.unwired||0) ? "bad" : "")}
+    ${(c.dead||0) ? box(c.dead, "waiting on a dead key", "bad") : ""}
     ${/* "already out" is the standing count in the launch band; this is what
           THIS run passed over, which is a different number. Named apart, and
           omitted at zero -- an empty box for a non-problem is the kind of
@@ -3036,6 +3037,16 @@ function shipTrouble(r){
       failure that looks like nothing at all.</p>
       <table><tr><th>blocked</th><th>waits on</th><th>why</th></tr>` +
       r.unwired.map(u=>`<tr><td><code>${esc(u.blocked)}</code></td>
+        <td><code>${esc(u.blocker)}</code></td>
+        <td class="why">${esc(u.reason)}</td></tr>`).join("") + `</table></div>`;
+
+  if((r.dead||[]).length)
+    out += `<div class="trouble"><h3><span class="n">${r.dead.length}</span>
+      waiting on a dead key</h3>
+      <p>After the press, these open issues wait on a key no live issue carries,
+      or carries only closed not_planned. The consumer will never start them.</p>
+      <table><tr><th>blocked</th><th>waits on</th><th>why</th></tr>` +
+      r.dead.map(u=>`<tr><td><code>${esc(u.blocked)}</code></td>
         <td><code>${esc(u.blocker)}</code></td>
         <td class="why">${esc(u.reason)}</td></tr>`).join("") + `</table></div>`;
 
@@ -3369,7 +3380,7 @@ function watchEmission(){
         STATE.shipFlash = d.error
           ? {kind:"bad", text:"The run stopped — " + d.error}
           : c
-            ? {kind:(c.failed || c.unwired) ? "bad" : "ok",
+            ? {kind:(c.failed || c.unwired || c.dead) ? "bad" : "ok",
                text:"Shipped " + c.created + " issue" + (c.created===1?"":"s") +
                     (c.edited ? ", edited " + c.edited : "") +
                     (c.withdrawn ? ", withdrew " + c.withdrawn : "") +
@@ -3378,7 +3389,9 @@ function watchEmission(){
                     (c.skipped ? ", skipped " + c.skipped : "") +
                     (c.failed ? ". " + c.failed + " failed" : "") +
                     (c.unwired ? ". " + c.unwired + " order" +
-                      (c.unwired===1?"":"s") + " could not be declared" : "") + "."}
+                      (c.unwired===1?"":"s") + " could not be declared" : "") +
+                    (c.dead ? ". " + c.dead + " wait" + (c.dead===1?"s":"") +
+                      " on a dead key" : "") + "."}
             : {kind:"bad", text:(d.result && d.result.reason) || "The run did nothing."};
         if(MODE_SHIP()) drawShip();
         // The cut and the graph did not move, but the log did, so re-read
@@ -3404,7 +3417,7 @@ function shipDot(){
   const e = STATE.emission;
   if(!e){ $("sdot").hidden = true; return; }
   const c = (e.result && e.result.counts) || null;
-  $("sdot").hidden = !(e.running || e.error || (c && (c.failed || c.unwired)));
+  $("sdot").hidden = !(e.running || e.error || (c && (c.failed || c.unwired || c.dead)));
 }
 
 

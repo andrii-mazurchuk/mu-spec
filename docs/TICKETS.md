@@ -103,6 +103,12 @@ Pressing Ship compares the current cut with what is live, and acts per unit:
   issue nobody picked up, adds what is missing, and removes links to *our* issues
   (`mu-spec:` label) the cut does not want. Links to anyone else's issues are kept;
   a picked-up issue's links are never touched.
+- **Checked after the press, as a consumer reads it.** Every blocker an open, unpicked
+  issue of ours names must be carried -- under that key or one `blocked_by_was` lists
+  for it -- by an issue that is open or closed `completed`. Anything else is reported
+  in `dead` and the press shows as failed (DARK: ~30 units behind keys whose only issue
+  was closed `not_planned`; S-273 behind a key no issue carried). A closed blocker
+  costs one read; an open one costs none.
 - **Read before writing, and read again after.** Each edit or close re-reads the issue
   immediately before writing. Afterwards it reads once more. If a pickup label appeared
   in that gap, the result reports the issue as **edited during admission**. The

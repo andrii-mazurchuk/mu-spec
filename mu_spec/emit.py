@@ -733,7 +733,9 @@ def emit(
     creating a second -- a press that died before writing its record left
     issues nobody here knew about. At the end, an open issue of ours that no
     key owns and nobody picked up is closed `not_planned` (`swept`). The
-    record is written even when the press dies part-way.
+    record is written even when the press dies part-way. Last, every order an
+    open issue declares is checked against what the tracker holds: one waiting
+    on a key no open or `completed` issue carries is reported in `dead`.
     """
     live, wired_before = standing(log_path, repo, renamed)
 
@@ -794,6 +796,11 @@ def emit(
     wired: list[dict] = []
     unwired: list[dict] = []
     removed: list[dict] = []
+    dead: list[dict] = []
+    # The payload each key was rendered from, and every issue state read.
+    asks: dict[str, dict] = {}
+    seen: dict[int, dict] = {}
+    open_labels: dict[int, list] = {}
     issues: dict[str, dict] = dict(live)
     # Issues whose dependencies are frozen: picked up, or unreadable.
     frozen: set[str] = set()
@@ -834,6 +841,7 @@ def emit(
         that blocker's old key is closed `completed` for work the follow-up has
         not done, and a consumer reading the old key would count it done."""
         unit = fetch(key)
+        asks[key] = unit
         was = unit.get("follows_was") if isinstance(unit, dict) else None
         if was:
             kept = {}
@@ -850,13 +858,62 @@ def emit(
                 if own in v:
                     kept[k] = v[:v.index(own) + 1]
             unit = {**unit, "follows_was": kept}
+            asks[key] = unit
         return unit
 
     def look(key: str) -> "tuple[str | None, dict]":
         if not pickup:
             return ("no pickup labels are configured, so an issue somebody "
                     "picked up cannot be told from one nobody has -- left alone"), {}
-        return _touched(client, repo, issues[key].get("number"), pickup)
+        why, state = _touched(client, repo, issues[key].get("number"), pickup)
+        if state:
+            seen[int(issues[key]["number"])] = state
+        return why, state
+
+    def verify(open_now: set[int]) -> None:
+        """After the press, as a consumer would read it: every blocker an open,
+        unpicked issue of ours names must be carried -- under that key or one
+        `blocked_by_was` lists for it -- by an issue that is open or closed
+        `completed`. Anything else waits forever, and on DARK it did (~30 units
+        behind keys whose only issue was closed `not_planned`; S-273 behind a
+        key no issue carried) while the press reported nothing."""
+        for blocked in order:
+            mine = issues.get(blocked)
+            if (not mine or blocked in frozen or blocked not in asks
+                    or int(mine.get("number") or 0) not in open_now
+                    or any(l in pickup for l in open_labels.get(int(mine["number"]), ()))):
+                continue
+            was = asks[blocked].get("follows_was") or {}
+            for blocker in asks[blocked].get("follows") or ():
+                names = {blocker, *was.get(blocker, ())}
+                why = f"no issue carries {blocker}"
+                for name in sorted(names):
+                    number = int((issues.get(name) or {}).get("number") or 0)
+                    if not number:
+                        continue
+                    if number in open_now:
+                        why = None
+                        break
+                    state = seen.get(number)
+                    if state is None:
+                        try:
+                            state = seen[number] = client.issue_state(repo, number)
+                        except (GitHubError, AttributeError) as exc:
+                            why = f"#{number} could not be read to check it: {exc}"
+                            continue
+                    carried = _machine_block(state.get("body") or "").get("key") or name
+                    if state.get("state") == "open" or (
+                            state.get("state_reason") == "completed"
+                            and canonical_key(str(carried)) in names):
+                        why = None
+                        break
+                    why = (f"#{number} is closed {state.get('state_reason') or 'closed'}"
+                           if state.get("state_reason") != "completed" else
+                           f"#{number} was closed completed as {carried}, a key "
+                           f"{blocked} does not name for it")
+                if why:
+                    dead.append({"blocked": blocked, "number": mine["number"],
+                                 "blocker": blocker, "reason": why})
 
     def after(key: str, what: str) -> None:
         """The second read. The consumer admits by labelling first and reading
@@ -1155,6 +1212,10 @@ def emit(
                     swept.append({"key": key, "number": n, "url": issue.get("url", "")})
                     tick("sweeping")
 
+        if ours is not None:
+            verify((open_numbers | {int(i["number"]) for i in created + follow_ups})
+                   - set(closed.values()) - {int(s["number"]) for s in swept})
+
     finally:
         # Recorded even when the run went badly: otherwise a re-run duplicates the
         # issues that DID land, which is the one thing the guard exists to stop.
@@ -1190,6 +1251,7 @@ def emit(
         "wired": wired,
         "unwired": unwired,
         "removed": removed,
+        "dead": dead,
         "counts": {
             "units": len(order),
             "created": len(created),
@@ -1207,5 +1269,6 @@ def emit(
             "wired": len(wired),
             "unwired": len(unwired),
             "removed": len(removed),
+            "dead": len(dead),
         },
     }
