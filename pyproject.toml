@@ -17,6 +17,11 @@ mu-spec = "mu_spec.main:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# `replay/` is test tooling beside the package, not part of it: importable by
+# the suite, never shipped in the wheel.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [tool.setuptools.packages.find]
 include = ["mu_spec*"]
 
