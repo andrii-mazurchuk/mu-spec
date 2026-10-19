@@ -32,3 +32,6 @@ uv.lock
 
 # Windows crash dumps from the shell, never source
 sh.exe.stackdump
+
+# hookify tripwires from the trust kit -- local, per machine (kit convention)
+.claude/*.local.md
