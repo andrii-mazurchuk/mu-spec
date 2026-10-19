@@ -37,6 +37,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from mu_spec.identifiers import BEHAVIOUR, INTENT, TEST
+
 INBOX_FILE = "inbox.jsonl"
 
 PENDING = "pending"
@@ -60,21 +62,21 @@ TYPES: dict[str, MessageType] = {
     for t in (
         MessageType(
             "initiate",
-            ("I",),
+            (INTENT,),
             True,
             "Start a new project. The body is the raw idea; the agent "
             "interviews for the rest before any intent entry is written.",
         ),
         MessageType(
             "feature",
-            ("I",),
+            (INTENT,),
             False,
             "Ask for something the product does not do yet. Originates at "
             "intent, because a new capability is a new requirement.",
         ),
         MessageType(
             "correction",
-            ("I", "B"),
+            (INTENT, BEHAVIOUR),
             False,
             "Say that something is wrong. Originates at intent (we "
             "misunderstood what you wanted) or behaviour (we understood you "
@@ -84,7 +86,7 @@ TYPES: dict[str, MessageType] = {
         ),
         MessageType(
             "verification",
-            ("T",),
+            (TEST,),
             False,
             "Ask for the scenarios that would falsify part of the design. "
             "Originates at test, which is not an exception to the rule that "

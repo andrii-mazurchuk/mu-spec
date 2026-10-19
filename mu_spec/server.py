@@ -27,7 +27,7 @@ from mu_spec import (
     dashboard, docs, emit as emitting, github, lifecycle as lc, service,
 )
 from mu_spec.service import ServiceError
-from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES
+from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES, SEPARATOR_CLASS
 from mu_spec.inbox import Inbox, InboxError, TYPES
 from mu_spec.issues import KINDS as ISSUE_KINDS, STATUSES as ISSUE_STATUSES
 from mu_spec.issues import IssueError, IssueLog
@@ -35,6 +35,7 @@ from mu_spec.lifecycle import Lifecycle
 from mu_spec.shipping import ship
 from mu_spec.storage import SLICE_TYPES
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
+from mu_spec.units import SUFFIX_PATTERN
 
 UNIT_NAME = "mu-spec"
 PROMPT_TIERS = ("default", "reference", "wayfinding", "insights")
@@ -48,7 +49,7 @@ HTML = "text/html; charset=utf-8"
 # route must still resolve an identifier written the old way: a link in an
 # issue created before the separator changed, or a bookmark, is a URL
 # somebody still has.
-_ID = r"[A-Z][-·][0-9]+(?:[-:]T)?"
+_ID = rf"[A-Z]{SEPARATOR_CLASS}[0-9]+{SUFFIX_PATTERN}?"
 _P = r"(?P<project>[A-Za-z0-9_-]+)"
 
 

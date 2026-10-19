@@ -30,7 +30,8 @@ from __future__ import annotations
 
 from mu_spec.graph import Graph
 from mu_spec.identifiers import (
-    TEST,
+    BEHAVIOUR,
+    UNSLICED,
     InvalidIdentifier,
     Identifier,
     parse,
@@ -40,8 +41,6 @@ from mu_spec.metrics import structural
 from mu_spec.slice_gates import STALE_EMISSION, edge_gates, slice_gates
 from mu_spec.storage import SLICE, Manifest, Slice
 from mu_spec.waves import schedule
-
-BEHAVIOUR = "B"
 
 
 def candidates(graph: Graph, layer: str = BEHAVIOUR) -> dict:
@@ -170,22 +169,16 @@ def score(
     sched = schedule(prospective, graph)
     metrics = structural(prospective, graph)
 
-    # Two layers are unsliced BY DESIGN and must not be counted as homeless.
-    # Intent, because slicing happens after behaviour and an intent entry
-    # never had a slice to lose. Tests, because §4b.1a stores them flat and
-    # joins them to nothing -- a scenario's column is the column of the
-    # contract it judges, resolved on read rather than recorded.
-    #
-    # The intent exclusion was here from the start and the test layer
-    # arrived later without it, so a project with scenarios reported every
-    # one of them as an entry that would have nowhere to live: the correct
-    # state, described as a defect, and loud enough to bury the real
-    # warnings underneath it.
-    UNSLICED_BY_DESIGN = ("I", TEST)
+    # The layers unsliced BY DESIGN (identifiers.UNSLICED) must not be
+    # counted as homeless. The intent exclusion was here from the start and
+    # the test layer arrived later without it, so a project with scenarios
+    # reported every one of them as an entry that would have nowhere to live:
+    # the correct state, described as a defect, and loud enough to bury the
+    # real warnings underneath it. Hence the shared constant.
     unassigned = [
         str(e.id)
         for e in graph.entries()
-        if e.id.layer not in UNSLICED_BY_DESIGN
+        if e.id.layer not in UNSLICED
         and prospective.slice_of(e.id) is None
     ]
 

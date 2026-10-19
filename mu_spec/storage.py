@@ -36,16 +36,21 @@ from pathlib import Path
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     ALL_LAYERS,
+    BEHAVIOUR,
+    IMPLEMENTED,
+    INTENT,
+    LAYER_NAMES,
     LAYERS,
     TEST,
+    UNSLICED,
     Identifier,
     InvalidIdentifier,
     parse,
     sort_key,
 )
 
-INTENT_LAYER = "I"
-LAYER_DIRS = {"B": "behaviour", "A": "architecture", "S": "spec"}
+# The sliced layers, one directory each, named after the layer.
+LAYER_DIRS = {l: LAYER_NAMES[l] for l in ALL_LAYERS if l not in UNSLICED}
 INTENT_FILE = "intent.jsonl"
 # Tests are stored flat, like intent, and for a related reason: they have no
 # slice. A test's column is its parent spec entry's, which is derivable from
@@ -74,8 +79,6 @@ UNITS_FILE = "units.jsonl"
 # and the only reason a second run does not create every issue again -- so
 # unlike every other absence in this unit, an unreadable one is a hard error.
 EMISSIONS_FILE = "emissions.jsonl"
-BEHAVIOUR_LAYER = "B"
-SPEC_LAYER = "S"
 MANIFEST_FILE = "manifest.json"
 
 # Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
@@ -427,7 +430,7 @@ class ProjectStore:
         path = self._root / project
         if (path / MANIFEST_FILE).exists():
             raise FileExistsError(f"project {project!r} already exists")
-        for sub in ("behaviour", "architecture", "spec", "history"):
+        for sub in (*LAYER_DIRS.values(), "history"):
             (path / sub).mkdir(parents=True, exist_ok=True)
         (path / INTENT_FILE).write_text("", encoding="utf-8")
         (path / TESTS_FILE).write_text("", encoding="utf-8")
@@ -533,7 +536,7 @@ class ProjectStore:
                 identifier = parse(str(raw))
             except InvalidIdentifier as exc:
                 raise ValueError(str(exc)) from exc
-            if identifier.layer not in (SPEC_LAYER, TEST):
+            if identifier.layer not in IMPLEMENTED:
                 raise ValueError(
                     f"{identifier} is at {identifier.layer_name}; a module "
                     "implements spec entries or test entries, not the layers "
@@ -587,12 +590,12 @@ class ProjectStore:
 
     def _file_for(self, project: str, layer: str, slice_name: str | None) -> Path:
         path = self._project_dir(project)
-        if layer == INTENT_LAYER:
+        if layer == INTENT:
             return path / INTENT_FILE
         if layer == TEST:
             return path / TESTS_FILE
         if not slice_name:
-            if layer == BEHAVIOUR_LAYER:
+            if layer == BEHAVIOUR:
                 return path / LAYER_DIRS[layer] / HOLDING_FILE
             raise ValueError(f"layer {layer!r} is sliced -- a slice name is required")
         return path / LAYER_DIRS[layer] / f"{slice_name}.jsonl"
@@ -651,7 +654,7 @@ class ProjectStore:
 
         Idempotent, and safe to call when there is nothing to move.
         """
-        path = self._project_dir(project) / LAYER_DIRS[BEHAVIOUR_LAYER] / HOLDING_FILE
+        path = self._project_dir(project) / LAYER_DIRS[BEHAVIOUR] / HOLDING_FILE
         held = self._read_file(path)
         if not held:
             return []
@@ -667,7 +670,7 @@ class ProjectStore:
         if not moving:
             return []
         for name, entries in moving.items():
-            target = self._file_for(project, BEHAVIOUR_LAYER, name)
+            target = self._file_for(project, BEHAVIOUR, name)
             existing = self._read_file(target)
             have = {e.id for e in existing}
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -777,7 +780,7 @@ class ProjectStore:
         # the graph refused to load: "identifier B-43 used twice".
         entries = {e.id: e for e in self.load_all(project)}
         for layer in {i.layer for i in moving} & set(LAYER_DIRS):
-            if layer == BEHAVIOUR_LAYER:
+            if layer == BEHAVIOUR:
                 # Whatever this rewrite places in a slice file leaves the
                 # holding file, or it is held twice.
                 placed = manifest.slices[source].members | moving

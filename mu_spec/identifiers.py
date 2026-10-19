@@ -23,7 +23,16 @@ import re
 # means toward intent. Code is deliberately not a layer here -- it is
 # represented by module backlinks to spec identifiers, not by entries in this
 # graph, so it has no identifiers of its own to allocate.
-LAYERS = ("I", "B", "A", "S")
+#
+# These are the ONLY place a layer is spelled. Every other module imports
+# them: a hand-written `"S"` or `("I", "B")` elsewhere is a second copy of
+# this set, and when the test layer arrived the copies were what it failed
+# to reach (tests/test_layer_set.py enforces it).
+INTENT = "I"
+BEHAVIOUR = "B"
+ARCHITECTURE = "A"
+SPEC = "S"
+LAYERS = (INTENT, BEHAVIOUR, ARCHITECTURE, SPEC)
 
 # Tests are a valid layer that is deliberately NOT in the derivation chain.
 #
@@ -40,16 +49,25 @@ LAYERS = ("I", "B", "A", "S")
 # else uses. Hence a depth past the end of the chain rather than a place in
 # it.
 TEST = "T"
-SPEC = "S"
 ALL_LAYERS = LAYERS + (TEST,)
 
 LAYER_NAMES = {
-    "I": "intent",
-    "B": "behaviour",
-    "A": "architecture",
-    "S": "spec",
-    "T": "test",
+    INTENT: "intent",
+    BEHAVIOUR: "behaviour",
+    ARCHITECTURE: "architecture",
+    SPEC: "spec",
+    TEST: "test",
 }
+
+# Unsliced BY DESIGN. Intent, because slicing happens after behaviour and an
+# intent entry never had a slice to lose. Tests, because a scenario's column
+# is the column of the contract it judges, resolved on read through its
+# parent rather than recorded. Every other layer belongs to exactly one slice.
+UNSLICED = (INTENT, TEST)
+
+# The kinds a module may implement, and so the kinds planned into work
+# units. Everything above spec is carried down by derivation, not built.
+IMPLEMENTED = (SPEC, TEST)
 
 # ASCII HYPHEN-MINUS. It was U+00B7 MIDDLE DOT, which the design doc is
 # written in and which read beautifully, and that is the whole of the case
@@ -73,7 +91,13 @@ SEPARATOR = "-"
 # data is written in ASCII, and the two are the same identifier.
 LEGACY_SEPARATOR = "·"
 
-_PATTERN = re.compile(rf"^([A-Z])[{SEPARATOR}{LEGACY_SEPARATOR}]([0-9]+)$")
+# Either spelling, as a regex character class -- for the places that must find
+# an identifier inside text or a URL rather than parse one they were handed.
+# Spelling the separator there by hand is what broke four things at once when
+# it changed (tests/test_layer_set.py bans it outside this module and units).
+SEPARATOR_CLASS = "[" + re.escape(SEPARATOR + LEGACY_SEPARATOR) + "]"
+
+_PATTERN = re.compile(rf"^([A-Z]){SEPARATOR_CLASS}([0-9]+)$")
 
 # Rendered width of the number. Purely cosmetic -- `A-07` is how the design
 # doc writes it, and spines are read by humans -- and never used for parsing

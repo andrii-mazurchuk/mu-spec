@@ -47,17 +47,17 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from pathlib import Path
 from typing import Callable
 
 from mu_spec.graph import Graph
 from mu_spec.identifiers import (
-    TEST, Identifier, InvalidIdentifier, parse, sort_key,
+    SPEC, TEST, Identifier, InvalidIdentifier, parse, sort_key,
 )
 from mu_spec.storage import Manifest
 from mu_spec.waves import Schedule, schedule_edges
 
-SPEC = "S"
 # What marks a test unit's key apart from its implementation unit's. Both are
 # anchored to the same spec entry, so the anchor alone does not name them.
 # `-T`, not `:T`. A colon is illegal in a git ref, so a key spelled `S-76-T`
@@ -70,6 +70,8 @@ TEST_SUFFIX = "-T"
 # Read, never written, for the same reason the legacy separator is: a cut
 # taken before this change holds the old spelling.
 LEGACY_TEST_SUFFIX = ":T"
+# Either suffix, as a regex group, for a route that must match a key in a URL.
+SUFFIX_PATTERN = "(?:" + "|".join(map(re.escape, (TEST_SUFFIX, LEGACY_TEST_SUFFIX))) + ")"
 
 
 def is_test_key(key: str) -> bool:

@@ -43,7 +43,8 @@ from typing import Callable
 
 from mu_spec.github import GitHubError
 from mu_spec.render import BODY_LIMIT, LABEL_NAMESPACE, render
-from mu_spec.units import anchor_of, canonical_key
+from mu_spec.identifiers import ALL_LAYERS, SEPARATOR_CLASS
+from mu_spec.units import TEST_SUFFIX, anchor_of, canonical_key, is_test_key
 
 
 # Every line in the log carries a kind. An emission omits it, because the
@@ -453,7 +454,12 @@ def standing(
 
 # An identifier in a contract renumbers when its entry is superseded; that is a
 # rename, not a change to what is asked for.
-_IDENT = re.compile(r"\b[IBAST][·\-]\d+(?:-T)?\b")
+# Built from the shared constants, and matching exactly what the hand-written
+# `\b[IBAST][·\-]\d+(?:-T)?\b` did: a different mask changes every stored
+# fingerprint, and every closed issue would come back as a follow-up.
+_IDENT = re.compile(
+    rf"\b[{''.join(ALL_LAYERS)}]{SEPARATOR_CLASS}\d+(?:{re.escape(TEST_SUFFIX)})?\b"
+)
 
 
 # The section the renderer writes straight after the contract. The contract
@@ -766,7 +772,7 @@ def emit(
         # frontier, never past it. An implementation whose own tests are out
         # counts as waited on -- merged tests with no code are broken whether or
         # not anything follows it -- and brings only what it waits on.
-        mates = [k for k in order if k not in live and not k.endswith("-T") and f"{k}-T" in live]
+        mates = [k for k in order if k not in live and not is_test_key(k) and k + TEST_SUFFIX in live]
         allowed, stack = set(mates), [k for k in order if k in live] + mates
         while stack:
             for blocker in edges.get(stack.pop(), ()):

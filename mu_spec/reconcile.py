@@ -34,7 +34,7 @@ from __future__ import annotations
 import dataclasses
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import InvalidIdentifier, parse, sort_key
+from mu_spec.identifiers import TEST, InvalidIdentifier, parse, sort_key
 from mu_spec.issues import MAX_ROUNDS, SEMANTIC, Issue
 from mu_spec.storage import Manifest
 from mu_spec.waves import schedule
@@ -125,7 +125,7 @@ def route(
         except InvalidIdentifier:
             return None
         owned = manifest.slice_of(target)
-        if owned is None and target.layer == "T":
+        if owned is None and target.layer == TEST:
             # A test takes no slice; its column is its spec entry's. Read
             # through graph.get so a superseded test -- which is what fixing
             # the issue produces -- still resolves.

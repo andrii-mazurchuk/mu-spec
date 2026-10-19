@@ -33,10 +33,8 @@ from __future__ import annotations
 import dataclasses
 
 from mu_spec.graph import Graph
-from mu_spec.identifiers import Identifier, sort_key
+from mu_spec.identifiers import SPEC, Identifier, sort_key
 from mu_spec.storage import Manifest
-
-SPEC = "S"
 
 
 @dataclasses.dataclass(frozen=True)

@@ -33,6 +33,7 @@ import hashlib
 import json
 import re
 
+from mu_spec.identifiers import LEGACY_SEPARATOR, SEPARATOR
 from mu_spec.units import is_test_key
 
 # GitHub allows 256. A title is a line in a list, not a manifest, and a unit
@@ -142,7 +143,7 @@ def _labels(unit: dict) -> tuple[str, ...]:
 # REFERENCES as the ticket is rendered, so a reader is never shown two
 # spellings of one identifier and left wondering whether they are the same
 # thing. The graph keeps the bytes it was given.
-_LEGACY_REF = re.compile("([A-Z])\u00b7([0-9])")
+_LEGACY_REF = re.compile(rf"([A-Z]){re.escape(LEGACY_SEPARATOR)}([0-9])")
 
 
 def _respell(text: str) -> str:
@@ -156,7 +157,7 @@ def _respell(text: str) -> str:
     """
     parts = text.split("```")
     return "```".join(
-        piece if index % 2 else _LEGACY_REF.sub(r"\1-\2", piece)
+        piece if index % 2 else _LEGACY_REF.sub(lambda m: m[1] + SEPARATOR + m[2], piece)
         for index, piece in enumerate(parts)
     )
 

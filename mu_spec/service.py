@@ -31,6 +31,7 @@ from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, STRANDED, admission_gates
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     ALL_LAYERS,
+    SPEC,
     TEST,
     Identifier,
     InvalidIdentifier,
@@ -1000,7 +1001,7 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
 
     members = manifest.slices[slice_name].members
     write_set = [
-        e for e in graph.entries() if e.id.layer == "S" and e.id in members
+        e for e in graph.entries() if e.id.layer == SPEC and e.id in members
     ]
 
     justification: dict[str, list[dict]] = {}
@@ -1019,7 +1020,7 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
         if dep_slice is None:
             continue
         for entry in graph.entries():
-            if entry.id.layer == "S" and entry.id in dep_slice.members:
+            if entry.id.layer == SPEC and entry.id in dep_slice.members:
                 view = _entry_view(entry, full=False)
                 view["slice"] = dep
                 read_set.append(view)
@@ -1050,7 +1051,7 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
             continue
         members = manifest.slices[name].members
         for entry in graph.entries():
-            if entry.id.layer == "S" and entry.id in members:
+            if entry.id.layer == SPEC and entry.id in members:
                 view = _entry_view(entry, full=False)
                 view["slice"] = name
                 cross.append(view)
@@ -1117,7 +1118,7 @@ def cut_units(
             "no module map every entry is unimplemented and no unit has "
             "anything to write",
             "unimplemented": [
-                str(e.id) for e in graph.entries() if e.id.layer == units.SPEC
+                str(e.id) for e in graph.entries() if e.id.layer == SPEC
             ],
         }
 
@@ -1200,7 +1201,7 @@ def _verification(graph: Graph, projection, unit) -> dict:
     ready: list[dict] = []
     pending: list[str] = []
     for identifier in unit.entries:
-        if identifier.layer != units.SPEC:
+        if identifier.layer != SPEC:
             continue
         for child in graph.children(identifier):
             if child.layer != TEST:
@@ -1377,7 +1378,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
         for identifier_ in sorted(manifest.slices[name].members, key=sort_key):
             # Live only: a superseded entry keeps its membership, and handing
             # it out beside its successor offers two contracts as binding.
-            if identifier_ not in graph or identifier_.layer != units.SPEC:
+            if identifier_ not in graph or identifier_.layer != SPEC:
                 continue
             view = _entry_view(graph.get(identifier_), full=False)
             view["slice"] = name
@@ -2064,7 +2065,7 @@ def list_modules(store: ProjectStore, project: str) -> dict:
         "untested": [
             str(e.id)
             for e in graph.entries()
-            if e.id.layer == "S"
+            if e.id.layer == SPEC
             and not any(c.layer == TEST for c in graph.children(e.id))
         ],
         # A test file judging a contract nobody built. Ordinary while tests
@@ -2112,7 +2113,7 @@ def get_plan(store: ProjectStore, project: str, since: Any) -> dict:
         # Pass this back as `since` next time. The counter, not a timestamp:
         # identifiers are allocated in creation order and never reused, so
         # the mark means exactly one thing forever.
-        "mark": manifest.allocation.get("S", 0),
+        "mark": manifest.allocation.get(SPEC, 0),
         "issued": True,
         **result,
     }
@@ -2177,7 +2178,7 @@ def unit_metrics(
         unimplemented += sum(
             1
             for e in graph.entries()
-            if e.id.layer == "S" and not manifest.implementers(e.id)
+            if e.id.layer == SPEC and not manifest.implementers(e.id)
         )
         report = _gate_report(graph, manifest)
         sound += 1 if report["sound"] else 0
