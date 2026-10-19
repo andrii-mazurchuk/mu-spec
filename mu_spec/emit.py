@@ -44,7 +44,7 @@ from typing import Callable
 
 from mu_spec.github import GitHubError
 from mu_spec.render import BODY_LIMIT, LABEL_NAMESPACE, render
-from mu_spec.identifiers import ALL_LAYERS, SEPARATOR_CLASS
+from mu_spec.identifiers import ALL_LAYERS, LEGACY_SEPARATOR, SEPARATOR, SEPARATOR_CLASS
 from mu_spec.units import TEST_SUFFIX, anchor_of, canonical_key, is_test_key
 
 
@@ -517,7 +517,7 @@ def _follow_up(ticket, of: int, delta: str = "") -> "tuple[str, str]":
 
 
 # An entry's heading in a rendered `## Contract`, as render writes it.
-_ENTRY_HEAD = re.compile(r"^### ([IBAST][·\-]\d+) — ", re.M)
+_ENTRY_HEAD = re.compile(rf"^### ([{''.join(ALL_LAYERS)}]{SEPARATOR_CLASS}\d+) — ", re.M)
 
 
 def _entries_of(body: str) -> dict[str, str]:
@@ -525,7 +525,7 @@ def _entries_of(body: str) -> dict[str, str]:
     text = (body or "").replace("\r\n", "\n")
     _, found, rest = text.partition("## Contract")
     parts = _ENTRY_HEAD.split(rest.split(_AFTER_CONTRACT, 1)[0]) if found else []
-    return {parts[i].replace("·", "-"): parts[i + 1].strip()
+    return {parts[i].replace(LEGACY_SEPARATOR, SEPARATOR): parts[i + 1].strip()
             for i in range(1, len(parts) - 1, 2)}
 
 
