@@ -39,6 +39,46 @@ from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 from mu_spec.units import SUFFIX_PATTERN
 
 UNIT_NAME = "mu-spec"
+
+# Which build this process is. The deploy injects it where the image carries
+# no .git; a checkout is read directly. Nothing runs git -- this unit spawns
+# no processes.
+GIT_SHA_ENV = "MU_SPEC_GIT_SHA"
+_CHECKOUT = Path(__file__).resolve().parent.parent
+
+
+def git_sha(checkout: Path = _CHECKOUT) -> str | None:
+    """The commit this code was served from, or None when that is not known.
+
+    Reads HEAD, a worktree's `.git` pointer, loose refs and packed-refs.
+    Anything unreadable or unexpected is None: absence is normal here.
+    """
+    if os.environ.get(GIT_SHA_ENV):
+        return os.environ[GIT_SHA_ENV].strip()
+    try:
+        git = checkout / ".git"
+        if git.is_file():
+            prefix, _, target = git.read_text(encoding="utf-8").partition(":")
+            if prefix.strip() != "gitdir":
+                return None
+            git = Path(target.strip())
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref: "):
+            return head or None
+        ref = head[len("ref: "):]
+        common = git
+        if (git / "commondir").is_file():
+            common = git / (git / "commondir").read_text(encoding="utf-8").strip()
+        for base in (git, common):
+            if (base / ref).is_file():
+                return (base / ref).read_text(encoding="utf-8").strip() or None
+        for line in (common / "packed-refs").read_text(encoding="utf-8").splitlines():
+            sha, _, name = line.partition(" ")
+            if name.strip() == ref:
+                return sha
+    except (OSError, UnicodeDecodeError):
+        pass
+    return None
 PROMPT_TIERS = ("default", "reference", "wayfinding", "insights")
 
 JSON = "application/json"
@@ -1186,6 +1226,7 @@ def handle(
     runs: emitting.Runs | None = None,
     emit_client=None,
     identity_client=None,
+    sha_fn: Callable[[], str | None] = git_sha,
 ) -> tuple[int, str, str]:
     """Resolve one request to (status, content_type, body)."""
     parsed = urlparse(raw_path)
@@ -1257,7 +1298,14 @@ def handle(
                     {
                         "unit": UNIT_NAME,
                         "computed_at": now_fn(),
-                        "metrics": service.unit_metrics(store, inbox, issues),
+                        "metrics": {
+                            **service.unit_metrics(store, inbox, issues),
+                            # Which store answers and which build: several
+                            # instances once ran at once, and sessions
+                            # verified against the wrong one.
+                            "store_root": str(store.root().resolve()),
+                            "git_sha": sha_fn(),
+                        },
                     }
                 ),
             )

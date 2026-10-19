@@ -105,7 +105,10 @@ fetch HTML in place of the data behind it.
 `/stats` carries **already-processed** aggregates — counts per layer, how
 many projects are sound, mean change locality, where corrections entered —
 with no text and no per-item detail. An analytical unit reads it without
-knowing anything about how this unit works. Everything richer is a
+knowing anything about how this unit works. The two exceptions identify the
+process rather than describe the graph: `store_root`, the directory it
+serves, and `git_sha`, the build it runs (`MU_SPEC_GIT_SHA` when the deploy
+injects it, else read from the checkout, else `null`). Everything richer is a
 registered tool, reachable by an agent rather than by a scrape.
 
 There is no `/metrics` endpoint: the standard defines `/stats` with a
