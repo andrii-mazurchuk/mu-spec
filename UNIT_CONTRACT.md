@@ -107,8 +107,8 @@ many projects are sound, mean change locality, where corrections entered —
 with no text and no per-item detail. An analytical unit reads it without
 knowing anything about how this unit works. The two exceptions identify the
 process rather than describe the graph: `store_root`, the directory it
-serves, and `git_sha`, the build it runs (`MU_SPEC_GIT_SHA` when the deploy
-injects it, else read from the checkout, else `null`). Everything richer is a
+serves, and `git_sha`, the build it runs (`HOLONIC_GIT_SHA`, the pin the node
+injects into every unit, else read from the checkout, else `null`). Everything richer is a
 registered tool, reachable by an agent rather than by a scrape.
 
 There is no `/metrics` endpoint: the standard defines `/stats` with a

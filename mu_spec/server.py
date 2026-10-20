@@ -43,7 +43,7 @@ UNIT_NAME = "mu-spec"
 # Which build this process is. The deploy injects it where the image carries
 # no .git; a checkout is read directly. Nothing runs git -- this unit spawns
 # no processes.
-GIT_SHA_ENV = "MU_SPEC_GIT_SHA"
+GIT_SHA_ENV = "HOLONIC_GIT_SHA"
 _CHECKOUT = Path(__file__).resolve().parent.parent
 
 

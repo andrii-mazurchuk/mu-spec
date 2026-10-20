@@ -88,6 +88,11 @@ def test_an_injected_sha_wins_where_there_is_no_checkout(tmp_path, monkeypatch):
     assert git_sha(tmp_path) == SHA
 
 
+def test_the_sha_is_read_from_the_name_the_node_injects():
+    """The node gives every unit its deployed pin under one system-wide name."""
+    assert GIT_SHA_ENV == "HOLONIC_GIT_SHA"
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 def test_the_sha_of_this_checkout_is_what_git_says(monkeypatch):
     """Driven against the real checkout -- a worktree when run from one."""
