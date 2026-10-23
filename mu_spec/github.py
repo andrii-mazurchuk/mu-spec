@@ -47,7 +47,7 @@ API_VERSION = "2026-03-10"
 # GitHub rejects requests without one.
 USER_AGENT = "mu-spec"
 
-# Seconds to wait before every write, by default.
+# Seconds to wait before every write (never a read), by default.
 #
 # GitHub rate-limits content creation *secondarily* -- separately from the
 # 5000/hour budget, and specifically against bursts. An emission of `dark` is
@@ -392,7 +392,9 @@ class GitHub:
     def _send(self, request) -> dict:
         last: GitHubError | None = None
         for attempt in range(self._attempts):
-            if self._pace:
+            # Writes only: the secondary limit is on content creation, and
+            # pacing reads cost an unmoved DARK press 193 seconds of sleep.
+            if self._pace and request.get_method() != "GET":
                 self._sleep(self._pace)
             try:
                 with self._opener(request, timeout=self._timeout) as response:

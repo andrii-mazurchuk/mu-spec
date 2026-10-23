@@ -73,6 +73,7 @@ class Tracker:
                 for n in sorted(self.issues[number]["blocked_by"])]
 
     def issue_state(self, repo, number):
+        self.calls.append(("state", number))
         if number in self.fail_reads:
             raise GitHubError("GitHub answered 502", status=502)
         issue = self.issues[number]
@@ -109,7 +110,7 @@ class Tracker:
 
     # -- what a test reads --
     def writes(self):
-        return [c for c in self.calls if c[0] not in ("read", "list")]
+        return [c for c in self.calls if c[0] not in ("read", "list", "state")]
 
     def open_numbers(self):
         return sorted(n for n, i in self.issues.items() if i["state"] == "open")
@@ -957,3 +958,85 @@ def test_an_edited_follow_up_still_states_its_delta_against_the_merged_issue(tmp
                               ("T-03", "third", ())])
     delta = _changed(gh.issues[number]["body"])
     assert "`T-02` — added" in delta and "`T-03` — added" in delta
+
+
+# -- a settled issue is read once, not every press ----------------------------
+
+
+def _all_settled(tmp_path, gh):
+    ship(tmp_path, gh)
+    for issue in gh.issues.values():
+        issue.update(state="closed", state_reason="completed")
+    return ship(tmp_path, gh, labels=("team:x",))
+
+
+def test_an_unmoved_press_after_settling_makes_only_the_open_list_call(tmp_path):
+    """DARK: 193 closed issues re-read on every press, ~5 minutes for a press
+    that changes nothing (docs/TICKETS.md §3: an unmoved cut costs no reads)."""
+    gh = Tracker()
+    first = _all_settled(tmp_path, gh)
+    assert sorted(t["key"] for t in first["settled"]) == ["S-01", "S-01-T", "S-02"]
+    gh.calls.clear()
+    again = ship(tmp_path, gh, labels=("team:x",))
+    assert gh.calls == [("list", 0)]
+    assert sorted(t["key"] for t in again["settled"]) == ["S-01", "S-01-T", "S-02"]
+    assert all("completed" in t["reason"] for t in again["settled"])
+
+
+def test_a_settled_marker_is_keyed_on_the_issue_number(tmp_path):
+    gh = Tracker()
+    _all_settled(tmp_path, gh)
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert live["S-02"]["settled"]["number"] == 3
+    assert live["S-02"]["settled"]["state_reason"] == "completed"
+    assert live["S-02"]["settled"]["key"] == "S-02"
+
+
+def test_a_settled_issue_gone_from_the_cut_is_not_read_again(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    cut = dict(order=["S-01-T", "S-01"], edges={"S-01": ("S-01-T",)},
+               waves=[["S-01-T"], ["S-01"]])
+    ship(tmp_path, gh, **cut)
+    gh.calls.clear()
+    again = ship(tmp_path, gh, **cut)
+    assert ("state", 3) not in gh.calls
+    assert [t["key"] for t in again["settled"]] == ["S-02"]
+
+
+def test_a_settled_issue_reopened_by_hand_is_read_and_edited(tmp_path):
+    gh = Tracker()
+    _all_settled(tmp_path, gh)
+    gh.issues[3].update(state="open", state_reason="reopened")
+    result = ship(tmp_path, gh, labels=("team:x",))
+    assert ("state", 3) in gh.calls and ("edit", 3) in gh.calls
+    assert [e["key"] for e in result["edited"]] == ["S-02"]
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert "settled" not in live["S-02"]
+
+
+def test_a_settled_issue_whose_contract_moved_is_read_and_followed_up(tmp_path):
+    gh = Tracker()
+    _all_settled(tmp_path, gh)
+    gh.calls.clear()
+    result = ship(tmp_path, gh, labels=("team:x",), bodies={"S-02": "the contract, grown"})
+    assert ("state", 3) in gh.calls
+    assert [f["key"] for f in result["follow_ups"]] == ["S-02"]
+
+
+def test_a_settled_blocker_of_an_open_issue_is_still_verified(tmp_path):
+    """The dead-blocker check reads a closed blocker every press; the marker
+    skips only the settle read."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[2].update(state="closed", state_reason="completed")
+    ship(tmp_path, gh, labels=("team:x",))
+    gh.calls.clear()
+    result = ship(tmp_path, gh, labels=("team:x",))
+    assert [t["key"] for t in result["settled"]] == ["S-01"]
+    assert gh.calls.count(("state", 2)) == 1, "verify's read, and only that"
+    assert result["dead"] == []
+    gh.issues[2]["state_reason"] = "not_planned"
+    result = ship(tmp_path, gh, labels=("team:x",))
+    assert [d["blocker"] for d in result["dead"]] == ["S-01"]

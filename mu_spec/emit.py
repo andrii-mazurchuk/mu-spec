@@ -855,8 +855,12 @@ def emit(
     # The payload each key was rendered from, and every issue state read.
     asks: dict[str, dict] = {}
     seen: dict[int, dict] = {}
-    open_labels: dict[int, list] = {}
+    open_labels = {int(i["number"]): list(i.get("labels") or ())
+                   for found in (ours or {}).values() for i in found}
+    open_numbers = set(open_labels)
     issues: dict[str, dict] = dict(live)
+    # Whether a settled marker was set or cleared, so the record carries it.
+    marks = {"changed": False}
     # Issues whose dependencies are frozen: picked up, or unreadable.
     frozen: set[str] = set()
     work = [k for k in order if k in live or k in missing]
@@ -924,6 +928,32 @@ def emit(
         if state:
             seen[int(issues[key]["number"])] = state
         return why, state
+
+    def still_settled(key: str, fingerprint: str) -> "str | None":
+        """The `state_reason` a settled issue was closed with, if its marker
+        still holds: same issue number, not in the open list, and the ticket
+        says what it said when settled ("gone" for a unit out of the cut).
+        Then the read is skipped -- re-reading 193 closed issues made an
+        unmoved DARK press take five minutes. Keyed on the number, never the
+        key alone. A marker on an issue reopened by hand is cleared."""
+        mark = issues[key].get("settled")
+        if not mark or ours is None:
+            return None
+        number = int(issues[key].get("number") or 0)
+        if number in open_numbers:
+            live[key] = issues[key] = {k: v for k, v in issues[key].items() if k != "settled"}
+            marks["changed"] = True
+            return None
+        if int(mark.get("number") or 0) != number or mark.get("fingerprint") != fingerprint:
+            return None
+        return str(mark.get("state_reason") or "closed")
+
+    def settle(key: str, fingerprint: str, state: dict) -> None:
+        mark = {"number": int(issues[key]["number"]), "fingerprint": fingerprint,
+                "state_reason": state.get("state_reason") or "", "key": key}
+        if issues[key].get("settled") != mark:
+            issues[key] = {**issues[key], "settled": mark}
+            marks["changed"] = True
 
     def followed(ticket, key: str, of: int) -> "tuple[str, str]":
         """A follow-up with its delta against the merged issue `of` -- read
@@ -1006,11 +1036,21 @@ def emit(
         gone = sorted((k for k in live if k not in in_cut),
                       key=lambda k: -int(live[k].get("number") or 0))
         for key in gone:
+            reason = still_settled(key, "gone")
+            if reason is not None:
+                settled.append({"key": key, "number": live[key].get("number"),
+                                "reason": f"gone from the cut, not closed: closed as "
+                                          f"{reason} by someone else -- left alone"})
+                frozen.add(key)
+                tick("withdrawing")
+                continue
             why, _state = look(key)
             if why is not None:
                 (settled if _state.get("state") == "closed" else touched).append(
                     {"key": key, "number": live[key].get("number"),
                      "reason": f"gone from the cut, not closed: {why}"})
+                if _state.get("state") == "closed":
+                    settle(key, "gone", _state)
                 frozen.add(key)
                 tick("withdrawing")
                 continue
@@ -1051,11 +1091,20 @@ def emit(
                 frozen.add(key)
                 tick("editing")
                 continue
+            reason = still_settled(key, ticket.fingerprint)
+            if reason is not None:
+                settled.append({"key": key, "number": live[key].get("number"),
+                                "reason": f"context changed, contract did not: closed as "
+                                          f"{reason} by someone else -- left alone"})
+                frozen.add(key)
+                tick("editing")
+                continue
             why, state = look(key)
             if why is not None and state.get("state") == "closed":
                 if not _contract_moved(live[key].get("contract"), state.get("body") or "", ticket.body):
                     settled.append({"key": key, "number": live[key].get("number"),
                                     "reason": f"context changed, contract did not: {why}"})
+                    settle(key, ticket.fingerprint, state)
                     frozen.add(key)
                     tick("editing")
                     continue
@@ -1181,9 +1230,6 @@ def emit(
         # a key that moved issue -- a swept follow-up -- left links the pairs
         # call wired. Read, then add what is missing and remove links to our
         # own issues that no longer belong. Links to anyone else's are kept.
-        open_labels = {int(i["number"]): list(i.get("labels") or ())
-                       for found in (ours or {}).values() for i in found}
-        open_numbers = set(open_labels)
         synced: set[str] = set()
         if ours is not None and hasattr(client, "blocked_by"):
             for blocked in order:
@@ -1291,7 +1337,10 @@ def emit(
     finally:
         # Recorded even when the run went badly: otherwise a re-run duplicates the
         # issues that DID land, which is the one thing the guard exists to stop.
-        if created or edited or wired or removed or withdrawn or follow_ups or adopted:
+        # A settled marker set or cleared counts: unrecorded, every press
+        # re-reads every closed issue.
+        if (created or edited or wired or removed or withdrawn or follow_ups or adopted
+                or marks["changed"]):
             _append(log_path, Emission(
                 seq=batch, at=now_fn(), cut_seq=cut_seq, repo=repo,
                 issues=issues, wired=tuple(sorted(now_wired)),

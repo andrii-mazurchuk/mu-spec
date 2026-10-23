@@ -263,6 +263,30 @@ def test_pacing_is_on_by_default():
     assert slept == [DEFAULT_PACE]
 
 
+def test_a_read_is_never_paced_and_a_write_still_is():
+    """The secondary limit is on content creation. Pacing GETs cost DARK an
+    unmoved press over three minutes of sleeping before reads."""
+    gh, _, slept = client(
+        FakeResponse({"state": "closed"}),
+        FakeResponse({"data": []}),
+        FakeResponse({}, status=204),
+        FakeResponse({}, status=204),
+        pace=0.25,
+    )
+    gh.issue_state(REPO, 1)
+    gh.blocked_by(REPO, 1)
+    assert slept == [], "a GET waits for nothing"
+    gh.close_issue(REPO, 1)
+    gh.remove_label(REPO, 1, "x")
+    assert slept == [0.25, 0.25], "PATCH and DELETE are paced"
+
+
+def test_a_retried_read_backs_off_without_pacing():
+    gh, rec, slept = client(http_error(502), FakeResponse({"state": "open"}), pace=0.25)
+    gh.issue_state(REPO, 1)
+    assert len(rec.requests) == 2 and slept == [1.0], "backoff only"
+
+
 def test_pacing_can_be_turned_off_for_a_single_write():
     gh, _, slept = client(FakeResponse({"id": 1, "number": 1}), pace=0)
     gh.create_issue(REPO, "t", "b")
