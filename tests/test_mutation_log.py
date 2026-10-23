@@ -124,6 +124,24 @@ def test_mutations_read_back_through_the_events_route(store, prompts):
     assert [e["facts"]["route"] for e in payload["events"]][-1] == "amendment"
 
 
+def test_mutations_with_no_project_read_back_unit_wide(store, prompts):
+    """An unrouted POST, or an initiate naming no project, logs with
+    project=None -- which no per-project read can ever return."""
+    seed(store, prompts)
+    mark = mutations(store)[-1].seq
+    call(store, prompts, "POST", "/nowhere", {"actor": "lost"})
+    call(store, prompts, "POST", "/inbox", {"type": "initiate", "title": "t"})
+    _, payload = call(store, prompts, "GET", f"/events?kind=mutation&since={mark}")
+    rows = payload["events"]
+    assert [(e["project"], e["facts"]["route"]) for e in rows] == [
+        (None, "unrouted"), (None, "post_inbox")]
+    assert payload["next_since"] == rows[-1]["seq"]
+    _, everything = call(store, prompts, "GET", "/events?kind=mutation")
+    assert {e["project"] for e in everything["events"]} == {None, "m"}
+    status, _ = call(store, prompts, "GET", "/events?since=x")
+    assert status == 400
+
+
 # -- before and after, for the manifest setters --------------------------------
 
 

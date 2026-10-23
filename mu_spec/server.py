@@ -27,7 +27,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from mu_spec import (
     dashboard, docs, emit as emitting, github, lifecycle as lc, service,
 )
-from mu_spec.service import ServiceError
+from mu_spec.service import AUDIT_LAYERS, AUDIT_OUTCOMES, ServiceError
 from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES, SEPARATOR_CLASS
 from mu_spec.inbox import Inbox, InboxError, TYPES
 from mu_spec.issues import KINDS as ISSUE_KINDS, STATUSES as ISSUE_STATUSES
@@ -658,6 +658,35 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "touched"),
         ),
         tool(
+            "record_audit",
+            "Record that you ran an audit, once per run, as soon as it ends. "
+            "Record a PASS too: an audit that found nothing leaves no other "
+            "trace, and an unrecorded pass is indistinguishable from an audit "
+            "that never ran. `scope` is what you audited -- entry ids and/or "
+            "`slice:<name>`. `layer` is the layer letter you audited, or "
+            "`slice`, `final` or `delta`. `questions` are the ids of the "
+            "audit questions you asked (e.g. S1, T4). `outcome` is `pass` or "
+            "`flagged`; when flagged, raise each problem with raise_issue "
+            "FIRST and list the iss-NNNN ids in `issues` (empty on a pass). "
+            "`auditor` and `run_id` are free text naming you and the run. "
+            "This stores references only: it never judges, scores or gates "
+            "anything, and refuses only a name that does not exist. Read "
+            "audits back with list_events, kind `audit`.",
+            "POST",
+            "/projects/{project}/audits",
+            {
+                "project": s,
+                "scope": strings,
+                "layer": enum(AUDIT_LAYERS),
+                "questions": strings,
+                "outcome": enum(AUDIT_OUTCOMES),
+                "issues": strings,
+                "auditor": s,
+                "run_id": s,
+            },
+            ("project", "scope", "layer", "outcome"),
+        ),
+        tool(
             "review_layer",
             "Read one layer with each entry's justification chain, what "
             "serves it, and the comments attached to it -- so a reviewer sees "
@@ -1203,6 +1232,9 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("POST", re.compile(rf"^/projects/{_P}/slicing/proposal/reject$"), "reject_proposal"),
     ("GET", re.compile(rf"^/projects/{_P}/insights$"), "insights"),
     ("GET", re.compile(rf"^/projects/{_P}/events$"), "events"),
+    # Unit-wide: the only read that reaches a write naming no project.
+    ("GET", re.compile(r"^/events$"), "unit_events"),
+    ("POST", re.compile(rf"^/projects/{_P}/audits$"), "record_audit"),
     ("GET", re.compile(rf"^/projects/{_P}/entries/(?P<id>{_ID})$"), "entry"),
     ("GET", re.compile(rf"^/projects/{_P}/slice-context$"), "slice_context"),
     # `cuts` is a literal and an entry identifier is [A-Z]·[0-9]+, so the two
@@ -1500,6 +1532,13 @@ def _handle(
                 JSON,
                 json.dumps(service.list_events(events, project, query)),
             )
+
+        if name == "unit_events":
+            return 200, JSON, json.dumps(service.list_events(events, None, query))
+
+        if name == "record_audit":
+            return 201, JSON, json.dumps(service.record_audit(
+                store, issues, project, body, events, now_fn, actor))
 
         if name == "raise_issue":
             return (

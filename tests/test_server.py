@@ -2068,6 +2068,11 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # that could withdraw a batch could quietly unship work somebody is
         # already building against.
         "rollback_tickets": None,
+        "record_audit": "record_audit",
+        # The unit-wide log exists for whoever traces a bad write afterwards,
+        # a person reading the change log. No agent needs it to do work, and
+        # the per-project read is already offered as list_events.
+        "unit_events": None,
     }
     for _, _, name in _ROUTES:
         # health, tools, prompts and skills are the standard meta surface:
@@ -3473,6 +3478,20 @@ def test_every_button_on_the_page_is_a_declared_action(store, prompts):
             or path.startswith(pressed + "/")
             for path in declared
         ), f"the page POSTs to {pressed!r}, which /actions does not declare"
+
+
+def test_every_post_the_page_makes_names_the_dashboard_as_actor():
+    """The change log reads `actor` from the body first, and the body is what
+    the node's proxy forwards for sure. Without it every press logs as
+    "unknown" and a person's write is indistinguishable from a lost one."""
+    page = Path("mu_spec/dashboard.html").read_text(encoding="utf-8")
+    # From the POST to the fetch's closing brace, on its own line.
+    calls = re.findall(r'method\s*:\s*"POST"(.*?)\n\s*\}\s*\)', page, re.S)
+    assert len(calls) == len(_page_post_paths()) >= 5
+    for options in calls:
+        assert 'actor:"dashboard"' in options.replace(" ", ""), (
+            f"a dashboard POST sends no actor: {options.strip()[:120]}"
+        )
 
 
 def test_actions_declares_no_path_the_page_never_presses(store, prompts):

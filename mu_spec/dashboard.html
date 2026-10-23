@@ -2347,7 +2347,7 @@ async function cutUnits(){
   try{
     const r = await fetch("projects/"+enc(STATE.project)+"/units/cut", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({note: ""})
+      body: JSON.stringify({note: "", actor:"dashboard"})
     });
     const text = await r.text();
     let payload = null;
@@ -2731,7 +2731,7 @@ async function decide(what, body){
     const r=await fetch("projects/"+enc(STATE.project)+"/slicing/proposal/"+what,{
       method:"POST",
       headers:{"content-type":"application/json"},
-      body:JSON.stringify(body||{})
+      body:JSON.stringify({...(body||{}), actor:"dashboard"})
     });
     const text=await r.text();
     let payload=null;
@@ -3271,7 +3271,7 @@ async function setLabels(value, pickup){
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/labels", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify(send)
+      body: JSON.stringify({...send, actor:"dashboard"})
     });
     const text = await res.text();
     let payload = null;
@@ -3306,7 +3306,7 @@ async function setRepo(value){
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/repo", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({repo: value.trim() || null})
+      body: JSON.stringify({repo: value.trim() || null, actor:"dashboard"})
     });
     const text = await res.text();
     let payload = null;
@@ -3338,7 +3338,7 @@ async function shipTickets(){
     const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
       method:"POST", headers:{"content-type":"application/json"},
       body: JSON.stringify({waves: shipPreflight().mode === "shipped"
-        ? "shipped" : Math.max(1, STATE.horizon || 1)})
+        ? "shipped" : Math.max(1, STATE.horizon || 1), actor:"dashboard"})
     });
     const text = await res.text();
     let payload = null;

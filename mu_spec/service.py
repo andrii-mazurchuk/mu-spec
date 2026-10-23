@@ -2343,9 +2343,84 @@ def _issue_pairs(issues_list) -> list[dict]:
     return sorted(pairs.values(), key=lambda r: (-r["total"], r["from"]))
 
 
-def list_events(events: Lifecycle, project: str, query: dict) -> dict:
+AUDIT_LAYERS = tuple(ALL_LAYERS) + ("slice", "final", "delta")
+AUDIT_OUTCOMES = ("pass", "flagged")
+
+
+def _strings(body: dict, field: str) -> list[str]:
+    raw = body.get(field, [])
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x.strip() for x in raw):
+        raise ServiceError(f"'{field}' must be a list of non-empty strings")
+    return [x.strip() for x in raw]
+
+
+def record_audit(
+    store: ProjectStore,
+    issues: IssueLog,
+    project: str,
+    body: dict,
+    events: Lifecycle,
+    now_fn: Callable[[], float],
+    actor: str = "unknown",
+) -> dict:
+    """Write down that an audit ran, a pass exactly as much as a flag.
+
+    Refs only. Whether the audit was right is the auditor's judgement, and
+    nothing here scores it or gates on it: the checks are that every name it
+    cites exists, because a record pointing at nothing audits nothing.
+    """
+    scope = _strings(body, "scope")
+    if not scope:
+        raise ServiceError("'scope' is required: entry ids and/or slice:<name>")
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    for ref in scope:
+        if ref.startswith("slice:"):
+            if ref[len("slice:"):] not in manifest.slices:
+                raise ServiceError(f"'scope': no slice {ref[len('slice:'):]!r}")
+            continue
+        try:
+            ident = parse(ref)
+        except InvalidIdentifier as exc:
+            raise ServiceError(f"'scope': {exc}") from exc
+        if graph.get(ident) is None:
+            raise ServiceError(f"'scope': {ident} does not exist")
+    layer = body.get("layer")
+    if layer not in AUDIT_LAYERS:
+        raise ServiceError(f"'layer' must be one of {AUDIT_LAYERS}")
+    questions = _strings(body, "questions")
+    outcome = body.get("outcome")
+    if outcome not in AUDIT_OUTCOMES:
+        raise ServiceError(f"'outcome' must be one of {AUDIT_OUTCOMES}")
+    cited = _strings(body, "issues")
+    if outcome == "flagged" and not cited:
+        raise ServiceError("'issues' is required when flagged: raise them first")
+    if outcome == "pass" and cited:
+        raise ServiceError("'issues' must be empty on a pass")
+    for iid in cited:
+        issue = issues.get(iid)
+        if issue is None or issue.project != project:
+            raise ServiceError(f"'issues': {iid} does not exist in {project!r}")
+    free = {}
+    for field in ("auditor", "run_id"):
+        value = body.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ServiceError(f"'{field}' must be a string")
+        free[field] = value
+    event = events.record(
+        lc.AUDIT, project, now_fn, refs=scope + cited,
+        layer=layer, questions=questions, outcome=outcome, issues=cited,
+        **free, by=actor,
+    )
+    if event is None:
+        raise ServiceError("the audit could not be recorded")
+    return event.to_json()
+
+
+def list_events(events: Lifecycle, project: str | None, query: dict) -> dict:
     """The lifecycle, in order. Analysis, not operation -- this is never
-    loaded during ordinary work."""
+    loaded during ordinary work. No project reads the whole unit's log, which
+    is the only way to reach a write that named none."""
     try:
         since = int(query.get("since") or 0)
     except (TypeError, ValueError) as exc:

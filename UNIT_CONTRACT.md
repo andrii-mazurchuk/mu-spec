@@ -114,7 +114,7 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — thirty-seven of them,
+Everything beyond the four is declared in `/tools` — thirty-eight of them,
 covering the inbox, amendments, slice classification and splitting, waves,
 the issue queue and its reconciliation, module backlinks, work units and
 their cuts, planning, the audit, the slice context, the slicing proposal
@@ -141,8 +141,20 @@ event to the lifecycle log (`lifecycle.jsonl` in the state root): route,
 `actor` (the body field, else the `X-Actor` header, else `unknown`), status,
 body and result clipped to ~2 KB, and for the manifest setters and proposal
 rulings a `was` holding the value replaced. Read it with
-`GET /projects/{project}/events?kind=mutation&since=N`. Ordinary work never
-loads it, and a write that cannot be logged still succeeds. The inbox and
+`GET /projects/{project}/events?kind=mutation&since=N`, or unit-wide with
+`GET /events?kind=mutation&since=N` — the only read that reaches a write
+naming no project (an unrouted POST, an initiate without one). The
+unit-wide read is a route, not a tool: tracing a bad write is a person's
+job. The dashboard sends `actor: "dashboard"` on every POST. Ordinary work
+never loads it, and a write that cannot be logged still succeeds.
+
+**Audits.** `POST /projects/{project}/audits` (`record_audit`) records one
+audit run as an `audit` event — a pass as much as a flag: `scope` (entry
+ids and/or `slice:<name>`), `layer` (a layer letter, `slice`, `final` or
+`delta`), `questions`, `outcome` (`pass` | `flagged`), `issues` (required
+when flagged, empty on a pass), `auditor`, `run_id`. References only; it
+refuses with 400 only a name that does not exist, and never judges, scores
+or gates. Read back with `GET /projects/{project}/events?kind=audit`. The inbox and
 issue queue are append-only too: resolving or closing appends a new line
 for the same id, carrying `resolution.at` and `resolution.by`.
 
