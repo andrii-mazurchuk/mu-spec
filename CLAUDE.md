@@ -235,6 +235,7 @@ Modules, and the one-line reason each exists:
 | `identifiers` | Parsing, ordering, and what "one layer up" means |
 | `graph` | Entries, the three edge kinds, traversal, the computed spine |
 | `storage` | The only module that touches the filesystem |
+| `body` | Reading an entry body into facts — imports, defines, mentions. Pure; refuses nothing |
 | `gates` | Checks answerable from the graph alone — knows nothing of slices |
 | `slice_gates` | Checks needing the manifest: cycles, ownership, edge kind |
 | `waves` | Execution order by longest path |
