@@ -14,7 +14,8 @@ python -m replay.harness C:\agents\teams\forge\analysis\dark-retro\snapshot\node
 ```
 
 The run starts with a **self-check**: the final replayed state must give the
-node's own `gates.json` and `waves.json`, and the live spec + test set at the
+node's own `gates.json` (with the kinds added after the export, `NEWER_KINDS`,
+taken out) and `waves.json`, and the live spec + test set at the
 `units.json` cut must equal that cut's unit entries. If it does not, the
 reconstruction is wrong and the CLI exits 2 without scoring anything. Exit 2 also
 means an oracle case names an id that is missing, unborn or retired at its
@@ -28,7 +29,7 @@ means an oracle case names an id that is missing, unborn or retired at its
 | edges as written | a live read carries edges across interface-preserving supersessions; each target is walked back to the version alive at the child's birth |
 | slice membership over time | the derivation's `slice`, then `slicing` moves; a behaviour entry takes its architecture children's majority slice |
 | slice type over time | a `classification` changes a type, so before its first one the slice had the other type |
-| module ownership | no history exists; read from each live spec body's `Module:` line |
+| module ownership | no history exists; each spec body's `Module:` line, plus the final `modules.json` for entries live at the export (the only source for test modules), taken as declared at birth |
 
 A step is one graph-changing event (`derivation`, `slicing`, `classification`).
 A `correction` gets no step of its own: it is logged a millisecond after the
@@ -81,6 +82,12 @@ point. `untested` and `unserved` "catch" a few cases only because they fire on
 every new entry until its children are derived, and a case is visible from the
 step its entry was born: that is timing, not detection.
 
-Known limits: module ownership is the bodies' claim, never the declared module
-map, so "no module" (M10) means "no `Module:` line"; a fault visible only in
-code, a ticket or a CI log is outside what any graph replay can score.
+`M2` is `bad_import` + `bad_module_import` fed by `body.legacy_imports`:
+DARK predates the D4 `Imports:` line, so the strict reader -- the only one
+live admission uses -- has nothing to read. `M3` is `split_ownership` +
+`undeclared_path`. `two_successors` is always empty here: the export holds one
+`superseded_by` per entry, so a replay cannot express two claims.
+
+Known limits: module ownership before the export is the bodies' claim, so "no
+module" (M10) means "no `Module:` line" for a retired entry; a fault visible
+only in code, a ticket or a CI log is outside what any graph replay can score.

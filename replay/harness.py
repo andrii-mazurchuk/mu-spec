@@ -25,8 +25,9 @@ What an export does not hold, and how it is recovered:
   behaviour entry is never derived into a slice, so it takes the slice most
   of its architecture children are in. A `classification` changes a slice's
   type, so before its first one a slice had the other type.
-- There is no module history. Module ownership is read from each live spec
-  body's `Module:` line.
+- There is no module history. Module ownership is read from each spec
+  body's `Module:` line, plus the final `modules.json` for the entries live
+  at the export, taken as declared at each entry's birth.
 """
 
 from __future__ import annotations
@@ -42,9 +43,24 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from mu_spec import service, waves
-from mu_spec.gates import UNSERVED, UNTESTED
+from mu_spec.body import legacy_imports
+from mu_spec.gates import (
+    BAD_IMPORT,
+    NO_IMPORTS_LINE,
+    TWO_SUCCESSORS,
+    UNSERVED,
+    UNTESTED,
+    imports,
+    two_successors,
+)
 from mu_spec.graph import Entry, Graph
-from mu_spec.slice_gates import STALE_EMISSION
+from mu_spec.slice_gates import (
+    BAD_MODULE_IMPORT,
+    SPLIT_OWNERSHIP,
+    STALE_EMISSION,
+    UNDECLARED_PATH,
+    module_gates,
+)
 from mu_spec.identifiers import BEHAVIOUR, SPEC, TEST, UNSLICED, parse
 from mu_spec.storage import SLICE_TYPES, SLICE, Manifest, Slice
 
@@ -102,7 +118,9 @@ def canon(text: str) -> str:
     return str(parse(text))
 
 
-_MODULE_LINE = re.compile(r"(?m)^\W*(?:Modules?|Files?)\s*:\s*(.*)$")
+# At a line's start, or opening a sentence mid-paragraph (`**Out of band.**
+# Module: ...`, S-229).
+_MODULE_LINE = re.compile(r"(?m)(?:^\W*(?:Modules?|Files?)|(?<=[.*] )Modules?)\s*:\s*(.*)$")
 
 
 def module_paths(body: str) -> tuple[str, ...]:
@@ -206,6 +224,27 @@ def load(root: Path | str) -> History:
     )
     history.order = sorted(entries, key=lambda k: born[k])
     history.modules = {k: module_paths(e.body) for k, e in entries.items() if e.id.layer == SPEC}
+    # The node's final module map, for the entries live at the export, taken
+    # as declared at each entry's birth. It is the only source for a test
+    # entry, whose body names no file, and it catches a spec declared through
+    # `declare_module` without a `Module:` line saying so. A retired entry's
+    # declarations are unknown, so its `Module:` line stands alone. A file the
+    # map gives to test entries is never a spec's, whatever a line claims.
+    exported = root / "modules.json"
+    if exported.exists():
+        rows = _read(exported).get("modules", ())
+        tests_own = {
+            r["path"] for r in rows
+            if any(canon(i) in entries and entries[canon(i)].id.layer == TEST
+                   for i in r.get("implements", ()))
+        }
+        history.modules = {
+            k: tuple(p for p in ps if p not in tests_own) for k, ps in history.modules.items()
+        }
+        for row in rows:
+            for ident in map(canon, row.get("implements", ())):
+                if ident in entries and row["path"] not in history.modules.get(ident, ()):
+                    history.modules[ident] = history.modules.get(ident, ()) + (row["path"],)
     return history
 
 
@@ -322,12 +361,67 @@ def reported(kind: str) -> Gate:
     return gate
 
 
+# The legacy reader feeds M2 here and nowhere else. DARK predates the D4
+# `Imports:` line, so the strict reader -- the only one live admission uses,
+# and the only one that ever refuses -- finds nothing to check in it. The
+# prose reader exists to score the gate against DARK's history.
+def _legacy(entry: Entry):
+    return legacy_imports(entry.body) or None
+
+
+def m2(graph, manifest, prev_graph, prev_manifest) -> set[str]:
+    return {
+        str(f.id)
+        for f in imports(graph, read=_legacy) + module_gates(manifest, graph, read=_legacy)
+        if f.kind in (BAD_IMPORT, BAD_MODULE_IMPORT)
+    }
+
+
+def m3(graph, manifest, prev_graph, prev_manifest) -> set[str]:
+    return {
+        str(f.id)
+        for f in module_gates(manifest, graph)
+        if f.kind in (SPLIT_OWNERSHIP, UNDECLARED_PATH)
+    }
+
+
+def successors(graph, manifest, prev_graph, prev_manifest) -> set[str]:
+    """Always empty here, by construction: the export records one
+    `superseded_by` per entry, so a replay cannot hold two claims."""
+    return {str(f.id) for f in two_successors(graph)}
+
+
+# Kinds added after the DARK export was taken. Its gates.json was computed
+# without them, so the self-check compares the report with them taken out --
+# the check is that the reconstruction is right, not that old gates agree
+# with new ones.
+NEWER_KINDS = (
+    BAD_IMPORT, NO_IMPORTS_LINE, TWO_SUCCESSORS,
+    BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
+)
+
+
+def as_exported(report: dict) -> dict:
+    findings = [f for f in report["findings"] if f["kind"] not in NEWER_KINDS]
+    sound = not any(f["kind"] in service._BLOCKING for f in findings) and not report["slice_findings"]
+    return {
+        **report,
+        "findings": findings,
+        "sound": sound,
+        "complete": not findings,
+        "clean": not findings and not report["slice_findings"],
+    }
+
+
 # A new gate ticket adds one line here, named after the ticket (see README).
 REGISTRY: dict[str, Gate] = {
     "sound": sound,
     UNSERVED: reported(UNSERVED),
     UNTESTED: reported(UNTESTED),
     STALE_EMISSION: reported(STALE_EMISSION),
+    "M2": m2,
+    "M3": m3,
+    TWO_SUCCESSORS: successors,
 }
 
 
@@ -435,7 +529,7 @@ def self_check(history: History) -> list[str]:
         return ["the snapshot has no graph-changing events"]
     graph, manifest = build(history, final_steps[-1].at)
 
-    report = service._gate_report(graph, manifest)
+    report = as_exported(service._gate_report(graph, manifest))
     if not (root / "gates.json").exists():
         problems.append("gates.json is missing")
     else:
