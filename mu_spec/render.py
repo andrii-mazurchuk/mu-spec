@@ -33,6 +33,7 @@ import hashlib
 import json
 import re
 
+from mu_spec import body as bodies
 from mu_spec.identifiers import LEGACY_SEPARATOR, SEPARATOR
 from mu_spec.units import is_test_key
 
@@ -80,6 +81,10 @@ class Ticket:
     # A new cut that says the same thing about a unit must leave its issue
     # alone; hashing `cut_seq` would rewrite every open issue on every cut.
     fingerprint: str = ""
+    # (cited id, the entry whose rendered text cites it), for every entry the
+    # body shows: its heading or line, and its body. Unit keys -- the title,
+    # blockers, overlap, the machine block -- are names, never citations.
+    cites: tuple[tuple[str, str], ...] = ()
 
     @property
     def oversized(self) -> bool:
@@ -162,6 +167,12 @@ def _respell(text: str) -> str:
     )
 
 
+def _text(body: str) -> str:
+    """An authored body as a ticket shows it: provenance lines out, then
+    references re-spelled."""
+    return _respell(bodies.strip_provenance(body))
+
+
 def _machine(
     payload: dict, unit: dict, write_set: list[str],
     repo: str | None, cut_seq: int | None,
@@ -232,8 +243,13 @@ def render(
     cut_seq: int | None = None,
     extra_labels: "tuple[str, ...] | list[str]" = (),
     batch: int | None = None,
+    existing: "frozenset[str] | set[str]" = frozenset(),
 ) -> Ticket:
     """One work unit as a ticket.
+
+    `existing` is the unit keys closed `completed`, read from the emission
+    record. A shared file one of them writes is on main, so its other
+    contracts go as id + title: the file's shape is decided and is the code.
 
     The other contracts a file serves go in full when the ticket still fits,
     and as titles plus `context_ids` when it would not. Measured on `dark`:
@@ -251,13 +267,14 @@ def render(
     this a pure function of its arguments, which is what lets a ticket be read
     and argued about before any issue exists.
     """
-    ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=True)
+    ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, inline=True)
     if len(ticket.body) > BODY_LIMIT - FOLLOW_UP_ROOM:
-        ticket = _render(payload, repo, cut_seq, extra_labels, batch, inline=False)
+        ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, inline=False)
     return ticket
 
 
-def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Ticket:
+def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *,
+            inline: bool) -> Ticket:
     if not payload.get("issued"):
         raise ValueError(
             "this work unit was not issued, so there is nothing to render: "
@@ -269,18 +286,31 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
 
     write_set = list(payload.get("write_set") or ())
     out: list[str] = []
+    cites: dict[tuple[str, str], None] = {}
+
+    def shown(entry: dict, *texts: str) -> None:
+        """Record what an entry's rendered text cites, itself included."""
+        own = str(entry.get("id"))
+        for found in bodies.parse(" ".join([own, *texts]), "").id_mentions:
+            cites[(found, own)] = None
 
     # What to build. First, because it is the only section that cannot be
     # skipped.
     out.append("## Contract")
     for entry in payload.get("entries") or ():
         out.append(f"### {entry.get('id')} — {entry.get('title', '')}")
+        shown(entry, entry.get("title", ""), entry.get("purpose") or "")
         if entry.get("purpose"):
             # Scenarios only. Says why the scenario is worth having, which is
             # not recoverable from what it checks.
             out.append(f"*Why this case:* {entry['purpose']}")
         if entry.get("body"):
-            out.append(_respell(entry["body"]))
+            out.append(_text(entry["body"]))
+            shown(entry, out[-1])
+
+    def line(entry: dict) -> str:
+        shown(entry, entry.get("title", ""))
+        return _entry_line(entry)
 
     # Scope, before anything explanatory. An agent that reads only the first
     # screen must still know what it may touch.
@@ -325,17 +355,21 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
         written: set = set()
         for path, others in scope.items():
             out.append(f"**`{path}`**")
+            # The file is on main once a unit writing it closed `completed`:
+            # its shape is the code now, so the others go as titles.
+            exists = any(o.get("unit") in existing for o in others)
             for other in others:
-                if not inline or not other.get("body") or other.get("id") in written:
+                if exists or not inline or not other.get("body") or other.get("id") in written:
                     # Listed, not repeated: a contract serving two files is
                     # written out under the first and named under the second.
-                    out.append(_entry_line(other))
-                    if not inline and other.get("id") not in context_ids:
+                    out.append(line(other))
+                    if not inline and not exists and other.get("id") not in context_ids:
                         context_ids.append(other.get("id"))
                     continue
                 written.add(other.get("id"))
                 out.append(f"#### {other.get('id')} — {_respell(other.get('title', ''))}")
-                out.append(_respell(other["body"]))
+                out.append(_text(other["body"]))
+                shown(other, other.get("title", ""), out[-1])
 
     if payload.get("justification"):
         out.append("## Why this exists")
@@ -347,11 +381,12 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
         # because a paragraph between two items ends the list anyway.
         run: list[str] = []
         for ancestor in payload["justification"]:
-            run.append(_entry_line(ancestor))
+            run.append(line(ancestor))
             if ancestor.get("body"):
                 out.append(_bullets(run))
                 run = []
-                out.append(_respell(ancestor["body"]))
+                out.append(_text(ancestor["body"]))
+                shown(ancestor, out[-1])
         if run:
             out.append(_bullets(run))
 
@@ -364,14 +399,14 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
             "Contracts this one depends on, owned by other units. Read them; "
             "do not change them."
         )
-        out.append(_bullets(_entry_line(entry) for entry in context))
+        out.append(_bullets(line(entry) for entry in context))
 
     if payload.get("tests"):
         out.append("## Scenarios that judge this")
         out.append(
             "These exist as files and are expected to pass when you are done."
         )
-        out.append(_bullets(_entry_line(test) for test in payload["tests"]))
+        out.append(_bullets(line(test) for test in payload["tests"]))
 
     if payload.get("tests_pending"):
         out.append("## Specified but not yet implemented")
@@ -382,6 +417,8 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
         out.append(
             _bullets(f"- `{identifier}`" for identifier in payload["tests_pending"])
         )
+        for identifier in payload["tests_pending"]:
+            shown({"id": identifier})
 
     # Last, deliberately. The first screen belongs to the contract and the
     # write set -- an agent that reads only that far must still know its
@@ -410,4 +447,5 @@ def _render(payload, repo, cut_seq, extra_labels, batch, *, inline: bool) -> Tic
         labels=labels,
         blocked_by=tuple(payload.get("follows") or ()),
         fingerprint=fingerprint,
+        cites=tuple(cites),
     )

@@ -3315,6 +3315,23 @@ def test_emitting_starts_a_job_and_returns_immediately(store, prompts, monkeypat
     assert payload["project"] == "m"
 
 
+def test_a_press_naming_a_retired_id_is_a_400_before_any_job_starts(store, prompts, monkeypatch):
+    """M27: refused synchronously -- a job that would only fail is not started."""
+    from mu_spec import service
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    refused = [{"key": "S-01", "retired": "S-09", "successor": "S-10", "in": "S-01"}]
+    monkeypatch.setattr(service, "_retired_citations", lambda *a, **k: refused)
+    for runs in (Runs(spawn=lambda fn: fn()), None):
+        client = _Client()
+        status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit",
+                                     {}, runs=runs, client=client)
+        assert status == 400 and payload["refused"] == refused
+        assert client.created == []
+
+
 def test_the_progress_of_a_run_is_readable(store, prompts, monkeypatch):
     from mu_spec.emit import Runs
 

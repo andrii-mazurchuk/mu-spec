@@ -1620,12 +1620,18 @@ def _handle(
             # browser. With no registry -- which is every test that does not
             # ask for one -- it runs inline instead, so the suite stays
             # deterministic and thread-free.
+            # A ticket naming a superseded entry is a 400, answered before a job
+            # starts: the press would write nothing, and saying so takes no job.
             if runs is None:
                 result = service.emit_tickets(
                     store, project, client=emit_client, events=events,
                     now_fn=now_fn, body=body,
                 )
-                return (200 if result.get("emitted") else 409), JSON, json.dumps(result)
+                status = 200 if result.get("emitted") else 400 if result.get("refused") else 409
+                return status, JSON, json.dumps(result)
+            refusal = service.emission_refusal(store, project)
+            if refusal is not None:
+                return 400, JSON, json.dumps(refusal)
             try:
                 run = runs.start(
                     project,

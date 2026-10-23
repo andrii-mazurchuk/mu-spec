@@ -105,6 +105,24 @@ def parse(body: str, layer: str) -> BodyFacts:
     )
 
 
+# A fixed-shape history line: a whole line, parenthesised (optionally in `*`
+# or `_`), opening `Supersedes` or `Raised as iss-NNNN`. DARK wrote 192, all
+# `*(Supersedes ... .)*`, some with `Raised as iss-NNNN` inside. A ruling
+# (`iss-0181 ruled ...`, `*(Updated for ... iss-0181 ...)*`) is NOT one: it
+# can carry contract text, so it is never matched.
+_PROVENANCE = re.compile(
+    r"\n*^[ \t]*([*_]?)\((?:Supersedes\b|Raised as iss-\d+)[^\n]*\)\1[ \t]*$", re.M
+)
+
+
+def strip_provenance(body: str) -> str:
+    """`body` without its provenance lines, and nothing else changed but the
+    blank line each one stood behind."""
+    body = body if isinstance(body, str) else ""
+    out = _PROVENANCE.sub("", body)
+    return out.lstrip("\n") if out != body else body
+
+
 def _canonical(text: str) -> str | None:
     try:
         return str(identifiers.parse(text))

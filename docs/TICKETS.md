@@ -202,6 +202,24 @@ It isn't built.
 Contracts the unit *depends on* stay as titles. In DARK, every one of them is built by
 a unit it waits on, so the code is in the repository by the time the ticket is worked.
 
+**M27, ratified 2026-10-23 (D3):**
+- **A shared file that exists goes as titles.** Once a unit writing the file is closed
+  `completed` in mu-spec's own emission record (a settled marker; no repository read,
+  no extra GitHub call), its other contracts are listed as id + title. The file's shape
+  is decided and is the code. Before that they are inlined as above. The unit's own
+  contract is never shortened.
+- **No provenance.** The fixed-shape lines `(Supersedes S-NN…)` and `(Raised as
+  iss-NNNN…)` (a whole line, optionally in `*` or `_`) are stripped from every rendered
+  body. Nothing else is touched: a ruling paragraph can carry contract text. The contract
+  fingerprint reads the contract without them, so stripping opens no follow-up.
+- **Never a superseded id.** Before a press writes anything, every unit's ticket is
+  rendered; one whose text cites a retired entry refuses the whole press with a 400
+  naming the unit, the retired id, the entry citing it and the live successor. Unit keys
+  (title, blockers, overlap, the machine block) are names, not citations, and are not
+  checked.
+- An S-NN in an entry's body that none of its edges reach is reported
+  (`unlinked_mention`, a completeness finding), never refused.
+
 The machine block gains `project`, `batch` and `context_ids`. All are additive, and the
 consumer's parser ignores unknown fields.
 

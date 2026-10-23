@@ -456,3 +456,71 @@ def test_a_renamed_blocker_carries_its_old_keys_in_the_dependents_block():
 def test_a_block_with_no_renamed_blocker_carries_an_empty_map():
     data = _block(render(IMPL, repo="o/n", cut_seq=1).body)
     assert data["blocked_by_was"] == {}
+
+
+# -- M27: no provenance, no superseded id, shared files once they exist ------
+
+
+PROV = "*(Supersedes S-90, which named the wrong call. Raised as iss-0022. Verbatim.)*"
+
+
+def test_provenance_lines_leave_every_rendered_body():
+    """Fixed-shape history lines are about how an entry came to be, not what
+    to build, and they name retired ids by construction."""
+    payload = {
+        **_with_scope_body(f"Shared.\n\n{PROV}"),
+        "entries": [{**IMPL["entries"][0], "body": f"Build it.\n\n{PROV}"}],
+        "justification": [{"id": "A-02", "title": "parent", "body": f"Why.\n\n{PROV}"}],
+    }
+    body = render(payload).body
+    assert "Supersedes" not in body and "iss-0022" not in body
+    assert "Build it." in body and "Shared." in body and "Why." in body
+
+
+def test_a_ticket_says_which_entries_its_text_cites_and_where():
+    payload = {**IMPL, "entries": [{**IMPL["entries"][0],
+                                    "body": f"Calls `make` (S-09).\n\n{PROV}"}]}
+    cites = render(payload).cites
+    assert ("S-09", "S-01") in cites
+    assert ("S-90", "S-01") not in cites, "a stripped provenance line cites nothing"
+    assert ("A-02", "A-02") in cites, "an entry line cites its own entry"
+
+
+def test_unit_keys_are_names_not_citations():
+    """Under D1 a unit key is a lineage root: a retired id used as a NAME. The
+    title, blockers, overlap and the machine block are keys, never cited."""
+    payload = {**IMPL, "follows": ["S-07-T"], "follows_was": {"S-07-T": ["S-05-T"]},
+               "overlap": ["S-08"], "unit": {**IMPL["unit"], "key": "S-04", "anchor": "S-04"}}
+    ids = {i for i, _ in render(payload).cites}
+    assert not ids & {"S-04", "S-05", "S-07", "S-08"}
+
+
+def _shared(existing=frozenset()):
+    scope = {"dark/config/declare.py": [
+        {"id": "S-02", "title": "`Provisional` is a declaration-site attribute",
+         "body": "S02-FULL-BODY", "unit": "S-02"},
+        {"id": "S-03", "title": "`Required` is the other attribute",
+         "body": "S03-FULL-BODY", "unit": "S-03"},
+    ]}
+    return render({**IMPL, "file_scope": scope}, repo="o/n", cut_seq=1, existing=existing)
+
+
+def test_a_shared_file_that_exists_shows_its_other_contracts_as_titles():
+    """Once a unit writing the file closed `completed`, the file is on main and
+    its shape is decided: the code is what to read, the titles say what else
+    it serves (docs/TICKETS.md section 7)."""
+    ticket = _shared(existing=frozenset({"S-02"}))
+    assert "S02-FULL-BODY" not in ticket.body and "S03-FULL-BODY" not in ticket.body
+    assert "`Provisional` is a declaration-site attribute" in ticket.body
+    assert "`Required` is the other attribute" in ticket.body
+    assert _block(ticket.body)["context_ids"] == [], "nothing was left out for size"
+
+
+def test_a_shared_file_nobody_finished_still_carries_its_contracts_in_full():
+    ticket = _shared(existing=frozenset({"S-77"}))
+    assert "S02-FULL-BODY" in ticket.body and "S03-FULL-BODY" in ticket.body
+
+
+def test_the_units_own_contract_is_never_shortened_by_an_existing_file():
+    ticket = _shared(existing=frozenset({"S-01", "S-02"}))
+    assert IMPL["entries"][0]["body"] in ticket.body

@@ -305,3 +305,49 @@ def test_dark_s03_has_no_imports():
     assert facts.defines == ("RunConfig",)
     assert facts.id_mentions == ("A-01",)
     assert facts.path_mentions == ("dark/config/schema.py",)
+
+
+# -- provenance lines ---------------------------------------------------------
+
+from mu_spec.body import strip_provenance  # noqa: E402
+
+# DARK S-187's shape, trimmed: the one fixed form DARK wrote (192 of its
+# bodies), a supersession that can carry `Raised as iss-NNNN` inside it.
+PROVENANCE = (f"*(Supersedes the previous {sid(90, DOT)}, which stated that the set is "
+              f"handed to `RunRegion.create`. Raised as iss-0022. The body above is verbatim.)*")
+
+
+def test_a_supersedes_line_is_stripped_and_the_text_around_it_kept():
+    body = f"Imports: {sid(41)} Subspace\n\nThe contract.\n\n{PROVENANCE}"
+    assert strip_provenance(body) == f"Imports: {sid(41)} Subspace\n\nThe contract."
+
+
+def test_a_provenance_line_mid_body_leaves_one_paragraph_break():
+    body = f"First.\n\n{PROVENANCE}\n\nSecond."
+    assert strip_provenance(body) == "First.\n\nSecond."
+
+
+def test_a_raised_as_line_is_stripped_in_either_wrapper():
+    for line in ("(Raised as iss-0021 by `run-record`.)", "*(Raised as iss-0021.)*"):
+        assert strip_provenance(f"Kept.\n\n{line}") == "Kept."
+
+
+def test_a_ruling_paragraph_is_never_touched():
+    """DARK S-248: a ruling carries contract text. Only the fixed shapes go."""
+    ruling = ("*(Updated for Andrey's ruling on iss-0181, 2026-10-11: NEES is taken "
+              "per drone on that drone's localised observable subspace.)*")
+    ruled = "iss-0181 ruled that `nees_series` gains a third array."
+    for body in (f"A.\n\n{ruling}", f"A.\n\n{ruled}", f"A.\n\n*(Additive to {sid(99)} rather than a supersession.)*"):
+        assert strip_provenance(body) == body
+
+
+def test_supersedes_inside_a_paragraph_is_prose_not_provenance():
+    body = f"This entry (Supersedes {sid(12)}) restates the rule. And more."
+    assert strip_provenance(body) == body
+    unclosed = f"*(Supersedes {sid(12)}, and this line never closes"
+    assert strip_provenance(unclosed) == unclosed
+
+
+def test_a_body_without_provenance_is_returned_as_is():
+    for body in ("", "Plain.\n\n\nTrailing spaces kept.  ", None):
+        assert strip_provenance(body) == (body or "")

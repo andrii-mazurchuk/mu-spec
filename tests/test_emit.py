@@ -434,6 +434,103 @@ def test_the_run_is_recorded_against_the_project(tmp_path, monkeypatch):
     assert set(stored[0].issues) == {"S-01", "S-01-T"}
 
 
+# -- M27: a ticket never names a superseded id --------------------------------
+
+
+def _retiring(tmp_path, body: str):
+    """`_project` with S-02 retired by S-03, and S-01's body set to `body`."""
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+    from mu_spec.storage import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.create_project("p")
+    store.append("p", [Entry(id=parse("I-01"), title="intent")])
+    for ident, parent in (("B-01", "I-01"), ("A-01", "B-01")):
+        store.append("p", [Entry(id=parse(ident), derives_from=(parse(parent),),
+                                 title=ident)], slice_name="core")
+    store.append("p", [Entry(id=parse("S-01"), derives_from=(parse("A-01"),),
+                             title="the contract", body=body),
+                       Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
+                             title="old shape", body="x")], slice_name="core")
+    store.append("p", [Entry(id=parse("S-03"), derives_from=(parse("A-01"),),
+                             supersedes=parse("S-02"), title="new shape", body="y")],
+                 slice_name="core")
+    store.append("p", [Entry(id=parse("T-01"), derives_from=(parse("S-01"),),
+                             title="the case", purpose="why")])
+    store.set_module("p", "app/thing.py", ["S-01"])
+    store.set_module("p", "tests/test_thing.py", ["T-01"])
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    return store
+
+
+def test_a_press_naming_a_retired_id_is_refused_before_any_call(tmp_path, monkeypatch):
+    from mu_spec import service
+
+    store = _retiring(tmp_path, "Reads the shape S-02 defines.")
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    client = FakeClient()
+    result = service.emit_tickets(store, "p", client=client)
+    assert result["emitted"] is False
+    # The test unit carries S-01's body as its direct parent, so it cites too.
+    assert result["refused"] == [
+        {"key": key, "retired": "S-02", "successor": "S-03", "in": "S-01"}
+        for key in ("S-01-T", "S-01")]
+    assert "S-02" in result["reason"] and "S-03" in result["reason"]
+    assert client.created == [] and not store.emissions_path("p").exists()
+
+
+def test_a_provenance_line_naming_a_retired_id_does_not_refuse(tmp_path, monkeypatch):
+    from mu_spec import service
+
+    store = _retiring(tmp_path, "Build it.\n\n*(Supersedes S-02, which was wrong.)*")
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    client = FakeClient()
+    result = service.emit_tickets(store, "p", client=client)
+    assert result["emitted"] is True
+    assert all("Supersedes" not in body for _, _, body, _ in client.created)
+
+
+def test_a_shared_file_whose_writer_closed_completed_renders_as_titles(tmp_path):
+    """`exists` is read from this unit's own emission record -- a settled
+    marker closed `completed` -- never from the repository."""
+    log = tmp_path / "e.jsonl"
+    log.write_text(json.dumps({
+        "seq": 1, "at": 1.0, "cut_seq": 1, "repo": REPO, "wired": [],
+        "issues": {"S-01": {"id": 1001, "number": 1, "url": "u", "fingerprint": "f",
+                            "settled": {"number": 1, "fingerprint": "f",
+                                        "state_reason": "completed", "key": "S-01"}}},
+    }) + "\n")
+
+    def fetch(key):
+        unit = payload(key)
+        if key == "S-02":
+            unit["file_scope"] = {"S-02.py": [{"id": "S-01", "title": "the first",
+                                               "body": "S01-BODY", "unit": "S-01"}]}
+        return unit
+
+    client = FakeClient(start=1)
+    emit(log_path=log, repo=REPO, cut_seq=2, order=["S-02"], edges={}, fetch=fetch,
+         client=client, now_fn=lambda: 2.0)
+    (_, _, body, _), = client.created
+    assert "S01-BODY" not in body and "the first" in body
+
+
+def test_stripping_provenance_is_not_a_contract_change():
+    """A V2 record was hashed with the provenance line in. The closed issue's
+    own text is compared instead, so no follow-up is opened for a strip."""
+    from mu_spec.emit import _contract_moved, _digest, _V2
+    from mu_spec.render import render as draw
+
+    with_line = {**payload("S-01"), "entries": [
+        {"id": "S-01", "title": "t", "body": "Build.\n\n*(Supersedes S-00, verbatim.)*"}]}
+    old = ("## Contract\n\n### S-01 — t\n\nBuild.\n\n*(Supersedes S-00, verbatim.)*"
+           "\n\n## Files you may write\n\n- `S-01.py`")
+    recorded = _V2 + _digest("\n\n### S-01 — t\n\nBuild.\n\n*(Supersedes S-00, verbatim.)*")
+    assert not _contract_moved(recorded, old, draw(with_line).body)
+
+
 # -- tracking a run in flight -----------------------------------------------
 
 

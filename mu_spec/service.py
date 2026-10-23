@@ -64,6 +64,7 @@ from mu_spec.slice_gates import (
 from mu_spec.slicing import candidates, score
 from mu_spec import emit as emitting
 from mu_spec import github
+from mu_spec.render import render as render_ticket
 from mu_spec import units
 from mu_spec.storage import SLICE, SLICE_TYPES, Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
@@ -1313,11 +1314,18 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     answers "what should I build" and the graph is the authority on that.
     `get_units` is where the stored cut and its drift live.
     """
+    return _work_units(store, project)(entry)
+
+
+def _work_units(store: ProjectStore, project: str) -> Callable[[str], dict]:
+    """`get_work_unit` over one load of the graph. A press asks for every
+    unit, and loading, gating and projecting per unit was ~160 ms each on
+    DARK -- 25 s of a press spent recomputing one answer."""
     graph = store.load_graph(project)
     manifest = store.load_manifest(project)
     gates = _gate_report(graph, manifest)
     if not gates["sound"]:
-        return {
+        return lambda entry: {
             "project": project,
             "issued": False,
             "reason": "graph is unsound -- it contains orphaned entries",
@@ -1326,6 +1334,13 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     projection = units.project(manifest, graph)
     renamed = _renamed(graph)
     by_key = projection.by_key()
+    unit_of = projection.unit_of()
+    return lambda entry: _work_unit(graph, manifest, projection, renamed, by_key,
+                                    unit_of, project, entry)
+
+
+def _work_unit(graph, manifest, projection, renamed, by_key, unit_of,
+               project: str, entry: str) -> dict:
 
     # A unit key is accepted as well as a member entry, because the listing
     # this route pairs with hands out keys and nothing else. For an
@@ -1344,7 +1359,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
                 f"{exc} -- this route takes either a unit key, as the unit "
                 "listing reports it, or any entry the unit contains"
             ) from exc
-        key = projection.unit_of().get(identifier)
+        key = unit_of.get(identifier)
         if key is None:
             raise ServiceError(
                 f"{identifier} belongs to no work unit. Either it is not a "
@@ -1392,7 +1407,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
                 continue
             view = _entry_view(found, full=False)
             view["slice"] = manifest.slice_of(target)
-            view["unit"] = projection.unit_of().get(target)
+            view["unit"] = unit_of.get(target)
             read_set.append(view)
 
     # Everything else this unit's files must eventually hold.
@@ -1426,7 +1441,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
                 continue
             view = _entry_view(found, full=True)
             view["slice"] = manifest.slice_of(identifier_)
-            view["unit"] = projection.unit_of().get(identifier_)
+            view["unit"] = unit_of.get(identifier_)
             others.append((identifier_, view))
         if others:
             file_scope[path] = [v for _, v in sorted(others, key=lambda p: sort_key(p[0]))]
@@ -1651,6 +1666,62 @@ def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
     return out
 
 
+def _retired_citations(graph: Graph, keys, fetch, existing) -> list[dict]:
+    """Every retired entry a rendered ticket cites, with its live successor
+    (M27, D3: refused). A key that cannot be rendered is skipped here; the
+    press reports it against its own unit."""
+    out: list[dict] = []
+    for key in keys:
+        try:
+            ticket = render_ticket(fetch(key), existing=existing)
+        except (ServiceError, ValueError, KeyError):
+            continue
+        for cited, where in ticket.cites:
+            try:
+                live = parse(cited)
+            except InvalidIdentifier:
+                continue
+            seen = {live}
+            while (after := graph.superseded_by(live)) is not None and after not in seen:
+                seen.add(live := after)
+            if len(seen) > 1:
+                out.append({"key": key, "retired": cited, "successor": str(live), "in": where})
+    return out
+
+
+def _retired_refusal(project: str, repo, cut_seq, refused: list[dict]) -> dict:
+    return {
+        "emitted": False,
+        "project": project,
+        "repo": repo,
+        "cut_seq": cut_seq,
+        "reason": "a ticket would name a superseded entry, so nothing was "
+        "written: " + "; ".join(
+            f"{r['key']} cites {r['retired']} (in {r['in']}), superseded by "
+            f"{r['successor']}" for r in refused) + ". Amend the citing entry "
+        "to name the live one, take a cut, and press again.",
+        "refused": refused,
+    }
+
+
+def emission_refusal(store: ProjectStore, project: str) -> dict | None:
+    """The superseded-id refusal alone, for the route to answer 400 before it
+    starts a job. Anything else that stops a press is the press's to report."""
+    manifest = store.load_manifest(project)
+    cut = units.current_cut(store.units_path(project))
+    if cut is None:
+        return None
+    graph = store.load_graph(project)
+    try:
+        live, _ = emitting.standing(store.emissions_path(project), manifest.repo or "",
+                                    _renamed(graph))
+    except emitting.EmissionError:
+        live = {}
+    refused = _retired_citations(graph, [u.key for u in cut.units],
+                                 _work_units(store, project), emitting.completed(live))
+    return _retired_refusal(project, manifest.repo, cut.seq, refused) if refused else None
+
+
 def emit_tickets(
     store: ProjectStore,
     project: str,
@@ -1757,6 +1828,18 @@ def emit_tickets(
                 "reason": f"'waves' must be a whole number of at least 1, or \"shipped\" for only the waves already out, not {raw!r}",
             }
 
+    # Every ticket rendered before anything is written: one that names a
+    # superseded entry refuses the whole press (M27). Provenance lines are
+    # stripped before this sees them, and unit keys are names, not citations.
+    fetch = _work_units(store, project)
+    renamed = _renamed(graph)
+    refused = _retired_citations(
+        graph, order, fetch,
+        emitting.completed(emitting.standing(store.emissions_path(project),
+                                             manifest.repo, renamed)[0]))
+    if refused:
+        return _retired_refusal(project, manifest.repo, cut.seq, refused)
+
     if client is None:
         client = github.GitHub(token)
 
@@ -1766,7 +1849,7 @@ def emit_tickets(
         cut_seq=cut.seq,
         order=order,
         edges={k: tuple(v) for k, v in cut.edges.items()},
-        fetch=lambda key: get_work_unit(store, project, key),
+        fetch=fetch,
         client=client,
         now_fn=now_fn,
         labels=manifest.labels,
@@ -1774,7 +1857,7 @@ def emit_tickets(
         waves=[list(w) for w in schedule.waves],
         horizon=horizon,
         pickup=manifest.pickup,
-        renamed=_renamed(graph),
+        renamed=renamed,
         project=project,
     )
     result["project"] = project

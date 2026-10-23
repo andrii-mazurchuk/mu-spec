@@ -42,6 +42,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from mu_spec.body import strip_provenance
 from mu_spec.github import GitHubError
 from mu_spec.render import BODY_LIMIT, LABEL_NAMESPACE, render
 from mu_spec.identifiers import ALL_LAYERS, LEGACY_SEPARATOR, SEPARATOR, SEPARATOR_CLASS
@@ -468,6 +469,10 @@ _IDENT = re.compile(
 # own, and ending there left most of such an entry outside the fingerprint.
 _AFTER_CONTRACT = "\n## Files you may write"
 _V2 = "2:"
+# V3 reads the contract without its provenance lines (M27), which tickets no
+# longer carry. A V2 record still has them in its hash, so it is compared
+# through the closed issue's own text, like V1 -- never as a changed contract.
+_V3 = "3:"
 
 
 def _digest(section: str) -> str:
@@ -476,13 +481,21 @@ def _digest(section: str) -> str:
 
 def contract_of(body: str) -> str:
     """Fingerprint of what a ticket asks to be built: its `## Contract`
-    section, identifiers masked, whitespace collapsed. Context -- blockers,
-    the read set, the other contracts a file serves, labels -- is not in it,
-    so a closed issue whose context moved stays settled and one whose
-    contract moved gets a follow-up."""
+    section, provenance lines out, identifiers masked, whitespace collapsed.
+    Context -- blockers, the read set, the other contracts a file serves,
+    labels -- is not in it, so a closed issue whose context moved stays
+    settled and one whose contract moved gets a follow-up."""
     text = (body or "").replace("\r\n", "\n")
     _, found, rest = text.partition("## Contract")
-    return _V2 + _digest(rest.split(_AFTER_CONTRACT, 1)[0] if found else "")
+    section = rest.split(_AFTER_CONTRACT, 1)[0] if found else ""
+    return _V3 + _digest(strip_provenance(section))
+
+
+def completed(live: dict[str, dict]) -> frozenset[str]:
+    """The unit keys this unit's own record holds as closed `completed`: their
+    files are on main. Read from the settled markers, never from the tracker."""
+    return frozenset(key for key, issue in live.items()
+                     if (issue.get("settled") or {}).get("state_reason") == "completed")
 
 
 def _contract_v1(body: str) -> str:
@@ -498,10 +511,13 @@ def _contract_moved(recorded: "str | None", issue_body: str, ticket_body: str) -
     ticket as it renders now. A record from before the current fingerprint is
     compared through the issue's own text rather than its hash, so the change
     of fingerprint is not mistaken for a change of contract."""
-    if recorded and recorded.startswith(_V2):
+    if recorded and recorded.startswith(_V3):
         return recorded != contract_of(ticket_body)
     if issue_body:
         return contract_of(issue_body) != contract_of(ticket_body)
+    if recorded and recorded.startswith(_V2):
+        text = (ticket_body or "").replace("\r\n", "\n").partition("## Contract")[2]
+        return recorded != _V2 + _digest(text.split(_AFTER_CONTRACT, 1)[0])
     return recorded != _contract_v1(ticket_body)
 
 
@@ -793,6 +809,9 @@ def emit(
     on a key no open or `completed` issue carries is reported in `dead`.
     """
     live, wired_before = standing(log_path, repo, renamed)
+    # Read before adoption replaces any record: a file is on main once a unit
+    # writing it was closed `completed`, as this record holds it.
+    existing = completed(live)
 
     if not order:
         return {
@@ -1072,7 +1091,7 @@ def emit(
                 continue
             try:
                 ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                                extra_labels=labels, batch=batch)
+                                extra_labels=labels, batch=batch, existing=existing)
             except (ValueError, KeyError) as exc:
                 failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
                 frozen.add(key)
@@ -1181,7 +1200,7 @@ def emit(
         for key in missing:
             try:
                 ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                                extra_labels=labels, batch=batch)
+                                extra_labels=labels, batch=batch, existing=existing)
             except (ValueError, KeyError) as exc:
                 # An unsound graph refuses one unit at a time. One bad unit must
                 # not cost the other hundred and forty-three.
