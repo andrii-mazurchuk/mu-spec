@@ -51,7 +51,7 @@ import functools
 from typing import Callable
 
 from mu_spec import body
-from mu_spec.body import Import
+from mu_spec.body import Import, parse as parse_body, strip_provenance
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     LAYERS,
@@ -82,6 +82,8 @@ BAD_IMPORT = "bad_import"
 NO_IMPORTS_LINE = "no_imports_line"
 # Two entries supersede the same id.
 TWO_SUCCESSORS = "two_successors"
+# A spec id in an entry's body that no edge of the entry reaches. Reported.
+UNLINKED_MENTION = "unlinked_mention"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -403,6 +405,29 @@ def two_successors(graph: Graph) -> list[Finding]:
     ]
 
 
+def unlinked_mentions(graph: Graph) -> list[Finding]:
+    """A spec id named in an entry's body that none of its edges reach --
+    derives_from, depends_on, emits_into, supersedes, or its own id. A
+    reference the graph cannot see is one a supersession will not flag.
+
+    COMPLETENESS, reported and never blocking (D3): prose may name an entry
+    for a reason no edge expresses. Provenance lines are history, not
+    references, so they are read without (body.strip_provenance)."""
+    findings: list[Finding] = []
+    for entry in graph.entries():
+        linked = {str(entry.id), *map(str, entry.derives_from), *map(str, entry.depends_on),
+                  *map(str, entry.emits_into)}
+        if entry.supersedes is not None:
+            linked.add(str(entry.supersedes))
+        named = parse_body(strip_provenance(entry.body), entry.id.layer).id_mentions
+        loose = [i for i in named if i.startswith(SPEC) and i not in linked]
+        if loose:
+            findings.append(Finding(UNLINKED_MENTION, entry.id,
+                                    f"names {', '.join(loose)} in its body with no edge to "
+                                    f"{'it' if len(loose) == 1 else 'them'}"))
+    return findings
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
@@ -414,5 +439,6 @@ def admission_gates(graph: Graph) -> list[Finding]:
         + untested(graph)
         + imports(graph)
         + two_successors(graph)
+        + unlinked_mentions(graph)
     )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

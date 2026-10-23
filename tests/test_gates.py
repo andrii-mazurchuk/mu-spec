@@ -297,3 +297,45 @@ def test_an_entry_depending_on_itself_is_a_bad_dependency():
     graph = Graph([_entry("I-01"), _entry("B-01", "I-01"), _dep("A-01", "B-01", "A-01")])
     findings = [f for f in admission_gates(graph) if f.kind == BAD_DEPENDENCY]
     assert "itself" in findings[0].detail
+
+
+# -- a spec id named in prose with no edge to it: reported, never blocking --
+
+
+def test_a_spec_id_in_prose_with_no_edge_is_reported():
+    from mu_spec.gates import UNLINKED_MENTION
+
+    graph = Graph([
+        _entry("I-01"), _entry("B-01", "I-01"), _entry("A-01", "B-01"),
+        _entry("S-01", "A-01"), _entry("T-01", "S-01"), _entry("T-02", "S-02"),
+        Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
+              depends_on=(parse("S-01"),),
+              body="Calls `load` (S-01) and `save` (S-03); see A-01."),
+        _entry("S-03", "A-01"), _entry("T-03", "S-03"),
+    ])
+    found = [f for f in admission_gates(graph) if f.kind == UNLINKED_MENTION]
+    assert [(str(f.id), f.detail.split(" ")[1]) for f in found] == [("S-02", "S-03")]
+
+
+def test_edges_supersession_and_provenance_never_count_as_unlinked():
+    from mu_spec.gates import UNLINKED_MENTION
+
+    graph = Graph([
+        _entry("I-01"), _entry("B-01", "I-01"), _entry("A-01", "B-01"),
+        _entry("S-01", "A-01"), _entry("T-01", "S-01"),
+        Entry(id=parse("S-02"), derives_from=(parse("A-01"),), body="old"),
+        Entry(id=parse("S-04"), derives_from=(parse("A-01"),), supersedes=parse("S-02"),
+              depends_on=(parse("S-01"),),
+              body="S-04 uses S-01 and replaces S-02.\n\n"
+                   "*(Supersedes S-02, which depended on S-09. Raised as iss-0003.)*"),
+        _entry("T-04", "S-04"),
+    ])
+    assert not [f for f in admission_gates(graph) if f.kind == UNLINKED_MENTION]
+
+
+def test_an_unlinked_mention_never_blocks():
+    """A report, never a refusal (D3): proxies do not gate."""
+    from mu_spec import service
+    from mu_spec.gates import UNLINKED_MENTION
+
+    assert UNLINKED_MENTION not in service._BLOCKING
