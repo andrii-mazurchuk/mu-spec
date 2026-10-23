@@ -136,6 +136,16 @@ code, as `entry_type: project_event`. Best-effort in both directions: the
 local log is the durable record, and a logs unit that is down, absent, or
 that refuses the type changes nothing here.
 
+**Change log.** Every POST, admitted or refused, appends one `mutation`
+event to the lifecycle log (`lifecycle.jsonl` in the state root): route,
+`actor` (the body field, else the `X-Actor` header, else `unknown`), status,
+body and result clipped to ~2 KB, and for the manifest setters and proposal
+rulings a `was` holding the value replaced. Read it with
+`GET /projects/{project}/events?kind=mutation&since=N`. Ordinary work never
+loads it, and a write that cannot be logged still succeeds. The inbox and
+issue queue are append-only too: resolving or closing appends a new line
+for the same id, carrying `resolution.at` and `resolution.by`.
+
 ## Private storage
 
 One directory, learned from `HOLONIC_STATE_DIR`, holding the projects

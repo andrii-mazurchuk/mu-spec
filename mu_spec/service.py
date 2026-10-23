@@ -210,15 +210,25 @@ def get_message(inbox: Inbox, message_id: str) -> dict:
     return message.to_json()
 
 
-def resolve_message(inbox: Inbox, message_id: str, body: dict) -> dict:
+def resolve_message(
+    inbox: Inbox,
+    message_id: str,
+    body: dict,
+    now_fn: Callable[[], float] = lambda: 0.0,
+    actor: str = "unknown",
+) -> dict:
     """Close a request: accepted (and here is what it produced) or rejected
-    (and here is why). Leaving it pending is what keeps the queue honest."""
+    (and here is why). Leaving it pending is what keeps the queue honest.
+    The resolution carries when and by whom, beside the pending line it
+    follows."""
     try:
         message = inbox.resolve(
             message_id,
             body.get("status", ACCEPTED),
             body.get("note", ""),
             body.get("produced", []),
+            at=now_fn(),
+            by=actor,
         )
     except InboxError as exc:
         raise ServiceError(str(exc)) from exc
@@ -835,16 +845,37 @@ def list_issues(issues: IssueLog, project: str, query: dict) -> dict:
     return {"project": project, "issues": [i.to_json() for i in rows]}
 
 
-def close_issue(issues: IssueLog, issue_id: str, body: dict) -> dict:
+def close_issue(
+    issues: IssueLog,
+    issue_id: str,
+    body: dict,
+    now_fn: Callable[[], float] = lambda: 0.0,
+    actor: str = "unknown",
+    events: Lifecycle | None = None,
+) -> dict:
+    at = now_fn()
     try:
         issue = issues.close(
             issue_id,
             body.get("status", RESOLVED),
             body.get("note", ""),
             body.get("produced", []),
+            at=at,
+            by=actor,
         )
     except IssueError as exc:
         raise ServiceError(str(exc)) from exc
+    if events is not None:
+        events.record(
+            lc.ISSUE_CLOSED,
+            issue.project,
+            lambda: at,
+            refs=[issue.id, issue.target],
+            status=issue.status,
+            note=(issue.resolution or {}).get("note", ""),
+            produced=(issue.resolution or {}).get("produced", []),
+            by=actor,
+        )
     return issue.to_json()
 
 
@@ -2550,3 +2581,30 @@ def reject_proposal(store: ProjectStore, project: str, body: dict) -> dict:
         },
     )
     return {"project": project, "rejected": True, "next": "slicing runs again"}
+
+
+def prior_state(store: ProjectStore, route: str | None, project: str, body: dict):
+    """What a manifest setter or a proposal ruling is about to replace, for
+    the change log's `was`. None for every other route.
+
+    These overwrite in place, so without this the log would show only the
+    new value, and a wrong judgement could not be undone by reading it.
+    """
+    if route in ("propose", "reject_proposal"):
+        return {"proposal": _read_proposal(store, project)}
+    if route not in ("set_repo", "set_labels", "declare_module", "ratify"):
+        return None
+    manifest = store.load_manifest(project)
+    if route == "set_repo":
+        return {"repo": manifest.repo}
+    if route == "set_labels":
+        return {"labels": list(manifest.labels), "pickup": list(manifest.pickup)}
+    if route == "declare_module":
+        path = str(body.get("path") or "").strip()
+        return {"path": path,
+                "implements": sorted(str(i) for i in manifest.modules.get(path, set()))}
+    return {
+        "slices": {n: sorted(str(i) for i in s.members) for n, s in manifest.slices.items()},
+        "types": {n: s.type for n, s in manifest.slices.items()},
+        "proposal": _read_proposal(store, project),
+    }

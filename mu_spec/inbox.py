@@ -176,18 +176,20 @@ class Inbox:
     def _read(self) -> list[Message]:
         if not self._path.exists():
             return []
-        return [
-            Message.from_json(json.loads(line))
-            for line in self._path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        # Append-only: a change of status is a new line for the same id, and
+        # the last line for an id is its current state. The earlier lines are
+        # the history -- what it said before, and who resolved it when.
+        latest: dict[str, Message] = {}
+        for line in self._path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                message = Message.from_json(json.loads(line))
+                latest[message.id] = message
+        return list(latest.values())
 
-    def _write(self, messages: list[Message]) -> None:
+    def _append(self, message: Message) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            "".join(json.dumps(m.to_json()) + "\n" for m in messages),
-            encoding="utf-8",
-        )
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(message.to_json()) + "\n")
 
     def post(self, body: dict, now_fn: Callable[[], float]) -> Message:
         kind = body.get("type")
@@ -227,8 +229,7 @@ class Inbox:
             status=PENDING,
             at=now_fn(),
         )
-        messages.append(message)
-        self._write(messages)
+        self._append(message)
         return message
 
     def get(self, message_id: str) -> Message | None:
@@ -253,40 +254,47 @@ class Inbox:
         return out
 
     def resolve(
-        self, message_id: str, status: str, note: str = "", produced: list[str] = ()
+        self,
+        message_id: str,
+        status: str,
+        note: str = "",
+        produced: list[str] = (),
+        at: float = 0.0,
+        by: str = "unknown",
     ) -> Message:
         if status not in (ACCEPTED, REJECTED):
             raise InboxError(f"resolution status must be {ACCEPTED!r} or {REJECTED!r}")
-        messages = self._read()
-        for index, message in enumerate(messages):
-            if message.id != message_id:
-                continue
+        message = self.get(message_id)
+        if message is not None:
             if message.status != PENDING:
                 raise InboxError(f"{message_id} is already {message.status}")
             resolved = dataclasses.replace(
                 message,
                 status=status,
-                resolution={"note": note, "produced": list(produced)},
+                resolution={"note": note, "produced": list(produced),
+                            "at": at, "by": by},
             )
-            messages[index] = resolved
-            self._write(messages)
+            self._append(resolved)
             return resolved
         raise InboxError(f"unknown message {message_id!r}")
 
     def record_produced(self, message_id: str, produced: list[str]) -> None:
         """Append identifiers an amendment created in response to a message,
         without resolving it -- propagation usually takes several amendments
-        before the request is actually satisfied."""
-        messages = self._read()
-        for index, message in enumerate(messages):
-            if message.id == message_id:
-                existing = (message.resolution or {}).get("produced", [])
-                messages[index] = dataclasses.replace(
+        before the request is actually satisfied.
+
+        ponytail: one whole message per call, so a message answered by many
+        amendments repeats its growing `produced` list on every line. Append a
+        delta line instead if inbox.jsonl ever gets slow to read."""
+        message = self.get(message_id)
+        if message is not None:
+            existing = (message.resolution or {}).get("produced", [])
+            self._append(
+                dataclasses.replace(
                     message,
                     resolution={
                         **(message.resolution or {"note": ""}),
                         "produced": existing + list(produced),
                     },
                 )
-                self._write(messages)
-                return
+            )

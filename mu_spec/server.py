@@ -32,6 +32,7 @@ from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES, SEPARATOR_CLASS
 from mu_spec.inbox import Inbox, InboxError, TYPES
 from mu_spec.issues import KINDS as ISSUE_KINDS, STATUSES as ISSUE_STATUSES
 from mu_spec.issues import IssueError, IssueLog
+from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
 from mu_spec.shipping import ship
 from mu_spec.storage import SLICE_TYPES
@@ -142,6 +143,12 @@ def _tools() -> list[dict[str, Any]]:
         return {"type": "string", "enum": list(values), **extra}
 
     def tool(name, desc, method, path, props, required=()):
+        if method == "POST":
+            # Every write lands in the change log under this name; without it
+            # a wrong call cannot be traced back to whoever made it.
+            desc += (" Send `actor` (your session or agent name): every "
+                     "write is logged under it.")
+            props = {**props, "actor": {"type": "string"}}
         return {
             "name": name,
             "description": desc,
@@ -1213,6 +1220,25 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
 ]
 
 
+# How much of a request body and a response the change log keeps. Enough to
+# see what was asked and what came back; not a second copy of the graph.
+LOG_CLIP = 2048
+
+
+def _clip(value: Any) -> Any:
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return value if len(text) <= LOG_CLIP else text[:LOG_CLIP] + "..."
+
+
+def _route_of(method: str, raw_path: str) -> tuple[str | None, dict[str, str]]:
+    path = unquote(urlparse(raw_path).path).rstrip("/") or "/"
+    for route_method, pattern, route_name in _ROUTES:
+        match = pattern.match(path)
+        if match and route_method == method:
+            return route_name, match.groupdict()
+    return None, {}
+
+
 def handle(
     method: str,
     raw_path: str,
@@ -1227,8 +1253,81 @@ def handle(
     emit_client=None,
     identity_client=None,
     sha_fn: Callable[[], str | None] = git_sha,
+    actor: str | None = None,
 ) -> tuple[int, str, str]:
-    """Resolve one request to (status, content_type, body)."""
+    """Resolve one request to (status, content_type, body).
+
+    Every POST -- admitted, refused or unrouted -- leaves one `mutation` event:
+    who sent it (`actor` in the body, else the X-Actor header, else
+    "unknown"), what it carried, what came back, and for a manifest setter
+    the value it replaced. Here and nowhere else, so a new route cannot
+    forget to log.
+    """
+    # A copy of every recorded event goes to whichever unit holds the logs
+    # role, addressed by role and best-effort. The local log is the durable
+    # record; this is for whoever aggregates across units.
+    events = events or Lifecycle(
+        store.events_path(), sink=lambda e: ship(store.root(), e)
+    )
+    body = body or {}
+    claimed = body.get("actor")
+    who = claimed.strip() if isinstance(claimed, str) and claimed.strip() else (
+        actor or "unknown"
+    )
+    args = (method, raw_path, store, prompts_dir, body, now_fn, inbox, issues,
+            events, runs, emit_client, identity_client, sha_fn, who)
+    if method != "POST":
+        return _handle(*args)
+
+    name, params = _route_of(method, raw_path)
+    project = params.get("project", "")
+    try:
+        was = service.prior_state(store, name, project, body)
+    except Exception:  # noqa: BLE001 -- see below
+        was = None
+    status, content_type, text = _handle(*args)
+    # Logging never breaks a request. The write has already happened by now;
+    # reporting it as failed because its log line could not land would
+    # invite a retry that does it twice.
+    try:
+        result = json.loads(text) if content_type == JSON else text
+        if not project:
+            for source in (body, result):
+                if isinstance(source, dict) and isinstance(source.get("project"), str):
+                    project = source["project"]
+                    break
+        facts: dict[str, Any] = {
+            "route": name or "unrouted",
+            "path": raw_path,
+            "actor": who,
+            "status": status,
+            "body": _clip(body),
+            "result": _clip(result),
+        }
+        if was is not None:
+            facts["was"] = was
+        events.record(lc.MUTATION, project or None, now_fn, **facts)
+    except Exception:  # noqa: BLE001
+        pass
+    return status, content_type, text
+
+
+def _handle(
+    method: str,
+    raw_path: str,
+    store: ProjectStore,
+    prompts_dir: Path,
+    body: dict,
+    now_fn: Callable[[], float],
+    inbox: Inbox | None,
+    issues: IssueLog | None,
+    events: Lifecycle,
+    runs: emitting.Runs | None,
+    emit_client,
+    identity_client,
+    sha_fn: Callable[[], str | None],
+    actor: str,
+) -> tuple[int, str, str]:
     parsed = urlparse(raw_path)
     # Identifiers are ASCII now and need no encoding. The old U+00B7
     # spelling still resolves, so a link in an issue created before the
@@ -1258,12 +1357,6 @@ def handle(
     project = params.get("project", "")
     inbox = inbox or Inbox(store.inbox_path())
     issues = issues or IssueLog(store.issues_path())
-    # A copy of every recorded event goes to whichever unit holds the logs
-    # role, addressed by role and best-effort. The local log is the durable
-    # record; this is for whoever aggregates across units.
-    events = events or Lifecycle(
-        store.events_path(), sink=lambda e: ship(store.root(), e)
-    )
     try:
         if name == "health":
             return 200, JSON, json.dumps({"status": "ok"})
@@ -1365,7 +1458,9 @@ def handle(
             return (
                 200,
                 JSON,
-                json.dumps(service.resolve_message(inbox, params["mid"], body)),
+                json.dumps(
+                    service.resolve_message(inbox, params["mid"], body, now_fn, actor)
+                ),
             )
 
         if name == "create_project":
@@ -1423,7 +1518,9 @@ def handle(
                 200,
                 JSON,
                 json.dumps(
-                    service.close_issue(issues, params["iid"], body or {})
+                    service.close_issue(
+                        issues, params["iid"], body, now_fn, actor, events
+                    )
                 ),
             )
 
@@ -1657,6 +1754,7 @@ def build_handler(
             status, content_type, body = handle(
                 method, self.path, store, prompts_dir, payload, runs=runs,
                 identity_client=github_client(),
+                actor=self.headers.get("X-Actor"),
             )
             self._write(status, content_type, body)
 

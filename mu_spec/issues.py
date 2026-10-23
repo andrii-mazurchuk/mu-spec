@@ -144,18 +144,20 @@ class IssueLog:
     def _read(self) -> list[Issue]:
         if not self._path.exists():
             return []
-        return [
-            Issue.from_json(json.loads(line))
-            for line in self._path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        # Append-only: closing is a new line for the same id, and the last
+        # line for an id is its current state. The earlier lines are the
+        # history -- what it said while open, and who closed it when.
+        latest: dict[str, Issue] = {}
+        for line in self._path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                issue = Issue.from_json(json.loads(line))
+                latest[issue.id] = issue
+        return list(latest.values())
 
-    def _write(self, issues: list[Issue]) -> None:
+    def _append(self, issue: Issue) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            "".join(json.dumps(i.to_json()) + "\n" for i in issues),
-            encoding="utf-8",
-        )
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(issue.to_json()) + "\n")
 
     def raise_issue(
         self,
@@ -195,8 +197,7 @@ class IssueLog:
             round=max(1, int(body.get("round", 1))),
             at=now_fn(),
         )
-        issues.append(issue)
-        self._write(issues)
+        self._append(issue)
         return issue
 
     def get(self, issue_id: str) -> Issue | None:
@@ -218,24 +219,28 @@ class IssueLog:
         return out
 
     def close(
-        self, issue_id: str, status: str, note: str = "", produced: list[str] = ()
+        self,
+        issue_id: str,
+        status: str,
+        note: str = "",
+        produced: list[str] = (),
+        at: float = 0.0,
+        by: str = "unknown",
     ) -> Issue:
         if status not in (RESOLVED, ESCALATED):
             raise IssueError(
                 f"closing status must be {RESOLVED!r} or {ESCALATED!r}"
             )
-        issues = self._read()
-        for index, issue in enumerate(issues):
-            if issue.id != issue_id:
-                continue
+        issue = self.get(issue_id)
+        if issue is not None:
             if issue.status != OPEN:
                 raise IssueError(f"{issue_id} is already {issue.status}")
             closed = dataclasses.replace(
                 issue,
                 status=status,
-                resolution={"note": note, "produced": list(produced)},
+                resolution={"note": note, "produced": list(produced),
+                            "at": at, "by": by},
             )
-            issues[index] = closed
-            self._write(issues)
+            self._append(closed)
             return closed
         raise IssueError(f"unknown issue {issue_id!r}")
