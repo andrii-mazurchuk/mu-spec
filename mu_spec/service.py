@@ -1716,7 +1716,7 @@ def emit_tickets(
     result["project"] = project
     if events is not None and result.get("emitted"):
         events.record(
-            "tickets_emitted",
+            lc.TICKETS_EMITTED,
             project,
             now_fn,
             repo=manifest.repo,
@@ -1831,7 +1831,7 @@ def rollback_tickets(
     result["project"] = project
     if events is not None and result.get("rolled_back"):
         events.record(
-            "tickets_rolled_back",
+            lc.TICKETS_ROLLED_BACK,
             project,
             now_fn,
             repo=manifest.repo,

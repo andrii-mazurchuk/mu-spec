@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -48,6 +49,13 @@ AUDIT = "audit"
 # A person decided the corpus was finished and cut it into work units.
 # The graph cannot recover this: a cut leaves a file, not an edge.
 WORK_UNITS = "work_units"
+# A person shipped a cut to a tracker, or withdrew one. Outbound, so nothing
+# in this unit's state says when it happened or what it touched.
+TICKETS_EMITTED = "tickets_emitted"
+TICKETS_ROLLED_BACK = "tickets_rolled_back"
+# Any write request at all, as it arrived: who sent it, what it carried, what
+# came back. Recorded once, in the HTTP layer, so no route can forget.
+MUTATION = "mutation"
 
 KINDS = (
     REQUEST,
@@ -61,7 +69,16 @@ KINDS = (
     PLAN,
     AUDIT,
     WORK_UNITS,
+    TICKETS_EMITTED,
+    TICKETS_ROLLED_BACK,
+    MUTATION,
 )
+
+
+# One writer at a time in this process: an emission records from its own
+# thread while requests record from theirs, and two of them reading the same
+# tail would hand out the same seq.
+_APPEND = threading.Lock()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,6 +136,36 @@ class Lifecycle:
             if line.strip()
         ]
 
+    def _last_seq(self) -> int:
+        """The seq of the last line, read from the end of the file.
+
+        Every write request now logs, so counting the whole file per event
+        would make each write O(history). Lines are only ever appended and
+        numbered in order, so the last line's seq is the count.
+        """
+        try:
+            with self._path.open("rb") as handle:
+                end = handle.seek(0, 2)
+                size = 8192
+                while True:
+                    start = max(0, end - size)
+                    handle.seek(start)
+                    lines = [l for l in handle.read().splitlines() if l.strip()]
+                    # The first line of a mid-file chunk may be partial; with
+                    # two in hand the last one is whole.
+                    if start == 0 or len(lines) >= 2:
+                        break
+                    size *= 2
+        except FileNotFoundError:
+            return 0
+        if not lines:
+            return 0
+        try:
+            return int(json.loads(lines[-1])["seq"])
+        except (ValueError, KeyError, TypeError):
+            # A torn last line. Count instead -- slow, and still right.
+            return len(self._read())
+
     def record(
         self,
         kind: str,
@@ -139,22 +186,27 @@ class Lifecycle:
         never the point of the call that triggers it -- an amendment that
         succeeded must not be reported as failed because its log line was
         malformed. The vocabulary is still closed; a bad kind is dropped,
-        not silently renamed.
+        not silently renamed. An unwritable log returns None for the same
+        reason.
         """
         if kind not in KINDS:
             return None
-        events = self._read()
-        event = Event(
-            seq=len(events) + 1,
-            at=now_fn(),
-            project=project,
-            kind=kind,
-            refs=tuple(str(r) for r in refs),
-            facts=facts,
-        )
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.to_json(), ensure_ascii=False) + "\n")
+        try:
+            with _APPEND:
+                event = Event(
+                    seq=self._last_seq() + 1,
+                    at=now_fn(),
+                    project=project,
+                    kind=kind,
+                    refs=tuple(str(r) for r in refs),
+                    facts=facts,
+                )
+                line = json.dumps(event.to_json(), ensure_ascii=False, default=str)
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                with self._path.open("a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
+        except OSError:
+            return None
         return event
 
     def list(
