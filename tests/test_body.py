@@ -290,6 +290,14 @@ def test_dark_s304_new_spelling():
     assert parse(S_304, SPEC).defines == ("FIGURES", "regenerate")
 
 
+def test_a_name_the_prose_only_reaches_is_not_imported():
+    """DARK S-80: `DerivedStore` comes back from `Corpus.derived()`; the
+    entry never imports it."""
+    text = ("Imports `Corpus` (S·60), `Cited` (S·58), and reaches "
+            "`DerivedStore` only through `Corpus.derived()` (S·33).")
+    assert legacy_imports(text) == (Import("S-60", ("Corpus",)), Import("S-58", ("Cited",)))
+
+
 def test_dark_s03_has_no_imports():
     facts = parse(S_03, SPEC)
     assert facts.imports_line_present is False and facts.problems == ()

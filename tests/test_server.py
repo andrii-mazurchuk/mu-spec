@@ -1112,6 +1112,14 @@ def _spec_in(store, prompts, mid, slice_name, title, parent, depends_on=None):
     )
 
 
+def _one_column_two_specs(store, prompts):
+    """S-01 and S-02 in listings, no dependency between them. One slice:
+    a file implemented from two slices has two owners (split_ownership)."""
+    mid = seed(store, prompts)
+    _spec_in(store, prompts, mid, "listings", "Use the ledger module", "A-01")
+    return mid
+
+
 def _two_columns(store, prompts):
     """listings (S-01) and payouts (S-02), no dependency between them yet."""
     mid = seed(store, prompts)
@@ -2730,7 +2738,7 @@ def test_two_entries_in_one_file_are_two_units_over_one_write_set(store, prompts
     and neither is an order on the other, so what stops them colliding is
     `overlap` -- which the unit view has to carry, or a dispatcher has no way
     to know not to run them together."""
-    _two_columns(store, prompts)
+    _one_column_two_specs(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "core.py", "implements": ["S-01", "S-02"]})
     status_a, by_first = call(store, prompts, "GET", "/projects/m/units/S-01")
@@ -2843,7 +2851,7 @@ def test_a_unit_is_handed_the_other_contracts_its_files_must_serve(store, prompt
     the one entry it holds. Without this the other claimants inherit an
     invention made from a fraction of the information, and their scenarios
     then pin it permanently."""
-    _two_columns(store, prompts)
+    _one_column_two_specs(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "core.py", "implements": ["S-01", "S-02"]})
     _, payload = call(store, prompts, "GET", "/projects/m/units/S-01")
@@ -2871,7 +2879,7 @@ def test_file_scope_never_includes_the_units_own_entries(store, prompts):
     """It answers "what else must this file serve", so the entries already in
     hand are not part of the answer. Including them would read as a second,
     disagreeing copy of the unit's own entry list."""
-    _two_columns(store, prompts)
+    _one_column_two_specs(store, prompts)
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "core.py", "implements": ["S-01", "S-02"]})
     _, payload = call(store, prompts, "GET", "/projects/m/units/S-02")

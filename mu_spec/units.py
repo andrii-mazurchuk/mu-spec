@@ -301,9 +301,9 @@ def module_slices(
     """Which slices a module reaches, **most-represented first**.
 
     A module may serve more than one, and on real data it does: one file
-    here implements four capture entries and four observability ones. That
-    is not a defect to refuse -- a slice is a partition of ENTRIES, and a
-    file is a many-to-many pointer that was never promised to respect it.
+    here implements four capture entries and four observability ones. This
+    view only reports it; the refusal is `slice_gates.module_gates`
+    (`split_ownership`, M3), because slices define write ownership.
 
     Ordered by how many of the module's entries come from each slice so a
     caller needing a single value can take the first without this unit

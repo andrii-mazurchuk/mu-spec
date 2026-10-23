@@ -607,6 +607,14 @@ package is issued:*
 - Is the projected slice dependency graph acyclic? (bad slicing — see below)
 - Does any cross-cutting slice depend on a feature slice? (misclassification)
 - Does any entry belong to more than one slice? (overlapping ownership)
+- Does every entry a spec's `Imports:` line names have a `depends_on` edge from it?
+  (bad import)
+- Is every id superseded at most once? (two successors)
+- Read against the module map, and so refusing the cut rather than the amendment — a
+  module is declared after its entry exists: does every imported module under a code
+  root resolve to a declared module whose implementer is depended on (bad module
+  import); is every file implemented from one slice only (split ownership); does every
+  file a spec names under a code root have a declaring module (undeclared path)?
 
 *Complete — the report of what is left to do, never a blocker:*
 - Does every entry above have at least one entry below serving it? (unserved

@@ -27,7 +27,14 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from mu_spec.gates import BAD_DEPENDENCY, ORPHAN, STRANDED, admission_gates
+from mu_spec.gates import (
+    BAD_DEPENDENCY,
+    BAD_IMPORT,
+    ORPHAN,
+    STRANDED,
+    TWO_SUCCESSORS,
+    admission_gates,
+)
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     ALL_LAYERS,
@@ -45,7 +52,15 @@ from mu_spec.lifecycle import Lifecycle
 from mu_spec.metrics import change_locality, corrections_by_layer, structural
 from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
-from mu_spec.slice_gates import BAD_EMISSION, edge_gates, slice_gates
+from mu_spec.slice_gates import (
+    BAD_EMISSION,
+    BAD_MODULE_IMPORT,
+    SPLIT_OWNERSHIP,
+    UNDECLARED_PATH,
+    edge_gates,
+    module_gates,
+    slice_gates,
+)
 from mu_spec.slicing import candidates, score
 from mu_spec import emit as emitting
 from mu_spec import github
@@ -63,7 +78,14 @@ COMMENTS_FILE = "comments.jsonl"
 # and `stale_emission`, because an emission consumes nothing, so a successor
 # on the other end changes nothing the emitter relied on -- see the branch
 # in `slice_gates` that raises it.
-_BLOCKING = (ORPHAN, BAD_DEPENDENCY, BAD_EMISSION, STRANDED)
+#
+# The last five are read from bodies and the module map (M2, M3) or are the
+# one-successor rule. `module_gates` kinds block the cut through `sound` but
+# are not checked on the amendment path -- see its docstring.
+_BLOCKING = (
+    ORPHAN, BAD_DEPENDENCY, BAD_EMISSION, STRANDED, BAD_IMPORT, TWO_SUCCESSORS,
+    BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
+)
 
 
 class ServiceError(ValueError):
@@ -125,7 +147,9 @@ def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
     other carries the thing you need to go and fix.
     """
     findings = sorted(
-        admission_gates(graph) + edge_gates(manifest, graph),
+        admission_gates(graph)
+        + edge_gates(manifest, graph)
+        + module_gates(manifest, graph),
         key=lambda f: (sort_key(f.id), f.kind),
     )
     slice_findings = slice_gates(manifest, graph)
@@ -1524,7 +1548,10 @@ def split_slice(
 
     graph = store.load_graph(project)
     before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
-    edges_before = {(f.kind, str(f.id)) for f in edge_gates(manifest, graph)}
+    edges_before = {
+        (f.kind, str(f.id))
+        for f in edge_gates(manifest, graph) + module_gates(manifest, graph)
+    }
     prospective = Manifest.from_json(manifest.to_json())
     prospective.slices[source].members -= moving
     prospective.slices[into] = Slice(name=into, members=set(moving))
@@ -1573,9 +1600,10 @@ def split_slice(
         # the split exists -- so refusing would make the fix impossible. But
         # the graph is unsound from this moment, and a split that said
         # nothing about it was accepted in silence on dark.
+        # A split can also hand one file to two slices (split_ownership).
         "made_unsound": [
             {"kind": f.kind, "id": str(f.id), "detail": f.detail}
-            for f in edge_gates(after, store.load_graph(project))
+            for f in edge_gates(after, graph) + module_gates(after, graph)
             if (f.kind, str(f.id)) not in edges_before
         ],
     }

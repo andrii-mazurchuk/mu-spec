@@ -96,11 +96,15 @@ class Graph:
 
         # id -> the entry that superseded it. Built once here rather than
         # scanned per query; supersedes is declared on the replacement, so
-        # this is the inverse index.
+        # this is the inverse index. An id two entries both supersede would
+        # keep only the last of them here, silently, so every claim is also
+        # kept in `_claims` and `contested()` hands the doubles to the gate.
+        self._claims: dict[Identifier, list[Identifier]] = {}
+        for entry in self._entries.values():
+            if entry.supersedes is not None:
+                self._claims.setdefault(entry.supersedes, []).append(entry.id)
         self._superseded: dict[Identifier, Identifier] = {
-            entry.supersedes: entry.id
-            for entry in self._entries.values()
-            if entry.supersedes is not None
+            old: new[-1] for old, new in self._claims.items()
         }
 
         self._live: dict[Identifier, Entry] = {
@@ -156,6 +160,14 @@ class Graph:
 
     def superseded_by(self, identifier: Identifier) -> Identifier | None:
         return self._superseded.get(identifier)
+
+    def contested(self) -> dict[Identifier, tuple[Identifier, ...]]:
+        """Every id that two or more entries, live or retired, supersede."""
+        return {
+            old: tuple(sorted(new, key=sort_key))
+            for old, new in self._claims.items()
+            if len(new) > 1
+        }
 
     def __contains__(self, identifier: object) -> bool:
         return identifier in self._live

@@ -25,6 +25,11 @@ Three live here, because all three are answerable from the graph alone:
   Different question, different remedy, and only one of them means the
   pipeline has not finished propagating.
 
+- bad imports -- does every entry a spec's `Imports:` line names have a
+  depends_on edge from it? SOUNDNESS: an import with no edge is a
+  dependency the scheduler cannot see. (A missing line is reported only.)
+- two successors -- is every id superseded at most once? SOUNDNESS.
+
 Keeping those apart matters, because they have different consequences.
 Unsound blocks: an amendment that would introduce an orphan is refused, and
 no work package is issued from a graph containing one. Incomplete does not
@@ -42,14 +47,20 @@ could not derive is not a computation.
 from __future__ import annotations
 
 import dataclasses
+import functools
+from typing import Callable
 
-from mu_spec.graph import Graph
+from mu_spec import body
+from mu_spec.body import Import
+from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     LAYERS,
     SPEC,
     TEST,
     Identifier,
+    InvalidIdentifier,
     derives_legally,
+    parse,
     sort_key,
 )
 
@@ -64,6 +75,13 @@ UNTESTED = "untested"
 # a graph that never made sense. Its detail names the successor, so the
 # remedy is in the finding.
 STRANDED = "stranded"
+# M2: a spec body imports from an entry it has no depends_on edge to.
+BAD_IMPORT = "bad_import"
+# Reported, never refused: a spec with no `Imports:` line, in a project that
+# writes the line elsewhere.
+NO_IMPORTS_LINE = "no_imports_line"
+# Two entries supersede the same id.
+TWO_SUCCESSORS = "two_successors"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -255,6 +273,136 @@ def bad_dependencies(graph: Graph) -> list[Finding]:
     return findings
 
 
+# Bodies are append-only, so a body's facts never change. Every gate report
+# reads every spec body, and a replay reads them 500 times over.
+spec_facts = functools.lru_cache(maxsize=8192)(lambda text: body.parse(text, SPEC))
+
+
+def strict_imports(entry: Entry) -> tuple[Import, ...] | None:
+    """The live reader: a spec body's D4 `Imports:` line, or None when it has
+    none. Only this reader ever refuses; `body.legacy_imports` exists for
+    replaying pre-D4 bodies (replay/harness.py) and is never wired here."""
+    facts = spec_facts(entry.body if isinstance(entry.body, str) else "")
+    return facts.imports if facts.imports_line_present else None
+
+
+Reader = Callable[[Entry], "tuple[Import, ...] | None"]
+
+
+def live_successor(graph: Graph, identifier: Identifier) -> Identifier:
+    """Where a chain of supersessions ends."""
+    seen = {identifier}
+    while (nxt := graph.superseded_by(identifier)) is not None and nxt not in seen:
+        seen.add(nxt)
+        identifier = nxt
+    return identifier
+
+
+def _carried(graph: Graph, identifier: Identifier) -> Identifier:
+    """The entry an edge into `identifier` reads as: across preserving
+    supersessions only, exactly as `Graph` carries a written edge."""
+    seen = {identifier}
+    while (nxt := graph.superseded_by(identifier)) is not None and nxt not in seen:
+        successor = graph.get(nxt)
+        if successor is None or not successor.preserves_interface:
+            break
+        seen.add(nxt)
+        identifier = nxt
+    return identifier
+
+
+def imports(graph: Graph, read: Reader = strict_imports) -> list[Finding]:
+    """M2: every entry a spec body imports from by id is one it depends on.
+
+    A body that imports names from S-41 needs S-41's code to exist first, and
+    the only thing that orders the work is the edge. An import with no edge is
+    a dependency the scheduler cannot see -- DARK merged S-04 while its file
+    imported a module that was not on main yet, and every later unit failed
+    at collection.
+
+    Blocking (`bad_import`). Module-path imports need the module map and are
+    `slice_gates.module_gates`. A spec with no Imports line is not refused:
+    it is reported (`no_imports_line`), and only once the project has started
+    writing the line at all -- a project written before the convention has
+    nothing to report, rather than every entry it holds.
+    """
+    findings: list[Finding] = []
+    specs = [e for e in graph.entries() if e.id.layer == SPEC]
+    read_all = {e.id: read(e) for e in specs}
+    in_use = any(v is not None for v in read_all.values())
+    for entry in specs:
+        items = read_all[entry.id]
+        if items is None:
+            if in_use:
+                findings.append(Finding(
+                    NO_IMPORTS_LINE, entry.id,
+                    "no `Imports:` line -- write one as the first line, "
+                    "`Imports:` alone when it imports nothing",
+                ))
+            continue
+        problems: list[str] = []
+        for item in items:
+            try:
+                target = parse(item.target)
+            except InvalidIdentifier:
+                continue  # a module path
+            names = ", ".join(item.names)
+            if target == entry.id:
+                problems.append(f"imports {names} from itself")
+            elif target.layer != SPEC:
+                problems.append(
+                    f"{target} is not a spec entry -- Imports names the spec "
+                    "entries whose code this one imports"
+                )
+            elif graph.get(target) is None:
+                problems.append(f"{target} does not exist")
+            elif _carried(graph, target) not in graph:
+                # Retired: the import resolves to the live successor. An edge
+                # to the successor satisfies it, and an edge to the retired
+                # id is `bad_dependencies`' finding, not a second one here.
+                live = live_successor(graph, target)
+                if not {target, live, _carried(graph, target)} & set(entry.depends_on):
+                    problems.append(
+                        f"{target} is superseded by {live} -- import {names} "
+                        f"from {live}, and add {live} to depends_on"
+                    )
+            elif (carried := _carried(graph, target)) not in entry.depends_on:
+                now = "" if carried == target else f" (carried to {carried})"
+                why = (
+                    f". It is reached by emits_into, but importing names "
+                    "consumes what it returns, which is a dependency: if its "
+                    "slice is cross-cutting, the classification is what is wrong"
+                    if carried in entry.emits_into else ""
+                )
+                problems.append(
+                    f"imports {names} from {target}{now} but does not depend on "
+                    f"it -- add {carried} to depends_on{why}"
+                )
+        if problems:
+            findings.append(Finding(BAD_IMPORT, entry.id, "; ".join(problems)))
+    return findings
+
+
+def two_successors(graph: Graph) -> list[Finding]:
+    """An entry is retired once, by one entry. Two entries superseding the
+    same id fork its history: the live graph keeps one of them as the
+    successor and the other silently stops being one, so which meaning
+    replaced the old one depends on file order. Blocking, and append-only
+    makes it unrepairable after the fact, so the amendment that would create
+    the second claim is the one refused."""
+    return [
+        Finding(
+            TWO_SUCCESSORS,
+            old,
+            f"{old} has two successors, {', '.join(map(str, new))} -- an entry "
+            f"is superseded once. Supersede {live_successor(graph, new[0])} "
+            "instead, so the history "
+            "stays one chain",
+        )
+        for old, new in graph.contested().items()
+    ]
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
@@ -264,5 +412,7 @@ def admission_gates(graph: Graph) -> list[Finding]:
         + bad_dependencies(graph)
         + unserved(graph)
         + untested(graph)
+        + imports(graph)
+        + two_successors(graph)
     )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

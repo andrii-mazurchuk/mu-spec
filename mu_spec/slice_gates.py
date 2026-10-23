@@ -43,10 +43,11 @@ ruling is recorded, whether the edges are legal is arithmetic.
 from __future__ import annotations
 
 import dataclasses
+import re
 
-from mu_spec.gates import Finding
+from mu_spec.gates import Finding, Reader, live_successor, spec_facts, strict_imports
 from mu_spec.graph import Graph
-from mu_spec.identifiers import sort_key
+from mu_spec.identifiers import SPEC, TEST, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.storage import CROSS_CUTTING, Manifest
 
 DEPENDENCY_CYCLE = "dependency_cycle"
@@ -57,6 +58,10 @@ BAD_EMISSION = "bad_emission"
 # changes nothing the emitter relied on. See the branch that raises it.
 STALE_EMISSION = "stale_emission"
 OVERLAPPING_MEMBERSHIP = "overlapping_membership"
+# `module_gates`: read against the module map, all three blocking.
+BAD_MODULE_IMPORT = "bad_module_import"
+SPLIT_OWNERSHIP = "split_ownership"
+UNDECLARED_PATH = "undeclared_path"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -238,6 +243,159 @@ def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
             findings.append(Finding(STALE_EMISSION, entry.id, "; ".join(stale)))
 
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
+
+
+def code_roots(manifest: Manifest) -> set[str]:
+    """The top-level directories the project's spec modules live under
+    (`dark`, `configs`). A path or a dotted import outside them is not this
+    project's code, so nothing here checks it. A bare filename
+    (`pyproject.toml`) has no directory and is out of scope.
+
+    A directory holding test modules is not a root even when a spec module
+    sits there too: a test file is declared against test entries, which are
+    written after the spec naming the file, and no spec entry may claim it
+    (a module implements spec entries or test entries, never both)."""
+    def top(layer):
+        return {
+            p.split("/")[0] for p, ids in manifest.modules.items()
+            if "/" in p and any(i.layer == layer for i in ids)
+        }
+    return top(SPEC) - top(TEST)
+
+
+def _module_files(dotted: str) -> tuple[str, str]:
+    """`dark.x.y` is written either as `dark/x/y.py` or as a package."""
+    base = dotted.replace(".", "/")
+    return f"{base}.py", f"{base}/__init__.py"
+
+
+def module_gates(
+    manifest: Manifest, graph: Graph, read: Reader = strict_imports
+) -> list[Finding]:
+    """The checks that read spec bodies against the module map. All three
+    block (`sound`), so a cut is refused while one stands.
+
+    - **`bad_module_import` (M2).** An `Imports:` item naming a dotted module
+      under a code root must name a declared module, and the entry must
+      depend on a spec entry that module implements (or be one). Otherwise
+      the dependency exists in the code and nowhere the scheduler can see.
+    - **`split_ownership` (M3).** A module implemented by spec entries of two
+      slices has two owners, and slices define write ownership. Ordinary
+      overlap -- several units of ONE slice writing a file -- stays the
+      report in `units.overlap`; this is only the cross-slice subset of it.
+      A test module counts too, each test entry in the slice of the contract
+      it judges: DARK's test_swarm.py held ~19 mutually exclusive test units
+      across slices (retro pattern muspec-spec-03).
+    - **`undeclared_path` (M3).** A spec body naming a file under a code root
+      that no module declares. Whoever writes that file owns it without a
+      backlink, so nothing orders or audits the write.
+
+    Not run on the amendment path: a module is declared only after the entry
+    it implements exists (`declare_module` checks the id is live), so a spec
+    naming its own file would be refused before it could be declared. The
+    module map's write is the moment these become answerable; the cut is
+    where they refuse.
+    """
+    findings: list[Finding] = []
+    roots = code_roots(manifest)
+    live = {i for ids in manifest.modules.values() for i in ids if i in graph}
+
+    def slice_of(i: Identifier) -> str | None:
+        # A test entry's slice is the slice of the contract it judges.
+        if i.layer == TEST:
+            parents = graph.parents(i)
+            return manifest.slice_of(parents[0]) if parents else None
+        return manifest.slice_of(i)
+
+    for path, ids in sorted(manifest.modules.items()):
+        owners: dict[str, list[Identifier]] = {}
+        for i in sorted(ids & live, key=sort_key):
+            name = slice_of(i)
+            if name is not None:
+                owners.setdefault(name, []).append(i)
+        if len(owners) > 1:
+            who = "; ".join(
+                f"{', '.join(map(str, members))} ({name})"
+                for name, members in sorted(owners.items())
+            )
+            for members in owners.values():
+                for i in members:
+                    findings.append(Finding(
+                        SPLIT_OWNERSHIP, i,
+                        f"{path} is implemented from {len(owners)} slices: {who}. "
+                        "A file has one owning slice -- split it so each slice "
+                        "declares its own module, or move the entries into one "
+                        "slice",
+                    ))
+
+    for entry in graph.entries():
+        if entry.id.layer != SPEC:
+            continue
+        problems: list[str] = []
+        for item in read(entry) or ():
+            if _is_id(item.target) or item.target.split(".")[0] not in roots:
+                continue
+            files = [f for f in _module_files(item.target) if f in manifest.modules]
+            names = ", ".join(item.names)
+            if not files:
+                problems.append(
+                    f"{item.target} is not a declared module -- nothing declares "
+                    f"{' or '.join(_module_files(item.target))}. Name the entry "
+                    f"instead (`S-NN {names}`), or declare the module"
+                )
+                continue
+            implementers = {i for f in files for i in manifest.modules[f]}
+            reachable = implementers | {live_successor(graph, i) for i in implementers}
+            # An edge into a since-retired implementer still names the module;
+            # that it is retired is `bad_dependencies`' finding, not this one.
+            needs = set(entry.depends_on) | {live_successor(graph, d) for d in entry.depends_on}
+            if entry.id not in reachable and not reachable & needs:
+                problems.append(
+                    f"imports {names} from {item.target}, which "
+                    f"{', '.join(sorted(map(str, implementers), key=str))} "
+                    "implement, but depends on none of them -- add the one "
+                    "that defines these names to depends_on"
+                )
+        undeclared = [
+            p for p in spec_facts(entry.body if isinstance(entry.body, str) else "").path_mentions
+            # A file, not a directory: ownership is per file, and a directory
+            # is declared only through the files in it.
+            if "/" in p and not p.endswith("/") and p.split("/")[0] in roots
+            and p not in manifest.modules and _asserted(entry.body, p)
+        ]
+        if undeclared:
+            findings.append(Finding(
+                UNDECLARED_PATH, entry.id,
+                f"names {', '.join(undeclared)}, which no module declares -- "
+                "declare it with the spec entry that writes it, or drop the path",
+            ))
+        if problems:
+            findings.append(Finding(BAD_MODULE_IMPORT, entry.id, "; ".join(problems)))
+
+    return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
+
+
+# ponytail: a word-level negation test, not a parse. It catches "there is no
+# `dark/report/runtime.py`" (DARK S-121), and a negation phrased further from
+# the path ("a file like X is never written") still counts as a mention.
+_NEGATED = re.compile(r"\b(?:no|not|never|without)\s+`?$", re.IGNORECASE)
+
+
+def _asserted(text: str, path: str) -> bool:
+    """Some mention of `path` is not negated -- a body naming a file only to
+    say it must not exist claims nothing about who writes it."""
+    return any(
+        not _NEGATED.search(text[max(0, m.start() - 16):m.start()])
+        for m in re.finditer(re.escape(path), text)
+    )
+
+
+def _is_id(text: str) -> bool:
+    try:
+        parse(text)
+    except InvalidIdentifier:
+        return False
+    return True
 
 
 def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:

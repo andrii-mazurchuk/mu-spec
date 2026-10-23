@@ -190,7 +190,8 @@ def legacy_imports(body: str) -> tuple[Import, ...]:
     body = body if isinstance(body, str) else ""
     out: list[Import] = []
     for start in _LEGACY_START.finditer(body):
-        sentence = _sentence(body, start.end())
+        # "... and reaches `X` only through `Y()`": X is not imported (S-80).
+        sentence = _sentence(body, start.end()).split(" reaches ", 1)[0]
         pending: list[str] = []
         trailing = None
         for tok in _LEGACY_TOKEN.finditer(sentence):
