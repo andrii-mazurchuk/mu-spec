@@ -336,3 +336,29 @@ It never:
 
 Every write it makes was triggered by a person pressing Ship or Withdraw. Every read
 exists only to avoid destroying somebody else's state while making those writes.
+
+**One delegated exception (M33, D2, ratified 2026-10-24).** A person may grant a
+project a standing **delegation** (`POST /projects/{p}/delegation` `{enabled, note}`,
+a dashboard press, never a tool; recorded as a `delegation` event and in the change
+log, with the actor). While it stands, an agent may call `auto_ship` and cut and Ship
+on its own judgement -- only when ALL of these hold, each computed, none judged:
+
+1. **gates** -- the graph is sound, modules are declared, and nothing Ship would
+   refuse: no dead-end citation, no loop in the units' own edges, and no shipped,
+   unsettled unit waiting on a blocker with no live issue (or one closed
+   `not_planned`) in the emission record;
+2. **st_only** -- since the cut the latest press shipped, no I, B or A entry was
+   added or superseded: no entry of those layers is numbered above the per-layer
+   marks that cut recorded (`spec_diff` per layer). A cut written before marks were
+   recorded cannot be compared and refuses until a person cuts and ships once;
+3. **shipped** -- every unit the change touches already has an issue: every key in
+   a drift group between that cut and the live projection, and every key whose
+   edges moved.
+
+Also `delegation` (granted, not revoked) and `ready` (repo, token, no press in
+flight). Any failure is a 409 naming the conditions, and nothing is written. When
+all hold it runs the person's `cut_units`, records an `auto_ship` event (actor,
+cut, base cut, every condition as evaluated), then the person's Ship press as a job
+-- with a horizon of zero: it edits, follows up and withdraws, and never opens an
+issue for a unit that has none. Its completion is the same `tickets_emitted` event.
+Anything touching I, B or A keeps the person's press.

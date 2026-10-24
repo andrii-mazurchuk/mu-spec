@@ -114,18 +114,30 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — thirty-seven of them,
+Everything beyond the four is declared in `/tools` — thirty-nine of them,
 covering the inbox, amendments, slice splitting, waves,
 the issue queue and its reconciliation, module backlinks, work units and
 their cuts, planning, the audit, the slice context, the slicing proposal
-awaiting ratification, and the measurement surface.
+awaiting ratification, the measurement surface, and delegated Ship
+(`get_delegation`, `auto_ship`).
 
-Three things are routes but deliberately **not** tools: ratifying a slicing
-proposal, rejecting one, and cutting the project into work units. Each is a
+Several things are routes but deliberately **not** tools: ratifying a slicing
+proposal, rejecting one, cutting the project into work units, setting the
+repo and labels, Ship and its withdrawal, and granting delegation. Each is a
 decision only a person may take — a session that ratified its own proposal
 would be cutting the system up on its own authority, and one that cut work
 units would be deciding the author had finished revising. They are declared
 in `/actions` instead, which discovery never reads.
+
+**Delegated Ship (M33, D2).** `POST /projects/{project}/delegation`
+`{enabled, note}` (an action) is a person's standing grant, recorded as a
+`delegation` event and in the change log. Under it, `POST
+/projects/{project}/auto_ship` (a tool) lets an agent cut and Ship on its
+own judgement when every condition holds — `delegation`, `ready`, `gates`,
+`st_only`, `shipped` (docs/TICKETS.md §10) — else a 409 naming the ones that
+failed, with nothing written. It runs the person's cut and press code,
+creates no issue for a unit with none, and records an `auto_ship` event; the
+press's completion is the usual `tickets_emitted` event.
 
 Tool names are action-style rather than path echoes, so one route served
 under two methods is declared twice under two names.
