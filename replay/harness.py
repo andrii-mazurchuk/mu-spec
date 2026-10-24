@@ -50,18 +50,25 @@ from mu_spec.gates import (
     RETIRED_MENTION,
     TWO_SUCCESSORS,
     UNLINKED_MENTION,
+    UNDEFINED_NAME,
+    UNKNOWN_MEMBER,
+    UNPRODUCED_OBSERVABLE,
     UNSERVED,
     UNTESTED,
     imports,
     two_successors,
+    undefined_names,
 )
 from mu_spec.graph import Entry, Graph
 from mu_spec.slice_gates import (
     BAD_MODULE_IMPORT,
+    NO_MODULE,
     SPLIT_OWNERSHIP,
+    SWEEP_COLLISION,
     UNDECLARED_PATH,
     module_gates,
 )
+from mu_spec.waves import same_wave_edges
 from mu_spec.identifiers import BEHAVIOUR, SPEC, TEST, UNSLICED, parse
 from mu_spec.storage import Manifest, Slice
 
@@ -367,6 +374,16 @@ def m3(graph, manifest, prev_graph, prev_manifest) -> set[str]:
     }
 
 
+def m4(graph, manifest, prev_graph, prev_manifest) -> set[str]:
+    """`undefined_name` with the legacy reader, so DARK's prose imports count."""
+    return {str(f.id) for f in undefined_names(graph, read=_legacy)}
+
+
+def m5(graph, manifest, prev_graph, prev_manifest) -> set[str]:
+    """`same_wave_edge`: the waves the step's entries were written into."""
+    return {str(f.id) for f in same_wave_edges(prev_graph, prev_manifest, graph, manifest)}
+
+
 def successors(graph, manifest, prev_graph, prev_manifest) -> set[str]:
     """Always empty here, by construction: the export records one
     `superseded_by` per entry, so a replay cannot hold two claims."""
@@ -381,6 +398,7 @@ NEWER_KINDS = (
     BAD_IMPORT, NO_IMPORTS_LINE, TWO_SUCCESSORS,
     BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
     RETIRED_MENTION, UNLINKED_MENTION,
+    UNDEFINED_NAME, UNKNOWN_MEMBER, UNPRODUCED_OBSERVABLE, NO_MODULE, SWEEP_COLLISION,
 )
 
 
@@ -404,6 +422,12 @@ REGISTRY: dict[str, Gate] = {
     "M2": m2,
     "M3": m3,
     TWO_SUCCESSORS: successors,
+    "M4": m4,
+    "M5": m5,
+    "M6": reported(UNKNOWN_MEMBER),
+    "M7": reported(SWEEP_COLLISION),
+    "M9": reported(UNPRODUCED_OBSERVABLE),
+    "M10": reported(NO_MODULE),
 }
 
 

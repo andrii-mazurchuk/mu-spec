@@ -270,7 +270,10 @@ def _tools() -> list[dict[str, Any]]:
             "listed -- `restate_or_keep` (test ids: restate or keep is your "
             "call) and `dependents_stranded` (depends_on the retired entry, "
             "not carried because the replacement does not preserve the "
-            "interface). To depend on "
+            "interface). `same_wave_edges` lists, never refuses, each new "
+            "entry depending on another slice that sat in the same wave as "
+            "its own when this was written -- the two were worked side by "
+            "side, so check what it read was finished. To depend on "
             "an entry this same amendment is creating, cite it by position "
             "as '#0', '#1' -- a zero-based index into 'entries'. Identifiers "
             "are allocated on commit, so guessing one is how a horizontal "
@@ -688,7 +691,9 @@ def _tools() -> list[dict[str, Any]]:
             "the decision and what it claims to serve in one place. `layer` "
             "is one of " + ", ".join(f"{l} ({LAYER_NAMES[l]})" for l in layers)
             + ". T reads the scenarios, which is where the second source of "
-            "truth gets reviewed.",
+            "truth gets reviewed. `gates` is the check_gates report; at S, "
+            "`unknown_member` and `undefined_name` are where sibling "
+            "contracts disagree on a shared interface.",
             "GET",
             "/projects/{project}/review",
             {"project": s, "layer": enum(layers), "slice": s},
@@ -744,8 +749,19 @@ def _tools() -> list[dict[str, Any]]:
             "scenarios; re-pointing them is a follow-on `verification` "
             "request, because an amendment writes one layer. "
             "Reporting kinds, which never block: `unserved`, `untested`, "
-            "and `no_imports_line` (a spec without the line, once the "
-            "project writes it elsewhere).",
+            "`no_imports_line` (a spec without the line, once the "
+            "project writes it elsewhere), `unlinked_mention`, "
+            "`retired_mention`, `split_ownership`, and five read out of code "
+            "(approximations -- each detail says what to check): "
+            "`undefined_name` (a spec imports or types over a name no live "
+            "spec defines in a code block), `unknown_member` (a spec reads "
+            "`x.attr` where the class another spec declares has no such "
+            "member), `sweep_collision` (a spec's test sweeps a directory for "
+            "tokens a sibling's code there must use; both are named), "
+            "`unproduced_observable` (a behaviour or architecture entry "
+            "names a code name no spec mentions), and `no_module` (a spec no "
+            "module implements, once the project declares modules -- it is "
+            "in no work unit, so no ticket carries it).",
             "GET",
             "/projects/{project}/gates",
             {"project": s},

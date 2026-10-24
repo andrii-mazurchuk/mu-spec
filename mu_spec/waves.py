@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from mu_spec.gates import Finding
 from mu_spec.graph import Graph
 from mu_spec.storage import Manifest
 
@@ -54,6 +55,43 @@ class Schedule:
         nothing can be done in parallel. A signal that the slices are too
         coupled -- reported, never acted on."""
         return len(self.waves) > 1 and all(len(w) == 1 for w in self.waves)
+
+
+SAME_WAVE_EDGE = "same_wave_edge"
+
+
+def same_wave_edges(
+    before_graph: Graph, before_manifest: Manifest, graph: Graph, manifest: Manifest
+) -> list[Finding]:
+    """M5: an entry this write adds depends on an entry of another slice
+    that, before the write, sat in the SAME wave as its own -- so the two
+    were scheduled to be worked side by side, and this one read a sibling
+    that may still have been moving. DARK's S-12 (project-health) took a
+    `depends_on` into S-08 (experiment-definition) while both were wave 0.
+
+    After the write the edge itself moves the slice a wave down, which is why
+    only the before and after together can show it. A slice with no
+    entries yet stands in wave 0. Reported, never refused (D3): a sibling
+    already finished is the ordinary course, and nothing here can tell."""
+    wave = schedule(before_manifest, before_graph).wave_of()
+    findings: list[Finding] = []
+    for entry in graph.entries():
+        own = manifest.slice_of(entry.id)
+        if entry.id in before_graph or own is None:
+            continue
+        shared = []
+        for target in entry.depends_on:
+            other = manifest.slice_of(target)
+            if other not in (None, own) and other in wave and wave.get(own, 0) == wave[other]:
+                shared.append(f"{target} ({other})")
+        if shared:
+            findings.append(Finding(
+                SAME_WAVE_EDGE, entry.id,
+                f"{own} depends on {', '.join(shared)}, and both slices were in wave "
+                f"{wave.get(own, 0)} when it was written -- worked side by side, so "
+                "check the entries it read were finished, and re-read them if not",
+            ))
+    return findings
 
 
 def schedule(manifest: Manifest, graph: Graph) -> Schedule:

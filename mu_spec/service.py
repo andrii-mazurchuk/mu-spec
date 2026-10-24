@@ -61,7 +61,9 @@ from mu_spec.slice_gates import (
     SPLIT_OWNERSHIP,
     UNDECLARED_PATH,
     module_gates,
+    no_module,
     slice_gates,
+    sweep_collisions,
 )
 from mu_spec.slicing import candidates, score
 from mu_spec import emit as emitting
@@ -69,7 +71,7 @@ from mu_spec import github
 from mu_spec.render import render as render_ticket
 from mu_spec import units
 from mu_spec.storage import Manifest, ProjectStore, Slice
-from mu_spec.waves import schedule
+from mu_spec.waves import same_wave_edges, schedule
 
 COMMENTS_FILE = "comments.jsonl"
 
@@ -152,7 +154,9 @@ def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
     """
     findings = sorted(
         admission_gates(graph)
-        + module_gates(manifest, graph),
+        + module_gates(manifest, graph)
+        + no_module(manifest, graph)
+        + sweep_collisions(manifest, graph),
         key=lambda f: (sort_key(f.id), f.kind),
     )
     slice_findings = slice_gates(manifest, graph)
@@ -738,6 +742,7 @@ def _submit_amendment(
     (issues if issue else inbox).record_produced(cite_id, created)
 
     after = store.load_graph(project)
+    after_manifest = store.load_manifest(project)
     retired = [str(e.supersedes) for e in staged if e.supersedes is not None]
     if events is not None:
         events.record(
@@ -786,7 +791,14 @@ def _submit_amendment(
         "repointed_modules": repointed,
         "restate_or_keep": restate_or_keep,
         "dependents_stranded": dependents_stranded,
-        "gates": _gate_report(after, store.load_manifest(project)),
+        # M5, reported only: an edge from this write into a slice that was in
+        # the same wave as its own. Only this moment can show it -- the edge
+        # itself moves the slice down a wave, so no later report sees it.
+        "same_wave_edges": [
+            {"kind": f.kind, "id": str(f.id), "detail": f.detail}
+            for f in same_wave_edges(Graph(existing), manifest, after, after_manifest)
+        ],
+        "gates": _gate_report(after, after_manifest),
     }
 
 

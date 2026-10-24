@@ -88,6 +88,17 @@ live admission uses -- has nothing to read. `M3` is `split_ownership` +
 `undeclared_path`. `two_successors` is always empty here: the export holds one
 `superseded_by` per entry, so a replay cannot express two claims.
 
+The report-only rows (D3, none of them refuses): `M4` is `undefined_name` fed
+by `body.legacy_imports`, as M2 is; `M5` is `same_wave_edge`, the only row that
+reads the step before (the edge itself moves the slice, so the after state
+alone never shows it); `M6` `unknown_member`, `M7` `sweep_collision`, `M9`
+`unproduced_observable` and `M10` `no_module` are the gate report's own kinds.
+Every one is a regex approximation; a missed case whose fault is only in the
+prose's meaning (S-195's unnamed prediction type, S-251's missing velocity,
+A-145's uncalled `tune()`) is one no mechanical row can see.
+
 Known limits: module ownership before the export is the bodies' claim, so "no
-module" (M10) means "no `Module:` line" for a retired entry; a fault visible
+module" (M10) means "no `Module:` line" for a retired entry -- and an entry live
+at the export takes its final declarations from birth, so M10 cannot see that
+S-73, S-77 and S-103 had no module at cut 3; a fault visible
 only in code, a ticket or a CI log is outside what any graph replay can score.
