@@ -372,6 +372,70 @@ def test_a_record_fingerprinted_the_old_way_compares_against_the_issues_own_text
     assert [f["key"] for f in changed["follow_ups"]] == ["S-02"]
 
 
+# -- M26: the write set is part of the contract (V4) ---------------------------
+
+
+def _with_write_set(paths):
+    """A fetch whose S-02 writes `paths` instead of its one default file."""
+    def fetch(key):
+        unit = payload(key, EDGES.get(key, ()))
+        if key == "S-02":
+            unit = {**unit, "write_set": list(paths)}
+        return unit
+    return fetch
+
+
+def test_a_closed_unit_whose_write_set_grew_gets_a_follow_up(tmp_path):
+    """Closed `completed`, contract text untouched, but the unit now owns a file
+    it did not when it merged: what merged cannot have written it (M26)."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, fetch=_with_write_set(["S-02.py", "S-02/events.py"]))
+    [follow] = result["follow_ups"]
+    assert follow["key"] == "S-02" and follow["follow_up_of"] == 3
+    assert "S-02/events.py" in gh.issues[follow["number"]]["body"]
+    assert gh.issues[3]["state"] == "closed", "never reopened"
+
+
+def test_a_write_set_listed_in_another_order_is_not_a_change(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh, fetch=_with_write_set(["a.py", "b.py"]))
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, fetch=_with_write_set(["b.py", "a.py"]))
+    assert result["follow_ups"] == [] and [s["key"] for s in result["settled"]] == ["S-02"]
+
+
+def test_a_write_set_follow_up_hangs_under_the_root(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh, lineage=True)
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, lineage=True, fetch=_with_write_set(["S-02.py", "x.py"]))
+    [follow] = result["follow_ups"]
+    assert ("sub", 3, follow["number"]) in gh.calls
+
+
+def test_a_v3_record_ignores_the_write_set_so_darks_closed_issues_stay_settled(tmp_path):
+    """DARK's records hold V3: the contract alone. Reading the write set into
+    them would move every closed unit whose module map changed after merge."""
+    import json
+    from mu_spec.emit import _contract_v3, _V3
+    gh = Tracker()
+    ship(tmp_path, gh)
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    for line in lines:
+        for issue in (line.get("issues") or {}).values():
+            issue["contract"] = _contract_v3(gh.issues[issue["number"]]["body"])
+            assert issue["contract"].startswith(_V3)
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    gh.issues[3].update(state="closed", state_reason="completed")
+    moved = ship(tmp_path, gh, fetch=_with_write_set(["S-02.py", "x.py"]))
+    assert moved["follow_ups"] == [] and [s["key"] for s in moved["settled"]] == ["S-02"]
+    grown = ship(tmp_path, gh, bodies={"S-02": "the contract, grown"})
+    assert [f["key"] for f in grown["follow_ups"]] == ["S-02"], "V3 still sees the contract"
+
+
 def test_a_closed_issue_whose_unit_left_the_cut_is_settled_not_reported(tmp_path):
     gh = Tracker()
     ship(tmp_path, gh)

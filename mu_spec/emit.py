@@ -478,6 +478,12 @@ _V2 = "2:"
 # longer carry. A V2 record still has them in its hash, so it is compared
 # through the closed issue's own text, like V1 -- never as a changed contract.
 _V3 = "3:"
+# V4 adds the write set (M26): a unit closed `completed` that now owns a file
+# it did not own when it merged has a contract nothing merged meets. Paths are
+# sorted, so a reordered module map is not a change. A V3 record -- every one
+# DARK holds -- is still compared as V3, so its closed issues stay settled.
+_V4 = "4:"
+_WRITE_PATH = re.compile(r"^- `([^`]+)`$", re.M)
 
 
 # The renderer's rewrite of a retired citation, `S-317 (was S-128)`. Read as
@@ -495,7 +501,17 @@ def contract_of(body: str) -> str:
     section, provenance lines out, identifiers masked, whitespace collapsed.
     Context -- blockers, the read set, the other contracts a file serves,
     labels -- is not in it, so a closed issue whose context moved stays
-    settled and one whose contract moved gets a follow-up."""
+    settled and one whose contract moved gets a follow-up. The write set is
+    in it (V4): a file the unit did not own when it merged is unmet work."""
+    text = (body or "").replace("\r\n", "\n")
+    _, found, rest = text.partition(_AFTER_CONTRACT)
+    paths = sorted(_WRITE_PATH.findall(rest.split("\n## ", 1)[0])) if found else []
+    return _V4 + hashlib.sha256(
+        "\n".join([_contract_v3(body)] + paths).encode()).hexdigest()
+
+
+def _contract_v3(body: str) -> str:
+    """The contract alone, as records held it before the write set joined."""
     text = (body or "").replace("\r\n", "\n")
     _, found, rest = text.partition("## Contract")
     section = rest.split(_AFTER_CONTRACT, 1)[0] if found else ""
@@ -522,10 +538,14 @@ def _contract_moved(recorded: "str | None", issue_body: str, ticket_body: str) -
     ticket as it renders now. A record from before the current fingerprint is
     compared through the issue's own text rather than its hash, so the change
     of fingerprint is not mistaken for a change of contract."""
-    if recorded and recorded.startswith(_V3):
+    if recorded and recorded.startswith(_V4):
         return recorded != contract_of(ticket_body)
+    # Everything older compares as it did before V4: the write set it never
+    # recorded must not read as a change.
+    if recorded and recorded.startswith(_V3):
+        return recorded != _contract_v3(ticket_body)
     if issue_body:
-        return contract_of(issue_body) != contract_of(ticket_body)
+        return _contract_v3(issue_body) != _contract_v3(ticket_body)
     if recorded and recorded.startswith(_V2):
         text = (ticket_body or "").replace("\r\n", "\n").partition("## Contract")[2]
         return recorded != _V2 + _digest(text.split(_AFTER_CONTRACT, 1)[0])
