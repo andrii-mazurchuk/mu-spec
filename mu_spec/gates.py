@@ -35,8 +35,7 @@ Unsound blocks: an amendment that would introduce an orphan is refused, and
 no work package is issued from a graph containing one. Incomplete does not
 block -- it is the report of what is left to do.
 
-Cycles between slices, and the rule that a cross-cutting slice holds no
-outbound dependency, both need the manifest -- which slice owns which
+Cycles between slices need the manifest -- which slice owns which
 identifiers. They land with the manifest, not here: this module deliberately
 knows nothing about slices.
 
@@ -237,25 +236,19 @@ def bad_dependencies(graph: Graph) -> list[Finding]:
     findings: list[Finding] = []
     for entry in graph.entries():
         problems: list[str] = []
-        # A test carries no horizontal edge of either kind. One scenario
+        # A test carries no horizontal edge. One scenario
         # needs nothing from another scenario, and this is not tidiness: it
         # is what makes a work unit holding test modules a *root*. With no
         # outbound edge to have, a test unit cannot take part in a cycle, so
         # the ordering rule that puts implementation after tests can never
-        # deadlock against a dependency. The same shape as a cross-cutting
-        # slice landing in wave 0 -- arranged by the edge rules, not by a
-        # scheduler.
+        # deadlock against a dependency -- arranged by the edge rules, not by
+        # a scheduler.
         if entry.id.layer == TEST:
             if entry.depends_on:
                 problems.append(
                     "a test entry depends on nothing -- one scenario needs "
                     "nothing from another, and an outbound edge is what "
                     "would let a test unit sit inside a cycle"
-                )
-            if entry.emits_into:
-                problems.append(
-                    "a test entry emits into nothing -- it publishes no "
-                    "behaviour, it observes one"
                 )
         for target in entry.depends_on:
             if target == entry.id:
@@ -372,15 +365,9 @@ def imports(graph: Graph, read: Reader = strict_imports) -> list[Finding]:
                     )
             elif (carried := _carried(graph, target)) not in entry.depends_on:
                 now = "" if carried == target else f" (carried to {carried})"
-                why = (
-                    f". It is reached by emits_into, but importing names "
-                    "consumes what it returns, which is a dependency: if its "
-                    "slice is cross-cutting, the classification is what is wrong"
-                    if carried in entry.emits_into else ""
-                )
                 problems.append(
                     f"imports {names} from {target}{now} but does not depend on "
-                    f"it -- add {carried} to depends_on{why}"
+                    f"it -- add {carried} to depends_on"
                 )
         if problems:
             findings.append(Finding(BAD_IMPORT, entry.id, "; ".join(problems)))
@@ -409,7 +396,7 @@ def two_successors(graph: Graph) -> list[Finding]:
 
 def unlinked_mentions(graph: Graph) -> list[Finding]:
     """A spec id named in an entry's body that none of its edges reach --
-    derives_from, depends_on, emits_into, supersedes, or its own id. A
+    derives_from, depends_on, supersedes, or its own id. A
     reference the graph cannot see is one a supersession will not flag.
 
     COMPLETENESS, reported and never blocking (D3): prose may name an entry
@@ -417,8 +404,7 @@ def unlinked_mentions(graph: Graph) -> list[Finding]:
     references, so they are read without (body.strip_provenance)."""
     findings: list[Finding] = []
     for entry in graph.entries():
-        linked = {str(entry.id), *map(str, entry.derives_from), *map(str, entry.depends_on),
-                  *map(str, entry.emits_into)}
+        linked = {str(entry.id), *map(str, entry.derives_from), *map(str, entry.depends_on)}
         if entry.supersedes is not None:
             linked.add(str(entry.supersedes))
         named = parse_body(strip_provenance(entry.body), entry.id.layer).id_mentions

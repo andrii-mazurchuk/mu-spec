@@ -54,11 +54,9 @@ from mu_spec.metrics import change_locality, corrections_by_layer, structural
 from mu_spec.planning import audit, plan, spec_diff
 from mu_spec.reconcile import route
 from mu_spec.slice_gates import (
-    BAD_EMISSION,
     BAD_MODULE_IMPORT,
     SPLIT_OWNERSHIP,
     UNDECLARED_PATH,
-    edge_gates,
     module_gates,
     slice_gates,
 )
@@ -67,7 +65,7 @@ from mu_spec import emit as emitting
 from mu_spec import github
 from mu_spec.render import render as render_ticket
 from mu_spec import units
-from mu_spec.storage import SLICE, SLICE_TYPES, Manifest, ProjectStore, Slice
+from mu_spec.storage import Manifest, ProjectStore, Slice
 from mu_spec.waves import schedule
 
 COMMENTS_FILE = "comments.jsonl"
@@ -76,10 +74,7 @@ COMMENTS_FILE = "comments.jsonl"
 # fourth means a correction is half-finished, which withholds work packages
 # for a different reason and is not a defect.
 #
-# Deliberately absent: `unserved` and `untested`, which are the to-do list;
-# and `stale_emission`, because an emission consumes nothing, so a successor
-# on the other end changes nothing the emitter relied on -- see the branch
-# in `slice_gates` that raises it.
+# Deliberately absent: `unserved` and `untested`, which are the to-do list.
 #
 # The last four are read from bodies and the module map (M2, M3) or are the
 # one-successor rule. `module_gates` kinds block the cut through `sound` but
@@ -90,7 +85,7 @@ COMMENTS_FILE = "comments.jsonl"
 # slice audit catches it before ratify. A questionable call -- revisit after
 # the audit pilot; promoting it is adding it back here.
 _BLOCKING = (
-    ORPHAN, BAD_DEPENDENCY, BAD_EMISSION, STRANDED, BAD_IMPORT, TWO_SUCCESSORS,
+    ORPHAN, BAD_DEPENDENCY, STRANDED, BAD_IMPORT, TWO_SUCCESSORS,
     BAD_MODULE_IMPORT, UNDECLARED_PATH,
 )
 
@@ -110,7 +105,6 @@ def _entry_view(entry: Entry, full: bool) -> dict[str, Any]:
         "title": entry.display_title,
         "derives_from": [str(d) for d in entry.derives_from],
         "depends_on": [str(d) for d in entry.depends_on],
-        "emits_into": [str(d) for d in entry.emits_into],
     }
     # Only a test entry carries one, so it is omitted rather than sent empty
     # on every other entry in the graph.
@@ -155,7 +149,6 @@ def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
     """
     findings = sorted(
         admission_gates(graph)
-        + edge_gates(manifest, graph)
         + module_gates(manifest, graph),
         key=lambda f: (sort_key(f.id), f.kind),
     )
@@ -484,6 +477,12 @@ def submit_amendment(
             raise ServiceError(f"entry layer must be one of {ALL_LAYERS}")
         if not item.get("title"):
             raise ServiceError("each entry needs a 'title'")
+        if item.get("emits_into"):
+            raise ServiceError(
+                "'emits_into' is no longer accepted: the cross-cutting type was "
+                "removed (D6, 10-24) and every slice is a plain slice. An "
+                "ambient concern is a foundational slice -- use depends_on"
+            )
         marks[layer] = marks.get(layer, 0) + 1
         allocated.append(Identifier(layer=layer, number=marks[layer]))
 
@@ -503,12 +502,6 @@ def submit_amendment(
                         item.get("depends_on"), "depends_on", position, allocated
                     ),
                     "depends_on",
-                ),
-                emits_into=_parse_ids(
-                    _substitute(
-                        item.get("emits_into"), "emits_into", position, allocated
-                    ),
-                    "emits_into",
                 ),
                 title=item["title"],
                 purpose=item.get("purpose", ""),
@@ -614,7 +607,6 @@ def submit_amendment(
     new_orphans = [
         f
         for f in admission_gates(prospective)
-        + edge_gates(prospective_manifest, prospective)
         if f.kind in _BLOCKING and (f.kind, str(f.id)) not in before
     ]
 
@@ -759,78 +751,6 @@ def submit_amendment(
             )
         ],
         "gates": _gate_report(after, store.load_manifest(project)),
-    }
-
-
-def classify_slice(
-    store: ProjectStore,
-    project: str,
-    slice_name: str,
-    body: dict,
-    events: Lifecycle | None = None,
-    now_fn: Callable[[], float] = time.time,
-) -> dict:
-    """Record whether a slice is ordinary or cross-cutting.
-
-    A judgement the unit does not make. The agent argues it from the two
-    tests -- does a caller branch on what comes back, and does the contract
-    name a domain object someone else owns -- and a human rules on it. What
-    the unit does is record the ruling and make it structural, because the
-    type is what decides whose context this slice's entries land in.
-
-    Checked before it is written, and refused if the ruling would contradict
-    edges that already exist. A slice already reaching into a feature slice
-    cannot be declared cross-cutting after the fact -- otherwise this is a
-    back door to the state the amendment path refuses to create, reached by
-    building the edges first and relabelling afterwards.
-    """
-    requested = body.get("type", "")
-    manifest = store.load_manifest(project)
-    if requested not in SLICE_TYPES:
-        raise ServiceError(
-            f"unknown slice type {requested!r}, expected one of {SLICE_TYPES}"
-        )
-    if slice_name not in manifest.slices:
-        raise ServiceError(f"unknown slice {slice_name!r}")
-
-    graph = store.load_graph(project)
-    before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
-    prospective = Manifest.from_json(manifest.to_json())
-    prospective.slices[slice_name].type = requested
-    conflicts = [
-        f
-        for f in slice_gates(prospective, graph)
-        if (f.kind, f.slice) not in before
-    ]
-    if conflicts:
-        return {
-            "project": project,
-            "slice": slice_name,
-            "recorded": False,
-            "reason": "the ruling contradicts edges that already exist",
-            "slice_findings": [
-                {"kind": f.kind, "slice": f.slice, "detail": f.detail}
-                for f in conflicts
-            ],
-        }
-
-    store.set_slice_type(project, slice_name, requested)
-    manifest = store.load_manifest(project)
-    if events is not None:
-        events.record(
-            lc.CLASSIFICATION,
-            project,
-            now_fn,
-            refs=[slice_name],
-            type=requested,
-            argument=body.get("argument", ""),
-        )
-    return {
-        "project": project,
-        "slice": slice_name,
-        "recorded": True,
-        "type": manifest.slices[slice_name].type,
-        "cross_cutting": list(manifest.cross_cutting()),
     }
 
 
@@ -1080,10 +1000,6 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
       set is exactly what the work actually needs and cannot drift from it.
       This is what turns "peeking at related features" from wandering the
       repo into a bounded, computed operation.
-    - **cross-cutting** -- every cross-cutting slice's spec entries, spine
-      only, whether or not this slice depends on one. Their behaviour ranges
-      over other slices rather than naming a subject of its own, so the
-      dependency is real, universal, and never worth declaring n times.
     - **scenarios** -- the test entries already written against this slice's
       contracts, spine only, with what each judges. Spine only because this
       answers "what is already covered", not "what does that test say" --
@@ -1168,17 +1084,6 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
             view["implemented"] = bool(manifest.implementers(ident))
             scenarios.append(view)
 
-    cross = []
-    for name in manifest.cross_cutting():
-        if name == slice_name:
-            continue
-        members = manifest.slices[name].members
-        for entry in graph.entries():
-            if entry.id.layer == SPEC and entry.id in members:
-                view = _entry_view(entry, full=False)
-                view["slice"] = name
-                cross.append(view)
-
     return {
         "project": project,
         "slice": slice_name,
@@ -1186,7 +1091,6 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
         "entries": [_entry_view(e, full=True) for e in write_set],
         "justification": justification,
         "read_set": read_set,
-        "cross_cutting": cross,
         "scenarios": sorted(scenarios, key=lambda v: v["id"]),
         "untested": untested,
     }
@@ -1381,7 +1285,7 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
       full and spine above that. One, not one per entry: every entry in a
       unit shares an anchor and therefore an ancestry.
     - **read set** -- spec entries this unit depends on that live in other
-      units, spine only, plus every cross-cutting entry.
+      units, spine only.
 
     Read from the live projection rather than the stored cut, because this
     answers "what should I build" and the graph is the authority on that.
@@ -1521,19 +1425,6 @@ def _work_unit(graph, manifest, projection, renamed, by_key, unit_of,
         if others:
             file_scope[path] = [v for _, v in sorted(others, key=lambda p: sort_key(p[0]))]
 
-    cross = []
-    for name in manifest.cross_cutting():
-        if name in unit.slices:
-            continue
-        for identifier_ in sorted(manifest.slices[name].members, key=sort_key):
-            # Live only: a superseded entry keeps its membership, and handing
-            # it out beside its successor offers two contracts as binding.
-            if identifier_ not in graph or identifier_.layer != SPEC:
-                continue
-            view = _entry_view(graph.get(identifier_), full=False)
-            view["slice"] = name
-            cross.append(view)
-
     return {
         "project": project,
         "issued": True,
@@ -1553,7 +1444,6 @@ def _work_unit(graph, manifest, projection, renamed, by_key, unit_of,
         # Per file in the write set, the other contracts it must also serve.
         # Empty when this unit is the only claimant of every file it holds.
         "file_scope": file_scope,
-        "cross_cutting": cross,
         "follows": list(projection.edges.get(key, ())),
         "follows_was": {
             blocker: list(renamed[blocker])
@@ -1647,7 +1537,7 @@ def split_slice(
     before = {(f.kind, f.slice) for f in slice_gates(manifest, graph)}
     edges_before = {
         (f.kind, str(f.id))
-        for f in edge_gates(manifest, graph) + module_gates(manifest, graph)
+        for f in module_gates(manifest, graph)
     }
     prospective = Manifest.from_json(manifest.to_json())
     prospective.slices[source].members -= moving
@@ -1691,16 +1581,11 @@ def split_slice(
         "split": True,
         "moved": sorted(str(i) for i in moving),
         "remaining": sorted(str(i) for i in after.slices[source].members),
-        # Allowed, and reported. Moving an emission's target out of a
-        # cross-cutting slice makes the emission illegal, and the correction
-        # (the emitter re-declared as a dependency) can only be written after
-        # the split exists -- so refusing would make the fix impossible. But
-        # the graph is unsound from this moment, and a split that said
-        # nothing about it was accepted in silence on dark.
-        # A split can also hand one file to two slices (split_ownership).
+        # Allowed, and reported: a split can hand one file to two slices
+        # (split_ownership), and the fix can only be written after the split.
         "made_unsound": [
             {"kind": f.kind, "id": str(f.id), "detail": f.detail}
-            for f in edge_gates(after, graph) + module_gates(after, graph)
+            for f in module_gates(after, graph)
             if (f.kind, str(f.id)) not in edges_before
         ],
     }
@@ -2411,7 +2296,7 @@ def unit_metrics(
     """
     projects = store.list_projects()
     by_layer: dict[str, int] = {}
-    slices = cross = sound = complete = unimplemented = modules = 0
+    slices = sound = complete = unimplemented = modules = 0
     depths: list[int] = []
     chains = 0
     locality: list[float] = []
@@ -2423,7 +2308,6 @@ def unit_metrics(
         for entry in graph.entries():
             by_layer[entry.id.layer_name] = by_layer.get(entry.id.layer_name, 0) + 1
         slices += len(manifest.slices)
-        cross += len(manifest.cross_cutting())
         modules += len(manifest.modules)
         unimplemented += sum(
             1
@@ -2452,7 +2336,6 @@ def unit_metrics(
         "entries": sum(by_layer.values()),
         "entries_by_layer": dict(sorted(by_layer.items())),
         "slices": slices,
-        "cross_cutting_slices": cross,
         "modules": modules,
         "unimplemented_spec": unimplemented,
         "projects_sound": sound,
@@ -2492,7 +2375,6 @@ def score_slicing(store: ProjectStore, project: str, body: dict) -> dict:
             store.load_manifest(project),
             store.load_graph(project),
             body.get("proposal"),
-            body.get("types"),
         )
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
@@ -2740,7 +2622,6 @@ def propose(store: ProjectStore, project: str, body: dict) -> dict:
         {
             "status": "pending",
             "proposal": {k: list(v) for k, v in proposal.items()},
-            "types": body.get("types") or {},
             "note": body.get("note", ""),
         }
     )
@@ -2767,7 +2648,6 @@ def get_proposal(store: ProjectStore, project: str) -> dict:
         "project": project,
         "status": state.get("status", "none"),
         "proposal": state.get("proposal", {}),
-        "types": state.get("types", {}),
         "note": state.get("note", ""),
         "last_rejection": state.get("last_rejection"),
     }
@@ -2777,7 +2657,6 @@ def get_proposal(store: ProjectStore, project: str) -> dict:
                 store.load_manifest(project),
                 store.load_graph(project),
                 out["proposal"],
-                out["types"],
             )
         except (ValueError, KeyError):
             out["score"] = None
@@ -2818,13 +2697,9 @@ def ratify(store: ProjectStore, project: str, body: dict) -> dict:
         raise ServiceError("no proposal is waiting for ratification")
 
     members = _parse_proposal_members(store, project, state["proposal"])
-    types = state.get("types") or {}
     manifest = store.load_manifest(project)
     for name, ids in members.items():
-        stype = types.get(name, SLICE)
-        if stype not in SLICE_TYPES:
-            raise ServiceError(f"slice type must be one of {SLICE_TYPES}")
-        manifest.slices[name] = Slice(name=name, members=set(ids), type=stype)
+        manifest.slices[name] = Slice(name=name, members=set(ids))
 
     findings = slice_gates(manifest, store.load_graph(project))
     if findings:
@@ -2888,6 +2763,5 @@ def prior_state(store: ProjectStore, route: str | None, project: str, body: dict
                 "implements": sorted(str(i) for i in manifest.modules.get(path, set()))}
     return {
         "slices": {n: sorted(str(i) for i in s.members) for n, s in manifest.slices.items()},
-        "types": {n: s.type for n, s in manifest.slices.items()},
         "proposal": _read_proposal(store, project),
     }

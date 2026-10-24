@@ -18,10 +18,6 @@ all rather than ordering by hand:
   reads its dependencies as frozen artifacts. No coordination, no
   consistency problem.
 
-A cross-cutting slice lands in wave 0 by construction, because the edge rules
-leave it no outbound dependency to have. That is not arranged here; it falls
-out, which is a useful sign the edge rules are doing real work.
-
 Cycles are not a scheduling problem to be worked around -- they are an
 admission failure, and `slice_gates` refuses them. This module still has to
 survive one without hanging, because a gate can only report on a structure it

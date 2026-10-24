@@ -121,17 +121,16 @@ After behaviour is complete and before any architecture exists, behaviour is
 cut into slices by capability. A slice owns its entries and decides who may
 edit what.
 
-Propose with `POST /projects/{project}/slicing/proposal` -- membership, a
-type per slice, and a note carrying the reasoning. It creates nothing. While
+Propose with `POST /projects/{project}/slicing/proposal` -- membership and
+a note carrying the reasoning. It creates nothing. While
 a proposal is pending, it is the only thing that can happen at that layer.
 
 A human ratifies. Nothing else can: an agent that ratified its own proposal
 would have cut the system up on its own authority.
 
-Two tests decide whether a slice is cross-cutting, and **both** must pass:
-the caller does not branch on what comes back, and the contract names no
-domain object someone else owns. **Fan-in is never the criterion** -- a slice
-everything depends on is foundational, not cross-cutting.
+An ambient concern -- audit, observability -- is an ordinary slice that
+others reach with `depends_on`: a foundational slice. There is no separate
+cross-cutting type (removed 10-24, D6).
 
 Slices split and never merge, so the coarse cut is the recoverable mistake.
 

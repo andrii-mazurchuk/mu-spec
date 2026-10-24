@@ -41,6 +41,8 @@ DERIVATION = "derivation"
 CORRECTION = "correction"
 REFUSAL = "refusal"
 SLICING = "slicing"
+# A slice ruled cross-cutting. Written only before D6 (10-24) removed the
+# type; kept so the history that holds one still reads.
 CLASSIFICATION = "classification"
 ISSUE_RAISED = "issue_raised"
 ISSUE_CLOSED = "issue_closed"

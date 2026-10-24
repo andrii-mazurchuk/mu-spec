@@ -5,8 +5,7 @@ snapshot and runs gates over each one. Everything it scores rests on the
 reconstruction being right, so the reconstruction is what these tests pin:
 an identifier saved twice under two spellings is one entry, an edge the
 export redirected to a successor is walked back to what the child cited at
-birth, membership is read as of a time, and a slice's type before a
-classification is the other one. The real DARK run is the CLI's job, never
+birth, and membership is read as of a time. The real DARK run is the CLI's job, never
 this suite's.
 """
 
@@ -17,7 +16,6 @@ import json
 import pytest
 
 from mu_spec.identifiers import parse
-from mu_spec.storage import CROSS_CUTTING, SLICE
 from replay import harness
 
 
@@ -49,8 +47,8 @@ CLEAN = {"project": "toy", "sound": True, "complete": True, "clean": True,
 
 def _snapshot(root, gates=CLEAN):
     """I-01 -> B-01 -> A-01 -> S-01/S-02 -> T-01/T-02, then S-01 is corrected
-    into S-03 (interface-preserving), S-02 moves to a slice that starts out
-    cross-cutting and is later classified a plain slice.
+    into S-03 (interface-preserving), S-02 moves to a new slice, and a
+    pre-D6 classification event is read past.
 
     The export carries what a live read showed: S-02's dependency and T-01's
     parent already name S-03, though both were written against S-01."""
@@ -157,14 +155,6 @@ def test_slices_follow_derivation_then_slicing_events_and_b_follows_its_children
     assert manifest.slice_of(parse("S-02")) == "extra"
 
 
-def test_a_classified_slice_had_the_other_type_before(history):
-    _, before = harness.build(history, 85.0)
-    _, after = harness.build(history, 95.0)
-    assert before.slices["extra"].type == CROSS_CUTTING
-    assert after.slices["extra"].type == SLICE
-    assert after.slices["core"].type == SLICE
-
-
 def test_modules_are_read_from_live_spec_bodies(history):
     _, manifest = harness.build(history, 75.0)
     assert manifest.modules == {"pkg/a.py": {parse("S-03")}, "pkg/b.py": {parse("S-02")}}
@@ -173,8 +163,9 @@ def test_modules_are_read_from_live_spec_bodies(history):
 def test_there_is_one_step_per_graph_changing_event(history):
     steps = harness.steps(history)
     # The correction (7) retires nothing by itself: S-01 retires when S-03,
-    # the successor it names, is born (8).
-    assert [s.seq for s in steps] == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11]
+    # the successor it names, is born (8). A classification (10) changes
+    # nothing since D6 removed the type.
+    assert [s.seq for s in steps] == [1, 2, 3, 4, 5, 6, 8, 9, 11]
     assert steps[-1].cut == 0
     assert harness.step_index(steps, 12) == len(steps) - 1
 
@@ -187,15 +178,6 @@ def test_the_self_check_fails_loudly_when_the_final_state_disagrees(tmp_path):
     root = _snapshot(tmp_path / "snap", gates={**CLEAN, "sound": False})
     problems = harness.self_check(harness.load(root))
     assert any("gates.json" in p for p in problems)
-
-
-def test_the_sound_gate_sees_the_cross_cutting_window(history):
-    flags = harness.run(history, {"sound": harness.sound})
-    steps = harness.steps(history)
-    flagged = {s.seq for s, ids in zip(steps, flags["sound"]) if "slice:extra" in ids}
-    # extra is cross-cutting from the slicing event until it is classified,
-    # and S-02 in it depends on core.
-    assert flagged == {9}
 
 
 def test_scoring_counts_a_case_only_when_every_expected_id_is_flagged_in_its_window():
@@ -225,7 +207,7 @@ def test_scoring_counts_a_case_only_when_every_expected_id_is_flagged_in_its_win
 
 
 def test_a_case_may_expect_a_slice_finding(history):
-    flags = {"g": [set()] * 9 + [{"slice:extra"}]}
+    flags = {"g": [set()] * 8 + [{"slice:extra"}]}
     steps = harness.steps(history)
     case = {"finding_id": "s", "gate_ticket": "M8", "expected_ids": ["slice:extra"],
             "earliest_step_visible": 9}

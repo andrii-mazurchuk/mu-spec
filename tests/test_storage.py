@@ -7,7 +7,6 @@ import pytest
 from mu_spec.graph import Entry
 from mu_spec.identifiers import parse
 from mu_spec.storage import (
-    CROSS_CUTTING,
     SLICE,
     MalformedEntryFile,
     ProjectStore,
@@ -369,43 +368,25 @@ def test_depends_on_survives_a_write_and_read_round_trip(tmp_path):
     assert [str(d) for d in entry.depends_on] == ["S-01"]
 
 
-# -- cross-cutting is a slice type -------------------------------------------
+# -- the removed cross-cutting type: history still reads ----------------------
 
 
-def test_a_slice_is_an_ordinary_slice_unless_told_otherwise(tmp_path):
-    store = ProjectStore(tmp_path)
-    store.create_project("m")
-    store.append("m", [Entry(id=parse("S-01"), title="a")], slice_name="listings")
-    assert store.load_manifest("m").slices["listings"].type == SLICE
-
-
-def test_a_slice_can_be_marked_cross_cutting_and_it_persists(tmp_path):
-    """A type, not a reserved name. There can be several, each with its own
-    full column at every layer, stored exactly like any other slice."""
+def test_a_legacy_type_and_emission_round_trip_untouched(tmp_path):
+    """D6 removed the type, never the data. A stored `cross_cutting` and a
+    stored `emits_into` survive a later write byte for byte."""
     store = ProjectStore(tmp_path)
     store.create_project("m")
     store.append("m", [Entry(id=parse("S-01"), title="a")], slice_name="audit")
-    store.append("m", [Entry(id=parse("S-02"), title="b")], slice_name="telemetry")
-    store.set_slice_type("m", "audit", CROSS_CUTTING)
-    store.set_slice_type("m", "telemetry", CROSS_CUTTING)
-    reloaded = ProjectStore(tmp_path).load_manifest("m")
-    assert reloaded.cross_cutting() == ("audit", "telemetry")
-    assert (tmp_path / "m" / "spec" / "audit.jsonl").exists()
-
-
-def test_an_unknown_slice_type_is_refused(tmp_path):
-    store = ProjectStore(tmp_path)
-    store.create_project("m")
-    store.append("m", [Entry(id=parse("S-01"), title="a")], slice_name="audit")
-    with pytest.raises(ValueError):
-        store.set_slice_type("m", "audit", "sort-of-ambient")
-
-
-def test_setting_the_type_of_an_unknown_slice_is_refused(tmp_path):
-    store = ProjectStore(tmp_path)
-    store.create_project("m")
-    with pytest.raises(ValueError):
-        store.set_slice_type("m", "nope", CROSS_CUTTING)
+    manifest = store.load_manifest("m")
+    manifest.slices["audit"].type = "cross_cutting"
+    store.save_manifest("m", manifest)
+    store.append("m", [Entry(id=parse("S-02"), title="b",
+                             emits_into=(parse("S-01"),))], slice_name="audit")
+    store.append("m", [Entry(id=parse("S-03"), title="c")], slice_name="listings")
+    reloaded = ProjectStore(tmp_path)
+    assert reloaded.load_manifest("m").slices["audit"].type == "cross_cutting"
+    assert reloaded.load_manifest("m").slices["listings"].type == SLICE
+    assert reloaded.load_graph("m").get(parse("S-02")).emits_into == (parse("S-01"),)
 
 
 def test_the_write_path_cannot_put_one_entry_in_two_slices(tmp_path):
@@ -567,30 +548,3 @@ def test_a_split_of_held_behaviour_takes_it_out_of_the_holding_file(tmp_path):
     assert sorted(ids) == ["B-01", "B-02"]
 
 
-def test_a_split_reports_the_emissions_it_makes_illegal(tmp_path):
-    """An emission goes only into a cross-cutting slice. Moving its target
-    into an ordinary one makes it a bad emission -- the graph is unsound
-    until the emitter is corrected. The split is still allowed, because the
-    correction can only be written after it, but it must SAY so: dark's
-    first split of legibility was accepted in silence."""
-    from mu_spec import service
-    from mu_spec.storage import CROSS_CUTTING
-
-    store = ProjectStore(tmp_path)
-    store.create_project("m")
-    store.append("m", [Entry(id=parse("B-01"), title="b")], slice_name="feat")
-    store.append("m", [Entry(id=parse("A-01"), title="a", derives_from=(parse("B-01"),))],
-                 slice_name="feat")
-    store.append("m", [Entry(id=parse("S-01"), title="concern", derives_from=(parse("A-01"),)),
-                       Entry(id=parse("S-02"), title="resolver", derives_from=(parse("A-01"),))],
-                 slice_name="leg")
-    store.append("m", [Entry(id=parse("S-03"), title="caller", derives_from=(parse("A-01"),),
-                             emits_into=(parse("S-02"),))], slice_name="feat")
-    manifest = store.load_manifest("m")
-    manifest.slices["leg"].type = CROSS_CUTTING
-    store.save_manifest("m", manifest)
-
-    out = service.split_slice(store, "m", "leg", {"into": "res", "members": ["S-02"]})
-    assert out["split"] is True
-    assert [f["id"] for f in out["made_unsound"]] == ["S-03"]
-    assert out["made_unsound"][0]["kind"] == "bad_emission"

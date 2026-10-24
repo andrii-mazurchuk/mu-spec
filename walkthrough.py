@@ -72,15 +72,14 @@ def spine(project: str, note: str = "") -> None:
     _, payload = call("GET", f"/projects/{project}/spine")
     print(f"\n  SPINE {note}")
     print(
-        f"  {'id':6} {'slice':11} {'derives':8} {'depends':8} {'emits':7} title"
+        f"  {'id':6} {'slice':11} {'derives':8} {'depends':8} title"
     )
     print(f"  {'-' * 80}")
     for row in payload["spine"]:
         print(
             f"  {row['id']:6} {str(row['slice'] or '-'):11} "
             f"{','.join(row['derives_from']) or '-':8} "
-            f"{','.join(row['depends_on']) or '-':8} "
-            f"{','.join(row['emits_into']) or '-':7} {row['title']}"
+            f"{','.join(row['depends_on']) or '-':8} {row['title']}"
         )
 
 
@@ -397,11 +396,11 @@ def main(argv=None) -> int:
     print("  is. What may be written is a work unit -- step 9.")
 
     # --------------------------------------------------------------- 5b
-    step("5b.", "A CROSS-CUTTING SLICE — a concern nobody declares")
+    step("5b.", "A FOUNDATIONAL SLICE — a concern everything depends on")
     print("  Audit logging is not a slice among the others. Nothing branches")
     print("  on what it returns, and its contract names no domain object -- it")
     print("  takes an actor, an action string and an opaque target. So it gets")
-    print("  a full column of its own, and a type saying what it is.\n")
+    print("  a full column of its own.\n")
     audit_req = request(
         "feature", "every action has to be auditable", project=P, origin="andrey"
     )
@@ -443,14 +442,9 @@ def main(argv=None) -> int:
         parent = result["created"][0]
     audit_spec = parent
 
-    status, ruling = call(
-        "POST", f"/projects/{P}/slices/audit/type", {"type": "cross_cutting"}
-    )
-    print(f"\n  classify_slice(audit) -> {status} {ruling.get('type')}")
-    show("cross-cutting slices", ruling["cross_cutting"])
-
-    print("\n  Now discovery emits into it. Fire-and-forget: no return value,")
-    print("  so no ordering, so audit stays derivable before its emitters.")
+    print("\n  Discovery depends on it, like any other slice. The cross-cutting")
+    print("  type that once made this an emission was removed (D6): an ambient")
+    print("  concern is a foundational slice, and everything else depends on it.")
     amend(
         P,
         audit_req,
@@ -458,39 +452,17 @@ def main(argv=None) -> int:
             {
                 "layer": "S",
                 "title": "search/index.py records every query it serves",
-                "body": "Calls audit.record on each query. Nothing is read back.",
-                "derives_from": ["A-01"],
-                "emits_into": [audit_spec],
-            }
-        ],
-        slice_name="discovery",
-    )
-    _, m = call("GET", f"/projects/{P}/spine?layer=S")
-    deps = store.load_manifest(P).dependency_graph(store.load_graph(P))
-    print("\n  SLICE DEPENDENCIES after the emission")
-    for name, d in deps.items():
-        print(f"    {name:12} -> {', '.join(d) or '(nothing)'}")
-    print("    discovery emits into audit and still depends on nothing. An")
-    print("    emission is not a dependency, which is the whole point of it.")
-
-    print("\n  And the other direction is refused outright:")
-    amend(
-        P,
-        audit_req,
-        [
-            {
-                "layer": "S",
-                "title": "search/index.py asks the audit log a question",
+                "body": "Calls audit.record on each query.",
                 "derives_from": ["A-01"],
                 "depends_on": [audit_spec],
             }
         ],
         slice_name="discovery",
     )
-
-    _, wp_cc = call("GET", f"/projects/{P}/slice-context?slice=payouts")
-    print("\n  payouts never mentioned audit. Its work package carries it anyway:")
-    show("cross_cutting", [e["id"] + " " + e["slice"] for e in wp_cc["cross_cutting"]])
+    deps = store.load_manifest(P).dependency_graph(store.load_graph(P))
+    print("\n  SLICE DEPENDENCIES")
+    for name, d in deps.items():
+        print(f"    {name:12} -> {', '.join(d) or '(nothing)'}")
 
     # --------------------------------------------------------------- 5c
     step("5c.", "WAVES — the order, computed rather than chosen")
@@ -812,7 +784,7 @@ def main(argv=None) -> int:
     print("\n  STRUCTURE")
     for row in ins["slices"]:
         print(f"    {row['slice']:11} size {row['size']}  in {row['internal_edges']}"
-              f"  out {row['outbound_edges']}  emits {row['emissions']}"
+              f"  out {row['outbound_edges']}"
               f"  cohesion {row['cohesion']}")
 
     print("\n  TRIAL A DIFFERENT CUT — scored, and nothing created")
@@ -830,7 +802,6 @@ def main(argv=None) -> int:
                 "product": merged,
                 "audit": sorted(str(i) for i in _m.slices["audit"].members),
             },
-            "types": {"audit": "cross_cutting"},
         },
     )
     print("    what if discovery, filtering and payouts were one slice?")

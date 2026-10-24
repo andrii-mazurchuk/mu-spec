@@ -5,7 +5,7 @@ import pytest
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 from mu_spec.slicing import candidates, score
-from mu_spec.storage import CROSS_CUTTING, Manifest
+from mu_spec.storage import Manifest
 
 
 def _behaviour() -> Graph:
@@ -199,25 +199,6 @@ def test_a_chain_is_warned_about():
     )
     assert result["chain"] is True
     assert any("parallel" in w for w in result["warnings"])
-
-
-def test_a_proposed_cross_cutting_slice_is_checked_as_one():
-    """audit reaching back into a feature slice is illegal, and it is caught
-    while the classification is still a proposal."""
-    graph = Graph(
-        [
-            Entry(id=parse("S-01"), title="a"),
-            Entry(id=parse("S-03"), title="audit", depends_on=(parse("S-01"),)),
-        ]
-    )
-    result = score(
-        Manifest(project="m"),
-        graph,
-        {"a": ["S-01"], "audit": ["S-03"]},
-        types={"audit": CROSS_CUTTING},
-    )
-    assert result["legal"] is False
-    assert result["slice_findings"][0]["kind"] == "cross_cutting_outbound"
 
 
 def test_scoring_returns_inputs_not_a_verdict():

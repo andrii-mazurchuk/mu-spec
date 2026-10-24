@@ -86,14 +86,10 @@ EMISSIONS_FILE = "emissions.jsonl"
 REFUSE_ROOTS_ENV = "MU_SPEC_REFUSE_ROOTS"
 MANIFEST_FILE = "manifest.json"
 
-# Slice types. Cross-cutting is a TYPE, not a reserved slice name: audit
-# logging deserves its own architecture and its own specs, and is as complex
-# as any slice. There can be several, each with a full column at every layer,
-# stored exactly like everything else. What distinguishes one is which edges
-# are legal and whose context it lands in -- not where it is filed.
+# Every slice is a plain slice. The cross-cutting type was removed 10-24 (D6);
+# a manifest still saying "cross_cutting" loads, and the value is carried
+# through untouched and read by nothing -- stored data is never rewritten.
 SLICE = "slice"
-CROSS_CUTTING = "cross_cutting"
-SLICE_TYPES = (SLICE, CROSS_CUTTING)
 
 # `owner/name`, which is the only form a REST path can use. A person has a
 # browser URL or an SSH remote in the clipboard instead, so both are accepted
@@ -248,6 +244,7 @@ class Slice:
     # and a gap is the ordinary case. This is what lets a slice split without
     # renumbering anything.
     members: set[Identifier] = dataclasses.field(default_factory=set)
+    # Round-tripped, never read. See SLICE.
     type: str = SLICE
 
 
@@ -304,17 +301,6 @@ class Manifest:
         built from exactly this."""
         return tuple(
             sorted(p for p, ids in self.modules.items() if identifier in ids)
-        )
-
-    def cross_cutting(self) -> tuple[str, ...]:
-        """Every cross-cutting slice, in name order. These land in every
-        slice's context whether or not anything declared a dependency on
-        them: their behaviour ranges over other slices rather than naming a
-        subject, so requiring n identical declarations would fill the
-        dependency graph with edges that are always true and carry no
-        signal."""
-        return tuple(
-            sorted(n for n, sl in self.slices.items() if sl.type == CROSS_CUTTING)
         )
 
     def dependency_graph(self, graph: Graph) -> dict[str, tuple[str, ...]]:
@@ -577,20 +563,6 @@ class ProjectStore:
             manifest.modules[path.strip()] = parsed
         else:
             manifest.modules.pop(path.strip(), None)
-        self.save_manifest(project, manifest)
-
-    def set_slice_type(self, project: str, slice_name: str, slice_type: str) -> None:
-        """Mark a slice as cross-cutting, or back to ordinary. A classification
-        the agent proposes and a human rules on -- the unit only records it,
-        and refuses a value that is not one of the two."""
-        if slice_type not in SLICE_TYPES:
-            raise ValueError(
-                f"unknown slice type {slice_type!r}, expected one of {SLICE_TYPES}"
-            )
-        manifest = self.load_manifest(project)
-        if slice_name not in manifest.slices:
-            raise ValueError(f"unknown slice {slice_name!r}")
-        manifest.slices[slice_name].type = slice_type
         self.save_manifest(project, manifest)
 
     # -- entry files --------------------------------------------------------

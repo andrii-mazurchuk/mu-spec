@@ -162,7 +162,6 @@ def test_spine_carries_identifier_title_and_edges_only():
             "title": "Sellers list items",
             "derives_from": [],
             "depends_on": [],
-            "emits_into": [],
         }
     ]
 
@@ -184,7 +183,6 @@ def test_spine_records_derives_from():
         "title": "B-01 title",
         "derives_from": ["I-01"],
         "depends_on": [],
-        "emits_into": [],
     }
 
 

@@ -552,9 +552,7 @@ def wave_view(units: list[Unit], edges: dict[str, tuple[str, ...]]) -> Schedule:
 def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]], list[Identifier]]:
     """Unit A follows unit B when an entry in A depends on an entry in B.
 
-    `emits_into` contributes nothing, here as everywhere: an emission is
-    fire-and-forget, nothing is consumed back, so it imposes no order. Only
-    `depends_on` is an order.
+    Only `depends_on` is an order.
 
     Every unit is seeded as a key even when it follows nothing, because the
     relaxation assigns only nodes it can see and would otherwise strand

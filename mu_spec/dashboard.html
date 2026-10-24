@@ -74,7 +74,6 @@ nav h2{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--
 .leg i{width:9px;height:9px;border-radius:2px;background:var(--sl);flex:none}
 .leg em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
   font-variant-numeric:tabular-nums}
-.leg.xc i{border-radius:99px}
 label.tog{display:flex;gap:7px;align-items:center;padding:4px 9px;color:var(--ink-soft);font-size:13px}
 label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
   font-variant-numeric:tabular-nums}
@@ -148,7 +147,6 @@ label.tog em{font-style:normal;color:var(--dim);font-size:11px;margin-left:auto;
 
 .far .t{display:none}
 .edge{fill:none;stroke:var(--rule);stroke-width:1.4;marker-end:url(#a-idle)}
-.edge.e{stroke-dasharray:3 4}
 .edge.lit{stroke:var(--brand);stroke-width:2;marker-end:url(#a-lit)}
 .edge.lit.h{stroke:var(--warn);marker-end:url(#a-h)}
 .edge.dim{opacity:.12}
@@ -634,7 +632,6 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
     <div id="legend"></div>
     <h2>Edges</h2>
     <label class="tog"><input type="checkbox" id="t-h" checked> depends_on <em id="n-h"></em></label>
-    <label class="tog"><input type="checkbox" id="t-e" checked> emits_into <em id="n-e"></em></label>
   </nav>
 
   <section class="stage">
@@ -833,8 +830,7 @@ async function fetchProject(project){
     test: e.id[0] === "T",
     slice: e.slice || "unsliced",
     derives: e.derives_from || [],
-    deps: e.depends_on || [],
-    emits: e.emits_into || []
+    deps: e.depends_on || []
   })).filter(e => e.layer !== undefined);
 
   /* A module is not an entry in the graph -- code never is -- but its
@@ -857,7 +853,7 @@ async function fetchProject(project){
       id: m.path, title: m.path, layer: MODULE_LAYER, module: true,
       test, band: test ? VERIFY : CORPUS,
       slice: (byId[impl[0]] || {}).slice || "unsliced",
-      derives: impl, deps: [], emits: []
+      derives: impl, deps: []
     });
   }
 
@@ -867,7 +863,6 @@ async function fetchProject(project){
   names.forEach((n,i)=>{
     const s = info[n] || {};
     slices[n] = {
-      type: s.type || "slice",
       hue: PALETTE[i % PALETTE.length],
       wave: (waves.wave_of || {})[n],
       deps: s.depends_on || [],
@@ -905,8 +900,8 @@ async function fetchProject(project){
 function signatures(d){
   const J = x => JSON.stringify(x);
   return {
-    graph: J(d.entries.map(e=>[e.id,e.title,e.slice,e.derives,e.deps,e.emits])),
-    slices: J(Object.entries(d.slices).map(([n,s])=>[n,s.type,s.wave,s.deps,s.size,s.cohesion])),
+    graph: J(d.entries.map(e=>[e.id,e.title,e.slice,e.derives,e.deps])),
+    slices: J(Object.entries(d.slices).map(([n,s])=>[n,s.wave,s.deps,s.size,s.cohesion])),
     waves: J(d.waves),
     gates: J(d.gates),
     strip: J([d.locality, (d.gates||{}).sound, (d.gates||{}).complete]),
@@ -947,7 +942,6 @@ function applyProject(d){
 }
 
 const hueOf = s => s==="unsliced" ? UNSLICED : (STATE.slices[s]||{}).hue || UNSLICED;
-const isXC  = s => (STATE.slices[s]||{}).type === "cross_cutting";
 
 /* -- verification ------------------------------------------------------
    Every one of these is a graph query, not a stored flag. A test that has
@@ -1264,7 +1258,7 @@ function verifyNodes(){
     id: GHOST(id), ghost: true, real: id, layer: LIX.S, band: VERIFY,
     title: (STATE.byId[id] || {}).title || "",
     slice: (STATE.byId[id] || {}).slice || "unsliced",
-    derives: [], deps: [], emits: []
+    derives: [], deps: []
   }));
   /* The scenarios point at the GHOST for layout, never at the real entry:
      an edge to the corpus would drag this band's y-assignment up into it. */
@@ -1349,13 +1343,12 @@ function buildScene(){
   for(const e of [...corpus, ...verify]) for(const p of e.derives)
     if(pos.has(p)&&pos.has(e.id)) vEdges.push({kind:"v",from:p,to:e.id});
 
-  /* A scenario carries no horizontal edge of either kind -- that is what
+  /* A scenario carries no horizontal edge -- that is what
      makes a unit holding test files a root -- so this loop finds none in
      the verification band, and nothing here has to exclude them. */
   const hEdges=[];
   for(const e of corpus){
     for(const d of e.deps)  if(pos.has(d)&&pos.has(e.id)) hEdges.push({kind:"h",from:d,to:e.id});
-    for(const m of e.emits) if(pos.has(m)&&pos.has(e.id)) hEdges.push({kind:"e",from:e.id,to:m});
   }
   const byCol={};
   for(const h of hEdges){
@@ -1494,7 +1487,7 @@ function nodeEl(id,p){
   const label = e.module ? short(e.id) : realOf(e.id);
   const i=svgEl("text",{class:"id",x:12,y:17}); i.textContent=clip(label,24);
   const s=svgEl("text",{class:"sl",x:12+Math.min(label.length,24)*7.2+8,y:17});
-  s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14)+(isXC(e.slice)?" ✳":"");
+  s.textContent = e.slice==="unsliced" ? "" : clip(e.slice,14);
   const t=svgEl("text",{class:"t",x:12,y:34});
   const note = e.ghost ? "judged below"
     : e.module ? "implements "+e.derives.join(", ")
@@ -1526,7 +1519,7 @@ function drawSpine(){
       ? "No entries in " + STATE.project + " yet. The graph appears once an amendment lands."
       : "No projects yet.";
     $("k-xing").textContent="0";
-    $("n-h").textContent="0"; $("n-e").textContent="0";
+    $("n-h").textContent="0";
     return;
   }
 
@@ -1586,7 +1579,6 @@ function drawSpine(){
 
   $("k-xing").textContent=SCENE.crossings;
   $("n-h").textContent=SCENE.hEdges.filter(e=>e.kind==="h").length;
-  $("n-e").textContent=SCENE.hEdges.filter(e=>e.kind==="e").length;
   const nv=$("n-v");
   if(nv) nv.textContent=STATE.entries.filter(e=>e.test&&!e.module).length||"";
   const vb=$("vb-verify");
@@ -1861,8 +1853,6 @@ function entryHTML(r){
       `<b>${esc(p.id)}</b> ${esc(clip(p.title,54))}`).join("; ")+"</span>");
   if((r.depends_on||[]).length)
     meta.push("<span>waits on "+r.depends_on.map(d=>`<b>${esc(d)}</b>`).join(" ")+"</span>");
-  if((r.emits_into||[]).length)
-    meta.push("<span>emits into "+r.emits_into.map(d=>`<b>${esc(d)}</b>`).join(" ")+"</span>");
   if((r.served_by||[]).length)
     meta.push("<span>served by "+r.served_by.length+"</span>");
   else if(r.layer!=="spec")
@@ -1926,7 +1916,7 @@ async function drawRead(){
       const info=STATE.slices[slice]||{};
       doc+=`<h2 style="--sl:${hueOf(slice)}">${esc(slice)}
         <span class="tag">${info.wave==null?"":"wave "+info.wave+" · "}${
-          mineRows.length}${isXC(slice)?" · cross-cutting":""}</span></h2>
+          mineRows.length}</span></h2>
         <div class="sliceline" style="--sl:${hueOf(slice)}"></div>`;
       nav+=`<div class="sl" style="--sl:${hueOf(slice)}" data-jump="rd-layer-${letter}">
         <i></i>${esc(slice)}</div>`;
@@ -2068,7 +2058,7 @@ function repaint(){
     const k=p.dataset.kind;
     // A kind switched off is HIDDEN, not dimmed. Dimming a dashed
     // 1.4px arc to 12% is indistinguishable from it still being on.
-    const shown = (k==="v") || (k==="h"&&$("t-h").checked) || (k==="e"&&$("t-e").checked);
+    const shown = (k==="v") || (k==="h"&&$("t-h").checked);
     p.classList.toggle("off", !shown);
     const ends=[p.dataset.from,p.dataset.to];
     const inSlice = !focusSlice ||
@@ -2096,15 +2086,13 @@ function pick(id){
   $("detail").innerHTML=
     `<h3>${e.module?"Module":"Entry"}</h3>
      <p><code>${esc(e.module?e.id:e.id)}</code>${e.module?"":" · <b>"+esc(e.title)+"</b>"}</p>
-     <p class="muted">slice <b style="color:${hueOf(e.slice)}">${esc(e.slice)}</b>${
-        isXC(e.slice)?" · cross-cutting":""} · layer ${esc(LAYERS[e.layer][1])}</p>
+     <p class="muted">slice <b style="color:${hueOf(e.slice)}">${esc(e.slice)}</b> · layer ${esc(LAYERS[e.layer][1])}</p>
      <div class="body" id="body">${e.module?"Code is not an entry in this graph. This is the "+
         "declared backlink — the only thing tying the file to the reasoning that produced it.":
         "loading…"}</div>
      <h3>Edges</h3>
      ${pills(e.module?"implements":"derives from — one layer up", e.derives)}
      ${pills("depends on — same layer, imposes order", e.deps)}
-     ${pills("emits into — cross-cutting, no order", e.emits)}
      ${pills("derived below", kids(e.id).filter(k=>!k.test).map(k=>k.id))}
      ${verifyPanel(e)}
      ${unitPanel(e)}
@@ -2204,8 +2192,6 @@ function resetInspector(){
   <p class="muted"><b>—→</b> derives_from, one layer up. The only edge that crosses a column.</p>
   <p class="muted"><b>⌒</b> depends_on, same layer. This is what slice dependency is projected
   from — and it routinely crosses slices.</p>
-  <p class="muted"><b>⌒ dashed</b> emits_into, same layer, only into a cross-cutting slice.
-  Imposes no order.</p>
   <p class="muted"><b>dashed box</b> a declared module — code, not an entry.</p>
   <h3>Tests</h3>
   <p class="muted">A test forks off spec rather than continuing under it, so it is
@@ -2257,7 +2243,7 @@ function drawWaves(){
       const on=info.deps||[];
       return `<div class="slice" style="--sl:${hueOf(s)}">
         <b>${esc(s)}</b>
-        <em>${info.type==="cross_cutting"?"cross-cutting ✳":"feature"} · ${info.size||0} entries${
+        <em>${info.size||0} entries${
           info.cohesion!=null?" · cohesion "+Number(info.cohesion).toFixed(2):""}</em>
         <em>${on.length?"after "+on.map(x=>`<code>${esc(x)}</code>`).join(", ")
                        :"depends on nothing"}</em></div>`;}).join("")+`</div>`).join("");
@@ -2267,8 +2253,6 @@ function drawWaves(){
     slice boundary, never authored anywhere. Two slices in the same wave provably have no edge
     between them, so they can be worked in parallel with nothing to coordinate; every earlier wave
     is finished before the next starts, so a wave-N agent reads its dependencies as frozen.
-    A cross-cutting slice lands in wave 0 by construction — the edge rules leave it no outbound
-    dependency to have.
     <br><br>This is an <b>authoring</b> order. It says which slice may be derived next, not which
     file may be built next — those are different questions with different answers, and the
     second one is the <b>Order</b> view.</p>`;
@@ -2524,7 +2508,7 @@ function drawModules(){
     if(!rows.length) return "";
     const missing = rows.filter(e => !(ix.by[e.id] || []).length).length;
     return `<div class="modslice" style="--sl:${hueOf(name)}">
-      <h4>${esc(name)}${isXC(name)?" ✳":""}
+      <h4>${esc(name)}
         <em>${rows.length - missing}/${rows.length} covered</em></h4>
       ${rows.map(e => {
         const files = ix.by[e.id] || [];
@@ -2629,10 +2613,9 @@ function proposalHTML(){
   const names=Object.keys(p.proposal||{});
   const cards=(slices.length?slices:names.map(n=>({slice:n,size:(p.proposal[n]||[]).length})))
     .map(x=>{
-      const xc=(p.types||{})[x.slice]==="cross_cutting"||x.type==="cross_cutting";
       return `<div class="card" style="--sl:${hueOf(x.slice)}">
         <b>${esc(x.slice)}</b>
-        <em>${xc?"cross-cutting &#10003;":"feature"} &middot; ${x.size} entries</em>
+        <em>${x.size} entries</em>
         <em>${x.cohesion==null?"cohesion n/a":"cohesion "+Number(x.cohesion).toFixed(2)}</em>
         <em>${(x.depends_on||[]).length?"after "+x.depends_on.map(esc).join(", ")
                                       :"depends on nothing"}</em></div>`;}).join("");
@@ -3441,7 +3424,7 @@ function drawLegend(){
   $("legend").innerHTML = (names.length||unsliced)
     ? names.map(s=>{
         const i=STATE.slices[s];
-        return `<button class="leg ${i.type==="cross_cutting"?"xc":""}" data-s="${esc(s)}"
+        return `<button class="leg" data-s="${esc(s)}"
           style="--sl:${i.hue}" aria-pressed="false" title="${
             i.wave==null?"":"wave "+i.wave}"><i></i>${esc(s)}<em>${i.size}</em></button>`;}).join("")+
       (unsliced?`<button class="leg" data-s="unsliced" style="--sl:${UNSLICED}"
@@ -3496,7 +3479,6 @@ function show(v){
 }
 for(const b of document.querySelectorAll("nav .view")) b.onclick=()=>show(b.dataset.v);
 $("t-h").onchange=repaint;
-$("t-e").onchange=repaint;
 $("t-verify").onchange=()=>{ sel=null; focusSlice=null;
   syncLegend(); drawScene(); resetInspector(); };
 for(const b of document.querySelectorAll("#lay-seg .segb"))

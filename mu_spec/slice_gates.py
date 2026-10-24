@@ -2,9 +2,8 @@
 
 `gates.py` deliberately knows nothing about slices -- it answers questions
 about entries and their edges alone. Everything here needs to know which
-slice owns which identifier, and which slices are cross-cutting, so it lives
-here instead. Two of the checks are about the *projected* slice graph and
-name a slice; one is about an entry's edges and names an entry.
+slice owns which identifier, so it lives here instead. The slice checks are
+about the *projected* slice graph and name a slice.
 
 All are **blocking**, and that is a decision rather than a default. None of
 them is a condition you propagate through and tidy up afterwards -- they mean
@@ -20,24 +19,11 @@ before anything derives from a slice costs nothing.
   cycle here is always about how the entries were *grouped*, never about the
   entries.
 
-- **A cross-cutting slice depending on a feature slice.** If it has to ask a
-  feature slice for something, it needs to know its caller, which is exactly
-  what its classification says it does not. Depending on another
-  cross-cutting slice is fine; the cycle check still applies there.
-
 - **An entry in more than one slice.** Slices define write ownership, and
   overlapping ownership is no ownership: two work packages would hand the
   same entry out as editable, and the audit would pass for both.
 
-- **An edge of the wrong kind for what it points at.** An edge into a
-  cross-cutting slice is an emission, and an emission goes nowhere else.
-  This is what makes the classification enforceable rather than declarative:
-  once a slice is ruled cross-cutting, the only legal way to reach it stops
-  imposing order on it.
-
-There is no judgement here, and never will be. Whether a slice *is*
-cross-cutting is a call an agent argues and a human rules on. Once that
-ruling is recorded, whether the edges are legal is arithmetic.
+There is no judgement here, and never will be.
 """
 
 from __future__ import annotations
@@ -48,15 +34,9 @@ import re
 from mu_spec.gates import Finding, Reader, live_successor, spec_facts, strict_imports
 from mu_spec.graph import Graph
 from mu_spec.identifiers import SPEC, TEST, Identifier, InvalidIdentifier, parse, sort_key
-from mu_spec.storage import CROSS_CUTTING, Manifest
+from mu_spec.storage import Manifest
 
 DEPENDENCY_CYCLE = "dependency_cycle"
-CROSS_CUTTING_OUTBOUND = "cross_cutting_outbound"
-BAD_EMISSION = "bad_emission"
-# An emission whose target was RETIRED rather than broken. Reported, never
-# refused: an emission consumes nothing, so a successor on the other end
-# changes nothing the emitter relied on. See the branch that raises it.
-STALE_EMISSION = "stale_emission"
 OVERLAPPING_MEMBERSHIP = "overlapping_membership"
 # `module_gates`: read against the module map, all three blocking.
 BAD_MODULE_IMPORT = "bad_module_import"
@@ -135,114 +115,6 @@ def _path(edges: dict[str, tuple[str, ...]], members: list[str]) -> str:
             break
         current = nxt
     return " -> ".join(route)
-
-
-def edge_gates(manifest: Manifest, graph: Graph) -> list[Finding]:
-    """The entry-level checks that need to know what kind of slice an edge
-    lands in. Blocking, like every other soundness check.
-
-    Two rules, and they are the same rule seen from both ends -- an edge into
-    a cross-cutting slice is an emission, and an emission goes nowhere else.
-
-    - **`depends_on` may not point into a cross-cutting slice** from outside
-      it. Depending on
-      something means branching on what it gives you back, and a concern
-      whose answer you branch on fails the first classification test. The two
-      claims cannot both be true, so the edge is a contradiction rather than
-      a style choice. The fix is to state it as an emission.
-    - **`emits_into` may only point into a cross-cutting slice**, in the same
-      layer, at a live entry. Emitting into an ordinary slice would be a
-      dependency with the ordering quietly filed off.
-    """
-    findings: list[Finding] = []
-    cross = set(manifest.cross_cutting())
-
-    for entry in graph.entries():
-        problems: list[str] = []
-        stale: list[str] = []
-
-        home = manifest.slice_of(entry.id)
-        for target in entry.depends_on:
-            owner = manifest.slice_of(target)
-            # Within the concern there is no caller to branch, only build
-            # order: an entry of the slice may need another of the same slice.
-            if owner is not None and owner in cross and owner != home:
-                # Two claims that cannot both hold, and the message must
-                # not assume which one is false. If the dependency is
-                # spurious, the edge is an emission. If it is real -- the
-                # caller consumes what the target returns -- then the
-                # classification is what is wrong, and no relabelling will
-                # express it: fan-in is not the criterion, and a slice
-                # others depend on is FOUNDATIONAL rather than
-                # cross-cutting. A slice holding both an ambient concern and
-                # a service its callers consume is two slices, and slices
-                # split.
-                problems.append(
-                    f"{target} is in {owner!r}, which is cross-cutting, and "
-                    "a cross-cutting slice is reached with emits_into. Two "
-                    "readings, and they have opposite remedies. If nothing "
-                    "is consumed back, this is an emission -- change the "
-                    "edge. If the caller really does use what "
-                    f"{target} returns, then {owner!r} is misclassified for "
-                    "this entry: depending on it is what a foundational "
-                    "slice is for, and fan-in is never what makes something "
-                    f"cross-cutting. Split {owner!r} and classify each half"
-                )
-
-        for target in entry.emits_into:
-            owner = manifest.slice_of(target)
-            if target == entry.id:
-                problems.append(f"{target} emits into itself")
-            elif target.layer != entry.id.layer:
-                problems.append(
-                    f"{target} is not in the same layer -- an emission is "
-                    "horizontal, like a dependency"
-                )
-            elif graph.superseded_by(target) is not None:
-                # Reported, never refused, and this is the one place the
-                # emission rule parts company with the dependency rule.
-                #
-                # A dependency on a retired entry blocks because the
-                # dependent CONSUMED a meaning that has since moved. An
-                # emission consumes nothing -- that is the whole definition,
-                # and it is why an emission imposes no order and why a
-                # concern is derivable before everything that emits into it.
-                # If nothing came back, nothing moved for the emitter.
-                #
-                # The test that settles it: an emitter that needs to know
-                # the target's shape has declared the wrong edge kind.
-                # Needing what is on the other end is what makes something a
-                # dependency. So either the emission is true and the
-                # supersession is irrelevant to it, or the edge was
-                # mislabelled and the repair is the edge rather than this
-                # gate. Refusing here was the dependency rule inherited
-                # rather than argued.
-                #
-                # A target that never existed is still refused, below. That
-                # one is a dangling edge; this one is a retired entry whose
-                # successor the graph can name.
-                stale.append(
-                    f"{target} is superseded by {graph.superseded_by(target)}"
-                )
-            elif target not in graph:
-                problems.append(f"{target} does not exist")
-            elif owner is None or owner not in cross:
-                problems.append(
-                    f"{target} is not cross-cutting -- an emission goes into "
-                    "a concern and is never consumed back. Into an ordinary "
-                    "slice it would be a dependency with the ordering filed "
-                    "off"
-                )
-
-        # Two kinds, because one entry can hold both a broken emission and a
-        # merely stale one, and collapsing them would make the blocking half
-        # invisible behind the reported half.
-        if problems:
-            findings.append(Finding(BAD_EMISSION, entry.id, "; ".join(problems)))
-        if stale:
-            findings.append(Finding(STALE_EMISSION, entry.id, "; ".join(stale)))
-
-    return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
 
 
 def code_roots(manifest: Manifest) -> set[str]:
@@ -422,24 +294,6 @@ def slice_gates(manifest: Manifest, graph: Graph) -> list[SliceFinding]:
                     f"{member} is a member of {', '.join(names)}. An entry "
                     "belongs to exactly one slice -- slices define write "
                     "ownership, and two owners is no owner",
-                )
-            )
-
-    for name in manifest.cross_cutting():
-        reaching_out = [
-            dep
-            for dep in edges.get(name, ())
-            if manifest.slices[dep].type != CROSS_CUTTING
-        ]
-        if reaching_out:
-            findings.append(
-                SliceFinding(
-                    CROSS_CUTTING_OUTBOUND,
-                    name,
-                    f"{name} is cross-cutting but depends on "
-                    f"{', '.join(reaching_out)} -- a concern that has to ask a "
-                    "feature slice for something needs to know its caller, "
-                    "which is what its classification says it does not",
                 )
             )
 
