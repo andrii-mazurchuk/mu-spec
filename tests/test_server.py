@@ -1679,6 +1679,8 @@ def test_actions_declares_exactly_the_presses_a_person_makes(store, prompts):
         "emit_tickets",
         "rollback_tickets",
         "set_labels",
+        # M33, D2: the grant is a person's, so it is a press, never a tool.
+        "set_delegation",
     }
     assert all(a["method"] == "POST" for a in payload["actions"])
 
@@ -1830,6 +1832,12 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         # that could withdraw a batch could quietly unship work somebody is
         # already building against.
         "rollback_tickets": None,
+        # M33, D2. Granting delegation is a person's; an agent that could
+        # grant it would be delegating to itself. Reading and using it are
+        # offered.
+        "set_delegation": None,
+        "get_delegation": "get_delegation",
+        "auto_ship": "auto_ship",
         "record_audit": "record_audit",
         # The unit-wide log exists for whoever traces a bad write afterwards,
         # a person reading the change log. No agent needs it to do work, and

@@ -789,7 +789,8 @@ const STATE = {
   labelsDraft:null,
   pickup:[],            // labels the consumer adds on pickup -- never edited after
   pickupDraft:null,
-  horizon:1,            // waves to create issues for in one press (docs/TICKETS.md section 5)
+  delegation:{enabled:false}, // M33: may an agent cut and Ship S/T repairs of shipped units
+  horizon:1,           // waves to create issues for in one press (docs/TICKETS.md section 5)
   horizonMode:null,     // "shipped" = only waves already out; "more" = the next `horizon` waves.
                         // null until chosen: "shipped" once anything is out, else "more"
   shipFlash:null        // the outcome of the last press, outliving its reload
@@ -806,7 +807,7 @@ async function loadProjects(){
 async function fetchProject(project){
   const base = "projects/" + enc(project);
   const [spine, gates, waves, insights, issues, inbox, modules, proposal, units,
-         repo, labels, emission] =
+         repo, labels, emission, delegation] =
     await Promise.all([
     get(base + "/spine"),                               // the only hard requirement
     soft(base + "/gates", null),
@@ -819,7 +820,8 @@ async function fetchProject(project){
     soft(base + "/units", {cut:null, drift:null, live:null}),
     soft(base + "/repo", {repo:null}),
     soft(base + "/labels", {labels:[]}),
-    soft(base + "/emit", {running:false, emissions:[]})
+    soft(base + "/emit", {running:false, emissions:[]}),
+    soft(base + "/delegation", {delegation:{enabled:false}})
   ]);
 
   const entries = (spine.spine || []).map(e => ({
@@ -889,6 +891,7 @@ async function fetchProject(project){
     repo: repo.repo || null,
     labels: labels.labels || [],
     pickup: labels.pickup || [],
+    delegation: delegation.delegation || {enabled:false},
     emission
   };
 }
@@ -912,7 +915,7 @@ function signatures(d){
     /* The repository and the emission LOG -- not the live run. A run in
        flight changes several times a second and has its own poll; folding it
        in here would make every ordinary tick look like a structural change. */
-    ship: J([d.repo, (d.emission||{}).emissions])
+    ship: J([d.repo, (d.emission||{}).emissions, d.delegation])
   };
 }
 
@@ -3170,6 +3173,15 @@ function drawShip(){
              block${pf.blocking===1?"s":""} work already on GitHub. The first choice creates
              only those and opens no new work.`
           : `Nothing on GitHub yet, so the first press opens the next waves.`}</p>
+        <div class="shipopts">
+          <label><input type="checkbox" id="deleg-in" ${STATE.delegation.enabled ? "checked" : ""}>
+            delegate Ship to agents</label>
+        </div>
+        <p class="shiphelp">${STATE.delegation.enabled
+          ? `<b>Delegated</b>${STATE.delegation.actor ? ` by <code>${esc(STATE.delegation.actor)}</code>` : ""}:
+             an agent may cut and Ship on its own only for an S/T-only change to units already
+             on GitHub with every gate green. It never opens new work; I, B or A stays your press.`
+          : `Off: only this button ships. On lets an agent ship S/T repairs of units already out.`}</p>
       </div>
       <div class="count">
         <div class="bignum ${pf.fresh ? "" : "zero"}">
@@ -3237,6 +3249,8 @@ function drawShip(){
   if(hms) hms.onchange = () => { STATE.horizonMode = "shipped"; drawShip(); };
   if(hmm) hmm.onchange = () => { STATE.horizonMode = "more"; drawShip(); };
   if(save) save.onclick = () => setRepo(input.value);
+  const deleg = $("deleg-in");
+  if(deleg) deleg.onchange = () => setDelegation(deleg.checked);
   const go = $("do-ship");
   if(go) go.onclick = shipTickets;
 }
@@ -3305,6 +3319,32 @@ async function setRepo(value){
       STATE.shipFlash = payload.repo
         ? {kind:"ok", text:"Repository set to " + payload.repo + "."}
         : {kind:"ok", text:"Repository cleared."};
+    }
+  }catch(err){
+    STATE.shipFlash = {kind:"bad", text:"Could not reach the unit — " + err};
+  }
+  drawShip();
+}
+
+/* A person's grant (M33, D2): a press here, never a tool an agent can reach. */
+async function setDelegation(enabled){
+  const box = $("deleg-in");
+  if(box) box.disabled = true;
+  try{
+    const res = await fetch("projects/" + enc(STATE.project) + "/delegation", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body: JSON.stringify({enabled, actor:"dashboard"})
+    });
+    const text = await res.text();
+    let payload = null;
+    try{ payload = JSON.parse(text); }catch(_){}
+    if(!res.ok){
+      STATE.shipFlash = {kind:"bad", text: refusal(res, text, payload)};
+    } else {
+      STATE.delegation = payload.delegation || {enabled:false};
+      STATE.shipFlash = {kind:"ok", text: STATE.delegation.enabled
+        ? "Ship delegated: agents may ship S/T repairs of units already out."
+        : "Delegation revoked: only this button ships."};
     }
   }catch(err){
     STATE.shipFlash = {kind:"bad", text:"Could not reach the unit — " + err};

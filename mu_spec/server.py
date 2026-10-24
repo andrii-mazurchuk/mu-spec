@@ -795,10 +795,50 @@ def _tools() -> list[dict[str, Any]]:
             "knowing before starting one. `token` says whether this unit holds "
             "a tracker token at all -- a boolean, never the value, and the one "
             "precondition nothing in the project can answer. Starting an "
-            "emission is a person's decision and is not offered here.",
+            "emission is a person's decision and is not offered here -- "
+            "except under a delegation, through auto_ship.",
             "GET",
             "/projects/{project}/emit",
             {"project": s},
+            ("project",),
+        ),
+        tool(
+            "get_delegation",
+            "Whether a person has delegated Ship for this project to agents: "
+            "`delegation.enabled`, with who granted or revoked it (`actor`), "
+            "when (`at`) and their `note`. Never granted reads as "
+            "`enabled: false`. Granting is a person's decision and is not "
+            "offered here; check this before calling auto_ship.",
+            "GET",
+            "/projects/{project}/delegation",
+            {"project": s},
+            ("project",),
+        ),
+        tool(
+            "auto_ship",
+            "Cut the project and Ship it, on your own judgement, under a "
+            "person's standing delegation (D2). Use it after a repair you "
+            "made at S or T to units already on the tracker. It does "
+            "nothing and answers 409 unless ALL hold, reported per name in "
+            "`conditions` and listed in `failed`: `delegation` (granted and "
+            "not revoked), `ready` (repo set, token held, no press in "
+            "flight), `gates` (graph sound, modules declared, no dead-end "
+            "citation, no loop in the units' own edges, no shipped unit "
+            "waiting on a blocker with no live issue), `st_only` (since the "
+            "cut the last press shipped, no I, B or A entry was added or "
+            "superseded) and `shipped` (every unit the change touches -- "
+            "entries or edges -- already has an issue). A refusal is final "
+            "for you: it is the person's press, so stop and say which "
+            "condition failed, never work around it. When all hold it takes "
+            "a cut and presses Ship exactly as the person's buttons do, "
+            "except that it never creates an issue for a unit with none: "
+            "it edits, follows up and withdraws. Answers 202 with a run id "
+            "(progress via get_emission) and `cut_seq`; completion is the "
+            "`tickets_emitted` event. `note` is kept on the cut and the "
+            "`auto_ship` event.",
+            "POST",
+            "/projects/{project}/auto_ship",
+            {"project": s, "note": s},
             ("project",),
         ),
         tool(
@@ -1137,6 +1177,26 @@ def _actions() -> list[dict[str, Any]]:
                 "properties": {"cut_seq": {"type": "integer"}},
             },
         },
+        {
+            "name": "set_delegation",
+            "description": (
+                "Grant or revoke agents' standing leave to cut and Ship this "
+                "project themselves (M33, D2) -- only for a change that is "
+                "S/T only, on units already shipped, with every gate green. "
+                "Anything touching I, B or A stays the person's press. A "
+                "person's decision, so never a tool: an agent that could "
+                "grant this would be delegating to itself. Recorded with the "
+                "actor in the change log and as a `delegation` event."
+            ),
+            "method": "POST",
+            "path": "projects/{project}/delegation",
+            "input_schema": {
+                "type": "object",
+                "properties": {"enabled": {"type": "boolean"},
+                               "note": {"type": "string"}},
+                "required": ["enabled"],
+            },
+        },
     ]
 
 
@@ -1193,6 +1253,11 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("POST", re.compile(rf"^/projects/{_P}/emit$"), "emit_tickets"),
     ("POST", re.compile(rf"^/projects/{_P}/emit/rollback$"), "rollback_tickets"),
     ("GET", re.compile(rf"^/projects/{_P}/emit$"), "get_emission"),
+    # Delegated Ship (M33, D2). The grant is a person's and is withheld from
+    # the tool manifest; reading it and using it are offered to an agent.
+    ("POST", re.compile(rf"^/projects/{_P}/delegation$"), "set_delegation"),
+    ("GET", re.compile(rf"^/projects/{_P}/delegation$"), "get_delegation"),
+    ("POST", re.compile(rf"^/projects/{_P}/auto_ship$"), "auto_ship"),
     # Where this project's tickets go. One route, both methods: the write is a
     # deployment decision and is withheld from the tool manifest; the read is
     # offered, because an agent checking a project is configured before
@@ -1336,6 +1401,24 @@ def handle(
     except Exception:  # noqa: BLE001
         pass
     return status, content_type, text
+
+
+def _press(store, project, body, runs, emit_client, events, now_fn, create=True):
+    """One Ship press: inline without a registry (the suite), else a job.
+    Shared by the person's route and the delegated one, so they cannot drift."""
+    def go(report=None):
+        return service.emit_tickets(store, project, client=emit_client, events=events,
+                                    now_fn=now_fn, on_progress=report, body=body,
+                                    create=create)
+    if runs is None:
+        result = go()
+        status = 200 if result.get("emitted") else 400 if result.get("refused") else 409
+        return status, JSON, json.dumps(result)
+    try:
+        run = runs.start(project, go)
+    except emitting.RunBusy as exc:
+        return 409, JSON, json.dumps({"error": str(exc)})
+    return 202, JSON, json.dumps({"project": project, "run_id": run.id, "started": True})
 
 
 def _handle(
@@ -1597,29 +1680,34 @@ def _handle(
             # deterministic and thread-free.
             # A ticket naming a superseded entry is a 400, answered before a job
             # starts: the press would write nothing, and saying so takes no job.
-            if runs is None:
-                result = service.emit_tickets(
-                    store, project, client=emit_client, events=events,
-                    now_fn=now_fn, body=body,
-                )
-                status = 200 if result.get("emitted") else 400 if result.get("refused") else 409
-                return status, JSON, json.dumps(result)
-            refusal = service.emission_refusal(store, project)
+            refusal = service.emission_refusal(store, project) if runs is not None else None
             if refusal is not None:
                 return 400, JSON, json.dumps(refusal)
-            try:
-                run = runs.start(
-                    project,
-                    lambda report: service.emit_tickets(
-                        store, project, client=emit_client, events=events,
-                        now_fn=now_fn, on_progress=report, body=body,
-                    ),
-                )
-            except emitting.RunBusy as exc:
-                return 409, JSON, json.dumps({"error": str(exc)})
-            return 202, JSON, json.dumps(
-                {"project": project, "run_id": run.id, "started": True}
-            )
+            return _press(store, project, body, runs, emit_client, events, now_fn)
+
+        if name == "auto_ship":
+            # The delegated exception (M33, D2): every condition is checked
+            # before anything is written, then the person's cut and the
+            # person's press run -- the same code, under the agent's name.
+            busy = bool(runs and (runs.status(project) or {}).get("phase") == "running")
+            check = service.auto_ship_conditions(store, project, busy=busy)
+            if not check["allowed"]:
+                return 409, JSON, json.dumps(check)
+            cut = service.auto_ship_cut(store, project, body, check, events, now_fn, actor)
+            if not cut.get("cut"):
+                return 409, JSON, json.dumps({**check, "cut": cut})
+            status, ctype, text = _press(store, project, {}, runs, emit_client,
+                                         events, now_fn, create=False)
+            extra = {"cut_seq": cut["seq"], "base_cut": check["base_cut"],
+                     "conditions": check["conditions"]}
+            return status, ctype, json.dumps({**json.loads(text), **extra})
+
+        if name == "get_delegation":
+            return 200, JSON, json.dumps(service.get_delegation(store, project))
+
+        if name == "set_delegation":
+            return 200, JSON, json.dumps(
+                service.set_delegation(store, project, body, events, now_fn, actor))
 
         if name == "rollback_tickets":
             # The same registry as emitting, which is what stops a rollback

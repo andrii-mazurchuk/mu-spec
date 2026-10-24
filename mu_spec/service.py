@@ -39,6 +39,9 @@ from mu_spec.gates import (
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
     ALL_LAYERS,
+    ARCHITECTURE,
+    BEHAVIOUR,
+    INTENT,
     SPEC,
     TEST,
     Identifier,
@@ -1147,6 +1150,15 @@ def _projection(store: ProjectStore, project: str):
                          _lineage(store, project))
 
 
+def _marks(graph: Graph) -> dict[str, int]:
+    """The highest number present per layer: what a later cut is diffed
+    against (M33). Read off the graph, not the allocation counter."""
+    out: dict[str, int] = {}
+    for entry in graph.entries():
+        out[entry.id.layer] = max(out.get(entry.id.layer, 0), entry.id.number)
+    return out
+
+
 def cut_units(
     store: ProjectStore,
     project: str,
@@ -1197,7 +1209,8 @@ def cut_units(
     projection = units.project(manifest, graph, _lineage(store, project))
     path = store.units_path(project)
     previous = units.current_cut(path)
-    record = units.append_cut(path, projection, now_fn, body.get("note", ""))
+    record = units.append_cut(path, projection, now_fn, body.get("note", ""),
+                              marks=_marks(graph))
 
     if events is not None:
         events.record(
@@ -1740,8 +1753,14 @@ def emit_tickets(
     now_fn: Callable[[], float] = time.time,
     on_progress: Callable[[dict], None] | None = None,
     body: dict | None = None,
+    *,
+    create: bool = True,
 ) -> dict:
     """Make the tracker say what the current cut says (docs/TICKETS.md).
+
+    `create=False` is the delegated press (M33): horizon zero, so it edits,
+    follows up and withdraws but never opens a unit with no issue yet. Not
+    reachable from the person's route, whose `waves` still refuses below 1.
 
     Creates issues for new units within the horizon -- `body.waves`, the
     number of waves still holding an unshipped unit; omitted means all --
@@ -1838,6 +1857,8 @@ def emit_tickets(
                 "repo": manifest.repo,
                 "reason": f"'waves' must be a whole number of at least 1, or \"shipped\" for only the waves already out, not {raw!r}",
             }
+    if not create:
+        horizon = 0
 
     # Every ticket rendered before anything is written (M27). A retired
     # citation is rewritten to its live successor; one with no live successor
@@ -1999,6 +2020,149 @@ def rollback_tickets(
             **result["counts"],
         )
     return result
+
+
+# -- delegated Ship (M33, D2) ----------------------------------------------
+#
+# The one exception to "every write is a person's press": a standing grant
+# under which an agent may cut and Ship, checked here mechanically. The grant
+# itself is a person's (withheld from /tools); using it is an agent's.
+
+_PERSON_LAYERS = (INTENT, BEHAVIOUR, ARCHITECTURE)
+
+
+def get_delegation(store: ProjectStore, project: str) -> dict:
+    current = store.load_manifest(project).delegation or {"enabled": False}
+    return {"project": project, "delegation": current}
+
+
+def set_delegation(
+    store: ProjectStore,
+    project: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+    actor: str = "unknown",
+) -> dict:
+    """Grant or revoke delegation. A person's decision: the route is in
+    /actions and never in /tools, so no agent is offered granting itself."""
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ServiceError("'enabled' must be true or false")
+    note = body.get("note") if isinstance(body.get("note"), str) else ""
+    stored = store.set_delegation(project, {
+        "enabled": enabled, "note": note, "actor": actor, "at": now_fn()})
+    if events is not None:
+        events.record(lc.DELEGATION, project, now_fn,
+                      enabled=enabled, note=note, actor=actor)
+    return {"project": project, "delegation": stored}
+
+
+def auto_ship_conditions(store: ProjectStore, project: str, busy: bool = False) -> dict:
+    """Every condition D2 names, evaluated against the graph and this unit's
+    own records -- no tracker read, no write. `failed` lists the ones that do
+    not hold; empty means an agent may cut and Ship.
+
+    The base is the cut the latest press shipped, not merely the latest cut:
+    a cut a person took and chose not to ship is part of what the agent would
+    be shipping, so its changes are held to the same conditions.
+    """
+    manifest = store.load_manifest(project)
+    graph = store.load_graph(project)
+    delegation = manifest.delegation or {}
+    token = bool(os.environ.get(TOKEN_ENV, "").strip())
+    lineage = _lineage(store, project)
+    live = units.project(manifest, graph, lineage)
+    try:
+        standing, _ = emitting.standing(store.emissions_path(project), manifest.repo or "")
+        history = [e for e in emitting.read_emissions(store.emissions_path(project))
+                   if e.repo == manifest.repo]
+    except emitting.EmissionError:
+        standing, history = {}, []
+    cuts = {c.seq: c for c in units.read_cuts(store.units_path(project))}
+    base = cuts.get(history[-1].cut_seq) if history else None
+
+    conditions: dict[str, dict] = {}
+    conditions["delegation"] = {"ok": delegation.get("enabled") is True,
+                                "granted_by": delegation.get("actor")}
+    conditions["ready"] = {"ok": bool(manifest.repo) and token and not busy,
+                           "repo": manifest.repo, "token": token, "idle": not busy}
+
+    # (1) every gate: sound, modules to cut, and nothing Ship would refuse.
+    gates = _gate_report(graph, manifest)
+    dead_ends = (_retired_citations(graph, [u.key for u in live.units],
+                                    _work_units(store, project), emitting.completed(standing))
+                 if gates["sound"] else [])
+    cycle = emitting.merge_cycle({k: tuple(v) for k, v in live.edges.items()}, {})
+    # ponytail: dead blockers read from the record, not the tracker; the press
+    # still checks the tracker afterwards and reports `dead`.
+    dead_blockers = [
+        {"key": key, "blocker": blocker}
+        for key in sorted(live.edges) if key in standing and not standing[key].get("settled")
+        for blocker in live.edges[key]
+        if blocker not in standing
+        or (standing[blocker].get("settled") or {}).get("state_reason") == "not_planned"
+    ]
+    conditions["gates"] = {
+        "ok": gates["sound"] and bool(manifest.modules) and not dead_ends
+        and not cycle and not dead_blockers,
+        "sound": gates["sound"], "modules": bool(manifest.modules),
+        "dead_ends": dead_ends, "cycle": cycle, "dead_blockers": dead_blockers,
+    }
+
+    # (2) S/T only since the shipped cut: no I, B or A entry added or superseded.
+    if base is None:
+        conditions["st_only"] = {"ok": False, "base_cut": None,
+                                 "reason": "nothing has been shipped, so there is no cut to compare with"}
+    elif base.marks is None:
+        conditions["st_only"] = {"ok": False, "base_cut": base.seq,
+                                 "reason": f"cut {base.seq} predates the per-layer marks a "
+                                 "delegated Ship compares against; a person's cut and Ship set one"}
+    else:
+        changed = {layer: [str(i) for i in spec_diff(graph, base.marks.get(layer, 0), layer).changed]
+                   for layer in _PERSON_LAYERS}
+        changed = {k: v for k, v in changed.items() if v}
+        conditions["st_only"] = {"ok": not changed, "base_cut": base.seq, "changed": changed}
+
+    # (3) every unit the change touches already has an issue.
+    touched: set[str] = set()
+    if base is not None:
+        moved = units.drift(base, live)
+        touched = {k for group in moved["changed"] for k in group["was"] + group["now"]}
+        touched |= {k for k in set(base.edges) | set(live.edges)
+                    if tuple(base.edges.get(k, ())) != tuple(live.edges.get(k, ()))}
+    unshipped = sorted(k for k in touched if k not in standing)
+    conditions["shipped"] = {"ok": base is not None and not unshipped,
+                             "touched": sorted(touched), "unshipped": unshipped}
+
+    failed = [name for name, c in conditions.items() if not c["ok"]]
+    out = {"project": project, "allowed": not failed, "failed": failed,
+           "base_cut": base.seq if base else None, "conditions": conditions}
+    if failed:
+        out["reason"] = ("refused, nothing was written: "
+                         + ", ".join(failed) + " did not hold. "
+                         "Anything outside the delegation is a person's press.")
+    return out
+
+
+def auto_ship_cut(
+    store: ProjectStore,
+    project: str,
+    body: dict,
+    check: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+    actor: str = "unknown",
+) -> dict:
+    """The cut half of a delegated Ship, once `check` allowed it: the person's
+    `cut_units`, then the `auto_ship` event naming the actor and conditions."""
+    note = body.get("note") if isinstance(body.get("note"), str) else ""
+    cut = cut_units(store, project, {"note": note or f"auto_ship by {actor}"}, events, now_fn)
+    if cut.get("cut") and events is not None:
+        events.record(lc.AUTO_SHIP, project, now_fn, actor=actor, note=note,
+                      cut_seq=cut["seq"], base_cut=check["base_cut"],
+                      conditions=check["conditions"])
+    return cut
 
 
 def get_emission(
@@ -2795,9 +2959,11 @@ def prior_state(store: ProjectStore, route: str | None, project: str, body: dict
             if retired & {str(i) for i in ids}
         }
         return {"modules": claimed} if claimed else None
-    if route not in ("set_repo", "set_labels", "declare_module", "ratify"):
+    if route not in ("set_repo", "set_labels", "declare_module", "ratify", "set_delegation"):
         return None
     manifest = store.load_manifest(project)
+    if route == "set_delegation":
+        return {"delegation": manifest.delegation}
     if route == "set_repo":
         return {"repo": manifest.repo}
     if route == "set_labels":

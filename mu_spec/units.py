@@ -705,6 +705,12 @@ class Cut:
     # projection could not say what" is exactly the kind of thing nobody
     # reconstructs afterwards from a graph that has moved on.
     dangling: tuple[Identifier, ...] = ()
+    # The highest number present per layer when the cut was taken. Numbers
+    # are handed out in creation order, so "what was added or superseded in
+    # layer L since this cut" is "entries of L numbered above marks[L]" -- the
+    # question a delegated Ship (M33) asks of I, B and A. None for a cut
+    # written before this was recorded: unsaid, never zero.
+    marks: dict[str, int] | None = None
 
     def by_key(self) -> dict[str, Unit]:
         return {u.key: u for u in self.units}
@@ -836,6 +842,7 @@ def read_cuts(path: Path) -> tuple[Cut, ...]:
                     canonical_key(k) for k in raw.get("unfollowed_tests", ())
                 ),
                 dangling=tuple(parse(i) for i in raw.get("dangling", ())),
+                marks=dict(raw["marks"]) if isinstance(raw.get("marks"), dict) else None,
             )
         )
     return tuple(out)
@@ -851,6 +858,7 @@ def append_cut(
     projection: Projection,
     now_fn: Callable[[], float],
     note: str = "",
+    marks: dict[str, int] | None = None,
 ) -> Cut:
     """Record a projection as a cut.
 
@@ -888,6 +896,8 @@ def append_cut(
         "unfollowed_tests": list(projection.unfollowed_tests),
         "dangling": [str(i) for i in projection.dangling],
     }
+    if marks is not None:
+        record["marks"] = dict(marks)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -903,6 +913,7 @@ def append_cut(
         unimplemented_tests=projection.unimplemented_tests,
         unfollowed_tests=projection.unfollowed_tests,
         dangling=projection.dangling,
+        marks=record.get("marks"),
     )
 
 

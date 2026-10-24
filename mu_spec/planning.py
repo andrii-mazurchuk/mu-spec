@@ -54,16 +54,17 @@ class SpecDiff:
         return tuple(sorted(self.superseding + self.added, key=sort_key))
 
 
-def spec_diff(graph: Graph, since: int) -> SpecDiff:
+def spec_diff(graph: Graph, since: int, layer: str = SPEC) -> SpecDiff:
     """Which spec entries have appeared since the spec counter stood at
     `since`.
 
     `since=0` is the whole spec layer, which is the correct answer for a
-    first iteration: everything is new.
+    first iteration: everything is new. `layer` asks the same of another
+    layer -- a delegated Ship (M33) asks it of I, B and A.
     """
     superseding, added, retired = [], [], []
     for entry in graph.entries():
-        if entry.id.layer != SPEC or entry.id.number <= since:
+        if entry.id.layer != layer or entry.id.number <= since:
             continue
         if entry.supersedes is None:
             added.append(entry.id)

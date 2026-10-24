@@ -58,6 +58,11 @@ TICKETS_ROLLED_BACK = "tickets_rolled_back"
 # Any write request at all, as it arrived: who sent it, what it carried, what
 # came back. Recorded once, in the HTTP layer, so no route can forget.
 MUTATION = "mutation"
+# A person granted or revoked an agent's standing leave to cut and Ship S/T
+# repairs of shipped units (M33, D2).
+DELEGATION = "delegation"
+# An agent used that leave: the cut it took, the conditions as evaluated.
+AUTO_SHIP = "auto_ship"
 
 KINDS = (
     REQUEST,
@@ -74,6 +79,8 @@ KINDS = (
     TICKETS_EMITTED,
     TICKETS_ROLLED_BACK,
     MUTATION,
+    DELEGATION,
+    AUTO_SHIP,
 )
 
 

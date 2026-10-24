@@ -295,6 +295,10 @@ class Manifest:
     # issue. Empty means no pickup signal exists, and then nothing is edited at
     # all: without one, untouched cannot be told from admitted.
     pickup: tuple[str, ...] = ()
+    # A person's standing grant letting an agent cut and Ship S/T-only repairs
+    # of shipped units (M33, D2): {enabled, note, actor, at}. None = never
+    # granted, which reads as off. Beside repo and labels for their reason.
+    delegation: dict | None = None
 
     def slice_of(self, identifier: Identifier) -> str | None:
         for name, sl in self.slices.items():
@@ -348,6 +352,7 @@ class Manifest:
                 "repo": self.repo,
                 "labels": list(self.labels),
                 "pickup": list(self.pickup),
+                "delegation": self.delegation,
             },
             indent=2,
         )
@@ -373,6 +378,7 @@ class Manifest:
             repo=raw.get("repo") or None,
             labels=tuple(raw.get("labels") or ()),
             pickup=tuple(raw.get("pickup") or ()),
+            delegation=raw.get("delegation") if isinstance(raw.get("delegation"), dict) else None,
         )
 
 
@@ -509,6 +515,14 @@ class ProjectStore:
             manifest.pickup = _clean_labels(pickup)
         self.save_manifest(project, manifest)
         return manifest.labels
+
+    def set_delegation(self, project: str, delegation: dict) -> dict:
+        """Replace this project's delegation (M33). A grant and a revoke are
+        the same write on one field, as with `repo`."""
+        manifest = self.load_manifest(project)
+        manifest.delegation = dict(delegation)
+        self.save_manifest(project, manifest)
+        return manifest.delegation
 
     # -- identifier allocation ----------------------------------------------
 
