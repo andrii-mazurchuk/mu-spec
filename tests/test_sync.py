@@ -1329,9 +1329,10 @@ def test_a_merge_order_is_never_an_entry_edge(tmp_path):
     assert edges == M_EDGES
 
 
-def test_a_merge_order_that_closes_a_cycle_refuses_the_press_before_any_write(tmp_path):
+def test_merge_orders_that_close_a_loop_are_dropped_and_reported_never_refused(tmp_path):
     """S-02 waits on S-01; S-03 on S-02. Open follow-ups S-01 #1 < S-03-T #2 <
-    S-02 #3: S-01 waits on S-03-T, S-03-T on S-02, S-02 on S-01."""
+    S-02 #3: S-01 waits on S-03-T, S-03-T on S-02, S-02 on S-01. The two merge
+    orders in that loop go; the press goes on (ratified 2026-10-24)."""
     import json
     order = ["S-01", "S-03-T", "S-02", "S-03"]
     edges = {"S-02": ("S-01",), "S-03": ("S-03-T", "S-02")}
@@ -1346,6 +1347,31 @@ def test_a_merge_order_that_closes_a_cycle_refuses_the_press_before_any_write(tm
     gh.calls.clear()
     result = ship(tmp_path, gh, order=order, edges=edges, waves=waves,
                   bodies={"S-03": "changed"})
+    assert result["emitted"] is True and "refused" not in result
+    assert result["dropped_orders"] == [{
+        "loop": ["S-01", "S-03-T", "S-02", "S-01"],
+        "orders": [{"blocked": "S-01", "blocker": "S-03-T"},
+                   {"blocked": "S-03-T", "blocker": "S-02"}]}]
+    assert result["counts"]["dropped_orders"] == 2 and result["merge_order"] == []
+    assert [e["key"] for e in result["edited"]] == ["S-03"], "the press went on"
+    assert all("order" not in _block(gh, n) for n in gh.issues)
+
+
+def test_only_the_orders_inside_the_loop_are_dropped(tmp_path):
+    from mu_spec.emit import prune_merge_cycles
+    edges = {"S-02": ("S-01",), "S-03": ("S-03-T", "S-02")}
+    kept, dropped = prune_merge_cycles(
+        edges, {"S-01": ("S-03-T",), "S-03-T": ("S-02",), "S-09": ("S-03-T",)})
+    assert kept == {"S-09": ("S-03-T",)}
+    assert [len(d["orders"]) for d in dropped] == [2]
+
+
+def test_a_loop_in_the_units_own_edges_still_refuses_before_any_write(tmp_path):
+    """The guard: gates make this impossible, and merge order cannot cause it."""
+    order = ["S-01", "S-02"]
+    edges = {"S-01": ("S-02",), "S-02": ("S-01",)}
+    gh = Tracker()
+    result = ship(tmp_path, gh, order=order, edges=edges, waves=[order])
     assert result["emitted"] is False and gh.writes() == []
-    assert result["refused"] == [{"cycle": ["S-01", "S-03-T", "S-02", "S-01"]}]
-    assert "S-01 -> S-03-T -> S-02 -> S-01" in result["reason"]
+    assert result["refused"] == [{"cycle": ["S-01", "S-02", "S-01"]}]
+    assert "S-01 -> S-02 -> S-01" in result["reason"]

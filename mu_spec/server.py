@@ -1637,7 +1637,7 @@ def _handle(
                 )
                 status = 200 if result.get("emitted") else 400 if result.get("refused") else 409
                 return status, JSON, json.dumps(result)
-            refusal = service.emission_refusal(store, project, emit_client)
+            refusal = service.emission_refusal(store, project)
             if refusal is not None:
                 return 400, JSON, json.dumps(refusal)
             try:

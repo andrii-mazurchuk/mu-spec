@@ -340,8 +340,9 @@ not have, which then had to be contracted and reported.
 **Merge order is the one exception, and it is checked (M31, D11).** Ship derives, on each
 press and never as an entry edge, which open follow-up merges before which
 (`docs/TICKETS.md` §5). That can give a test unit an outbound order, and so a way back
-out, so the union of projected edges and merge orders is walked for a loop before
-anything is written, and a loop refuses the press, naming it.
+out, so the union of projected edges and merge orders is walked for loops on every press,
+and the merge orders inside one are dropped and reported, never refused (ratified
+2026-10-24). A loop through projected edges alone still refuses: it is the guard.
 
 ### Identity, and the cut
 

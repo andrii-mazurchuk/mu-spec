@@ -562,11 +562,7 @@ def merge_orders(edges: dict, issues: dict[str, dict], open_now) -> dict[str, tu
 
 def merge_cycle(edges: dict, merge: dict) -> "list[str] | None":
     """A loop through the projected edges and the merge orders, as a route
-    `[a, b, ..., a]`, or None. The projected edges alone cannot loop (DESIGN
-    §4a); a merge order gives a test unit an outbound edge, and with it a way
-    back out."""
-    if not merge:
-        return None
+    `[a, b, ..., a]`, or None."""
     from mu_spec.slice_gates import _path, cycles
     joined = {k: tuple(edges.get(k, ()) or ()) + tuple(merge.get(k, ()))
               for k in set(edges) | set(merge)}
@@ -574,19 +570,41 @@ def merge_cycle(edges: dict, merge: dict) -> "list[str] | None":
     return _path(joined, found[0]).split(" -> ") if found else None
 
 
+def prune_merge_cycles(edges: dict, merge: dict) -> "tuple[dict, list[dict]]":
+    """The merge orders with every loop they close taken out (ratified
+    2026-10-24): a loop is never a reason to refuse, so the orders inside it
+    are dropped and reported, `{"loop": [a, ..., a], "orders": [{blocked,
+    blocker}]}`, and the press goes on. Only orders whose two ends sit in the
+    loop's group are dropped; the rest stand. A loop through projected edges
+    alone is left in -- it cannot happen (DESIGN §4a), and `merge_cycle` on
+    what comes back still finds it, for the caller to refuse."""
+    from mu_spec.slice_gates import _path, cycles
+    kept = {k: list(v) for k, v in merge.items()}
+    dropped: list[dict] = []
+    while True:
+        joined = {k: tuple(edges.get(k, ()) or ()) + tuple(kept.get(k, ()))
+                  for k in set(edges) | set(kept)}
+        groups = [g for g in cycles(joined)
+                  if any(b in g for k in g for b in kept.get(k, ()))]
+        if not groups:
+            break
+        for group in groups:
+            inside = set(group)
+            orders = [{"blocked": k, "blocker": b} for k in sorted(inside)
+                      for b in kept.get(k, ()) if b in inside]
+            dropped.append({"loop": _path(joined, group).split(" -> "), "orders": orders})
+            for o in orders:
+                kept[o["blocked"]].remove(o["blocker"])
+    return {k: tuple(v) for k, v in kept.items() if v}, dropped
+
+
 def cycle_refusal(cycle: list[str]) -> dict:
-    """The press refused, naming the loop: no order in it can be honoured."""
+    """The press refused: the projected edges alone loop. Gates make that
+    impossible; this is the guard if one ever slips past them."""
     return {"emitted": False, "refused": [{"cycle": cycle}], "cycle": cycle,
-            "reason": "the merge order Ship derives would close a cycle, so nothing "
-                      f"was written: {' -> '.join(cycle)}. Every unit in it waits on "
-                      "the next. Merge or close one of these follow-ups, or amend the "
-                      "spec, and press again."}
-
-
-def open_numbers(client, repo: str, project: "str | None") -> "set[int] | None":
-    """The numbers of this project's open issues, or None if unlistable."""
-    ours = _open_by_key(client, repo, project)
-    return None if ours is None else {int(i["number"]) for f in ours.values() for i in f}
+            "reason": "the work units' own edges form a cycle, so nothing was "
+                      f"written: {' -> '.join(cycle)}. Every unit in it waits on the "
+                      "next. Fix the graph, take a cut, and press again."}
 
 
 def _contract_v1(body: str) -> str:
@@ -938,19 +956,21 @@ def emit(
         live[key] = _adopt(first, pickup)
         adopted.append({"key": key, "number": first["number"], "url": first.get("url", "")})
 
-    # Merge order (M31), from the record as it stands, before anything is
-    # written: a loop through it refuses the press. Open means listed open;
-    # without a listing, not recorded as settled.
+    # The units' own edges cannot loop (DESIGN §4a); if they ever do, nothing
+    # is written. Merge order (M31) never refuses: the orders a loop runs
+    # through are dropped and reported. Open means listed open; without a
+    # listing, not recorded as settled.
+    cycle = merge_cycle(edges, {})
+    if cycle:
+        return {**cycle_refusal(cycle), "repo": repo, "cut_seq": cut_seq}
     listed = {int(i["number"]) for found in (ours or {}).values() for i in found}
 
     def open_in(numbers: set[int]):
         return lambda _k, v: (int(v["number"]) in numbers if ours is not None
                               else not v.get("settled"))
 
-    orders = {"now": merge_orders(edges, live, open_in(listed))}
-    cycle = merge_cycle(edges, orders["now"])
-    if cycle:
-        return {**cycle_refusal(cycle), "repo": repo, "cut_seq": cut_seq}
+    kept, dropped = prune_merge_cycles(edges, merge_orders(edges, live, open_in(listed)))
+    orders = {"now": kept, "dropped": dropped}
 
     missing = [key for key in order if key not in live]
     held: list[str] = []
@@ -1404,13 +1424,9 @@ def emit(
         # press that opens a repair is the one that says what it precedes.
         opened = {int(i["number"]) for i in created + follow_ups}
         open_after = (listed | opened) - set(closed.values())
-        post = merge_orders(edges, issues, open_in(open_after))
-        loop = merge_cycle(edges, post) if post != orders["now"] else None
-        if loop:
-            failed.append({"key": loop[0], "reason": "merge order left as it was: the "
-                           f"follow-ups opened now would close a cycle, {' -> '.join(loop)}. "
-                           "The next press refuses until one of them merges or closes."})
-        elif post != orders["now"]:
+        post, orders["dropped"] = prune_merge_cycles(
+            edges, merge_orders(edges, issues, open_in(open_after)))
+        if post != orders["now"]:
             before, orders["now"] = orders["now"], post
             for key in order:
                 mine = issues.get(key) or {}
@@ -1612,6 +1628,8 @@ def emit(
         "unlinked": unlinked,
         # Derived this press, never stored as an entry edge (M31, D11).
         "merge_order": merge_order,
+        # Orders a loop ran through: dropped, never a refusal (2026-10-24).
+        "dropped_orders": orders["dropped"],
         "counts": {
             "units": len(order),
             "created": len(created),
@@ -1633,5 +1651,6 @@ def emit(
             "linked": len(linked),
             "unlinked": len(unlinked),
             "merge_order": len(merge_order),
+            "dropped_orders": sum(len(d["orders"]) for d in orders["dropped"]),
         },
     }

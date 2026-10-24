@@ -197,10 +197,12 @@ waited for the S-217 storage fix filed after it (m1206-17).
   dependency. The field is absent when there is none. GitHub gets the native link.
 - Derived again after this press's follow-ups exist, and the unit it orders is edited in
   place in the same press. It leaves when its blocker closes.
-- **A loop refuses the press**, before anything is written: projected edges and merge
-  orders together are walked, and a cycle is a 400 naming it (`A -> B -> C -> A`). A loop
-  only follow-ups opened mid-press would close is not applied, is reported in `failed`,
-  and refuses the next press.
+- **A loop never refuses (ratified 2026-10-24).** Projected edges and merge orders
+  together are walked; the merge orders inside a loop are **dropped and reported** in the
+  result's `dropped_orders` (`{"loop": [A, B, C, A], "orders": [{blocked, blocker}]}`, and
+  a count), and every other order stands. The press goes on. Only a loop through the
+  units' own edges refuses, a 400 naming it, before anything is written -- the gates make
+  that impossible, so it is a guard.
 
 ## 6. Batch
 

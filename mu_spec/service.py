@@ -1786,9 +1786,9 @@ def _retired_refusal(project: str, repo, cut_seq, refused: list[dict]) -> dict:
     }
 
 
-def emission_refusal(store: ProjectStore, project: str, client=None) -> dict | None:
+def emission_refusal(store: ProjectStore, project: str) -> dict | None:
     """The refusals a route answers 400 before it starts a job: a dead-end
-    citation, and a merge order that loops (M31). Anything else that stops a
+    citation, and work units whose own edges loop. Anything else that stops a
     press is the press's to report."""
     manifest = store.load_manifest(project)
     cut = units.current_cut(store.units_path(project))
@@ -1803,30 +1803,14 @@ def emission_refusal(store: ProjectStore, project: str, client=None) -> dict | N
                                  _work_units(store, project), emitting.completed(live))
     if refused:
         return _retired_refusal(project, manifest.repo, cut.seq, refused)
-    return _merge_refusal(manifest, project, cut, live, client)
-
-
-def _merge_refusal(manifest, project: str, cut, live: dict, client) -> dict | None:
-    """A loop through the merge order, as the press would derive it. Every
-    issue not recorded settled is taken as open first -- a superset, so no loop
-    there means none at all -- and only a loop costs the one listing that
-    says which are open. Unlistable: left to the press, which lists anyway."""
-    edges = {k: tuple(v) for k, v in cut.edges.items()}
-    if not emitting.merge_cycle(edges, emitting.merge_orders(
-            edges, live, lambda _k, v: not v.get("settled"))):
-        return None
-    token = os.environ.get(TOKEN_ENV, "").strip()
-    if client is None and not token:
-        return None
-    numbers = emitting.open_numbers(client or github.GitHub(token), manifest.repo, project)
-    if numbers is None:
-        return None
-    cycle = emitting.merge_cycle(edges, emitting.merge_orders(
-        edges, live, lambda _k, v: int(v["number"]) in numbers))
-    if not cycle:
-        return None
-    return {**emitting.cycle_refusal(cycle), "project": project,
-            "repo": manifest.repo, "cut_seq": cut.seq}
+    # A loop through the units' own edges -- the guard; gates make it
+    # impossible. A loop through merge orders never refuses: the press drops
+    # and reports those orders (M31, ratified 2026-10-24).
+    cycle = emitting.merge_cycle({k: tuple(v) for k, v in cut.edges.items()}, {})
+    if cycle:
+        return {**emitting.cycle_refusal(cycle), "project": project,
+                "repo": manifest.repo, "cut_seq": cut.seq}
+    return None
 
 
 def emit_tickets(
