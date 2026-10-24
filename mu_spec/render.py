@@ -34,8 +34,8 @@ import json
 import re
 
 from mu_spec import body as bodies
-from mu_spec.identifiers import LEGACY_SEPARATOR, SEPARATOR
-from mu_spec.units import is_test_key
+from mu_spec.identifiers import LEGACY_SEPARATOR, SEPARATOR, parse as parse_id
+from mu_spec.units import TEST_SUFFIX, is_test_key
 
 # GitHub allows 256. A title is a line in a list, not a manifest, and a unit
 # writing nine files does not earn nine paths in it.
@@ -85,6 +85,9 @@ class Ticket:
     # body shows: its heading or line, and its body. Unit keys -- the title,
     # blockers, overlap, the machine block -- are names, never citations.
     cites: tuple[tuple[str, str], ...] = ()
+    # (retired id, live successor, the entry whose text named it): every
+    # citation rewritten `S-317 (was S-128)` in this body.
+    rewritten: tuple[tuple[str, str, str], ...] = ()
 
     @property
     def oversized(self) -> bool:
@@ -167,6 +170,11 @@ def _respell(text: str) -> str:
     )
 
 
+# A cited id to rewrite: not one already written `(was S-128)`, and not the
+# front of a unit key (`S-128-T`) -- keys are names, never citations.
+_CITED = re.compile(rf"(?<!was ){bodies.ID_RE.pattern}(?!{re.escape(TEST_SUFFIX)}\b)")
+
+
 def _text(body: str) -> str:
     """An authored body as a ticket shows it: provenance lines out, then
     references re-spelled."""
@@ -222,10 +230,6 @@ def _machine(
     }
 
 
-def _entry_line(entry: dict) -> str:
-    return f"- `{entry.get('id')}` — {_respell(entry.get('title', ''))}"
-
-
 def _bullets(lines) -> str:
     """One list, single-spaced.
 
@@ -244,12 +248,18 @@ def render(
     extra_labels: "tuple[str, ...] | list[str]" = (),
     batch: int | None = None,
     existing: "frozenset[str] | set[str]" = frozenset(),
+    retired: "dict[str, str | None] | None" = None,
 ) -> Ticket:
     """One work unit as a ticket.
 
     `existing` is the unit keys closed `completed`, read from the emission
     record. A shared file one of them writes is on main, so its other
     contracts go as id + title: the file's shape is decided and is the code.
+
+    `retired` maps a superseded id to the live end of its chain (None for a
+    dead end). Every entry text the ticket shows cites the live id as
+    `S-317 (was S-128)`; the stored entry is untouched, and so are unit
+    keys, the title, the blockers and the machine block.
 
     The other contracts a file serves go in full when the ticket still fits,
     and as titles plus `context_ids` when it would not. Measured on `dark`:
@@ -267,13 +277,13 @@ def render(
     this a pure function of its arguments, which is what lets a ticket be read
     and argued about before any issue exists.
     """
-    ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, inline=True)
+    ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, retired, inline=True)
     if len(ticket.body) > BODY_LIMIT - FOLLOW_UP_ROOM:
-        ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, inline=False)
+        ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, retired, inline=False)
     return ticket
 
 
-def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *,
+def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), retired=None, *,
             inline: bool) -> Ticket:
     if not payload.get("issued"):
         raise ValueError(
@@ -288,29 +298,41 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *
     out: list[str] = []
     cites: dict[tuple[str, str], None] = {}
 
-    def shown(entry: dict, *texts: str) -> None:
-        """Record what an entry's rendered text cites, itself included."""
+    rewritten: dict[tuple[str, str, str], None] = {}
+
+    def cite(entry: dict, text: str) -> str:
+        """`text` from `entry` as the ticket shows it. What it cites is
+        recorded, itself included; a retired id whose chain ends in a live
+        entry is rewritten `S-317 (was S-128)`. A dead end is left as written
+        for the press to refuse."""
         own = str(entry.get("id"))
-        for found in bodies.parse(" ".join([own, *texts]), "").id_mentions:
+        for found in bodies.parse(f"{own} {text}", "").id_mentions:
             cites[(found, own)] = None
+
+        def swap(match: "re.Match") -> str:
+            old = str(parse_id(match.group(0)))
+            new = retired.get(old)
+            if not new:
+                return match.group(0)
+            rewritten[(old, new, own)] = None
+            return f"{new} (was {old})"
+
+        return _CITED.sub(swap, text) if retired else text
 
     # What to build. First, because it is the only section that cannot be
     # skipped.
     out.append("## Contract")
     for entry in payload.get("entries") or ():
-        out.append(f"### {entry.get('id')} — {entry.get('title', '')}")
-        shown(entry, entry.get("title", ""), entry.get("purpose") or "")
+        out.append(f"### {entry.get('id')} — {cite(entry, entry.get('title', ''))}")
         if entry.get("purpose"):
             # Scenarios only. Says why the scenario is worth having, which is
             # not recoverable from what it checks.
-            out.append(f"*Why this case:* {entry['purpose']}")
+            out.append(f"*Why this case:* {cite(entry, entry['purpose'])}")
         if entry.get("body"):
-            out.append(_text(entry["body"]))
-            shown(entry, out[-1])
+            out.append(cite(entry, _text(entry["body"])))
 
     def line(entry: dict) -> str:
-        shown(entry, entry.get("title", ""))
-        return _entry_line(entry)
+        return f"- `{entry.get('id')}` — {cite(entry, _respell(entry.get('title', '')))}"
 
     # Scope, before anything explanatory. An agent that reads only the first
     # screen must still know what it may touch.
@@ -367,9 +389,8 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *
                         context_ids.append(other.get("id"))
                     continue
                 written.add(other.get("id"))
-                out.append(f"#### {other.get('id')} — {_respell(other.get('title', ''))}")
-                out.append(_text(other["body"]))
-                shown(other, other.get("title", ""), out[-1])
+                out.append(f"#### {other.get('id')} — {cite(other, _respell(other.get('title', '')))}")
+                out.append(cite(other, _text(other["body"])))
 
     if payload.get("justification"):
         out.append("## Why this exists")
@@ -385,8 +406,7 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *
             if ancestor.get("body"):
                 out.append(_bullets(run))
                 run = []
-                out.append(_text(ancestor["body"]))
-                shown(ancestor, out[-1])
+                out.append(cite(ancestor, _text(ancestor["body"])))
         if run:
             out.append(_bullets(run))
 
@@ -418,7 +438,7 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *
             _bullets(f"- `{identifier}`" for identifier in payload["tests_pending"])
         )
         for identifier in payload["tests_pending"]:
-            shown({"id": identifier})
+            cite({"id": identifier}, "")
 
     # Last, deliberately. The first screen belongs to the contract and the
     # write set -- an agent that reads only that far must still know its
@@ -448,4 +468,5 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), *
         blocked_by=tuple(payload.get("follows") or ()),
         fingerprint=fingerprint,
         cites=tuple(cites),
+        rewritten=tuple(rewritten),
     )

@@ -34,6 +34,7 @@ from mu_spec.gates import (
     STRANDED,
     TWO_SUCCESSORS,
     admission_gates,
+    live_successor,
 )
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
@@ -1666,26 +1667,31 @@ def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
     return out
 
 
-def _retired_citations(graph: Graph, keys, fetch, existing) -> list[dict]:
-    """Every retired entry a rendered ticket cites, with its live successor
-    (M27, D3: refused). A key that cannot be rendered is skipped here; the
-    press reports it against its own unit."""
+def _retired_map(graph: Graph) -> dict[str, str | None]:
+    """Every superseded id -> the live end of its supersession chain, or None
+    when the chain ends in no live entry (a dead end)."""
+    out: dict[str, str | None] = {}
+    for old in graph.superseded():
+        end = live_successor(graph, old)
+        out[str(old)] = str(end) if end in graph else None
+    return out
+
+
+def _retired_citations(graph: Graph, keys, fetch, existing, retired=None) -> list[dict]:
+    """The dead ends a rendered ticket cites: a retired id with no live
+    successor to rewrite it to (M27, D3 ruling (b): refused). Every other
+    retired citation is rewritten by the renderer. A key that cannot be
+    rendered is skipped here; the press reports it against its own unit."""
+    retired = _retired_map(graph) if retired is None else retired
     out: list[dict] = []
     for key in keys:
         try:
-            ticket = render_ticket(fetch(key), existing=existing)
+            ticket = render_ticket(fetch(key), existing=existing, retired=retired)
         except (ServiceError, ValueError, KeyError):
             continue
         for cited, where in ticket.cites:
-            try:
-                live = parse(cited)
-            except InvalidIdentifier:
-                continue
-            seen = {live}
-            while (after := graph.superseded_by(live)) is not None and after not in seen:
-                seen.add(live := after)
-            if len(seen) > 1:
-                out.append({"key": key, "retired": cited, "successor": str(live), "in": where})
+            if cited in retired and retired[cited] is None:
+                out.append({"key": key, "retired": cited, "successor": None, "in": where})
     return out
 
 
@@ -1695,17 +1701,16 @@ def _retired_refusal(project: str, repo, cut_seq, refused: list[dict]) -> dict:
         "project": project,
         "repo": repo,
         "cut_seq": cut_seq,
-        "reason": "a ticket would name a superseded entry, so nothing was "
-        "written: " + "; ".join(
-            f"{r['key']} cites {r['retired']} (in {r['in']}), superseded by "
-            f"{r['successor']}" for r in refused) + ". Amend the citing entry "
-        "to name the live one, take a cut, and press again.",
+        "reason": "a ticket would name a superseded entry with no live successor, "
+        "so nothing was written: " + "; ".join(
+            f"{r['key']} cites {r['retired']} (in {r['in']})" for r in refused)
+        + ". Amend the citing entry, take a cut, and press again.",
         "refused": refused,
     }
 
 
 def emission_refusal(store: ProjectStore, project: str) -> dict | None:
-    """The superseded-id refusal alone, for the route to answer 400 before it
+    """The dead-end refusal alone, for the route to answer 400 before it
     starts a job. Anything else that stops a press is the press's to report."""
     manifest = store.load_manifest(project)
     cut = units.current_cut(store.units_path(project))
@@ -1828,15 +1833,17 @@ def emit_tickets(
                 "reason": f"'waves' must be a whole number of at least 1, or \"shipped\" for only the waves already out, not {raw!r}",
             }
 
-    # Every ticket rendered before anything is written: one that names a
-    # superseded entry refuses the whole press (M27). Provenance lines are
-    # stripped before this sees them, and unit keys are names, not citations.
+    # Every ticket rendered before anything is written (M27). A retired
+    # citation is rewritten to its live successor; one with no live successor
+    # refuses the whole press. Provenance lines are stripped first, and unit
+    # keys are names, not citations.
     fetch = _work_units(store, project)
     renamed = _renamed(graph)
+    retired = _retired_map(graph)
     refused = _retired_citations(
         graph, order, fetch,
         emitting.completed(emitting.standing(store.emissions_path(project),
-                                             manifest.repo, renamed)[0]))
+                                             manifest.repo, renamed)[0]), retired)
     if refused:
         return _retired_refusal(project, manifest.repo, cut.seq, refused)
 
@@ -1859,6 +1866,7 @@ def emit_tickets(
         pickup=manifest.pickup,
         renamed=renamed,
         project=project,
+        retired=retired,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):

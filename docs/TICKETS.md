@@ -212,13 +212,17 @@ a unit it waits on, so the code is in the repository by the time the ticket is w
   iss-NNNN…)` (a whole line, optionally in `*` or `_`) are stripped from every rendered
   body. Nothing else is touched: a ruling paragraph can carry contract text. The contract
   fingerprint reads the contract without them, so stripping opens no follow-up.
-- **Never a superseded id.** Before a press writes anything, every unit's ticket is
-  rendered; one whose text cites a retired entry refuses the whole press with a 400
-  naming the unit, the retired id, the entry citing it and the live successor. Unit keys
-  (title, blockers, overlap, the machine block) are names, not citations, and are not
-  checked.
-- An S-NN in an entry's body that none of its edges reach is reported
-  (`unlinked_mention`, a completeness finding), never refused.
+- **Never a superseded id (ruling (b), 2026-10-24).** As a ticket renders, every
+  retired id cited in entry text whose chain ends in a live entry is written
+  `S-317 (was S-128)`. Stored entries are untouched; unit keys (title, blockers, overlap,
+  the machine block) are names, not citations, and are never rewritten. The contract
+  fingerprint reads `X (was Y)` as `X`, so a rewrite alone opens no follow-up. Before a
+  press writes anything every ticket is rendered, and only a cited id whose chain ends
+  in no live entry refuses the press: a 400 naming the unit, the id and the entry
+  citing it.
+- Reported, never refused (completeness findings): an S-NN in an entry's body that none
+  of its edges reach (`unlinked_mention`), and a live entry whose body still cites a
+  retired id, with its successor (`retired_mention`), so the prose can be cleaned.
 
 The machine block gains `project`, `batch` and `context_ids`. All are additive, and the
 consumer's parser ignores unknown fields.

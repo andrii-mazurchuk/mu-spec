@@ -30,6 +30,9 @@ _MODULE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$")
 _ID = re.compile(
     rf"(?<![A-Za-z0-9])[{''.join(identifiers.ALL_LAYERS)}]{SEPARATOR_CLASS}[0-9]+(?![0-9])"
 )
+# An entry id as prose writes it, either spelling. Public for the renderer,
+# which rewrites retired ones; it must find exactly what `id_mentions` finds.
+ID_RE = _ID
 # A directory ending in `/`, or a file with an extension, under at least one
 # directory. A bare `and/or` is neither.
 _PATH = re.compile(

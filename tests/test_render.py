@@ -524,3 +524,51 @@ def test_a_shared_file_nobody_finished_still_carries_its_contracts_in_full():
 def test_the_units_own_contract_is_never_shortened_by_an_existing_file():
     ticket = _shared(existing=frozenset({"S-01", "S-02"}))
     assert IMPL["entries"][0]["body"] in ticket.body
+
+
+# -- a retired citation is rewritten to its live successor (D3 ruling (b)) ---
+
+
+RETIRED = {"S-09": "S-19", "A-02": "A-12", "S-50": None}
+
+
+def _citing():
+    return {**IMPL,
+            "entries": [{**IMPL["entries"][0], "title": "after S-09",
+                         "body": "Calls `make` (S-09). The S-09-T unit is a name. Also S·09."}],
+            "justification": [{"id": "A-02", "title": "parent", "body": "Extends A-02's rule."}]}
+
+
+def test_a_retired_citation_names_its_live_successor_then_itself():
+    ticket = render(_citing(), retired=RETIRED)
+    assert "Calls `make` (S-19 (was S-09))." in ticket.body
+    assert "### S-01 — after S-19 (was S-09)" in ticket.body
+    assert "Also S-19 (was S-09)." in ticket.body, "either spelling"
+    assert "Extends A-12 (was A-02)'s rule." in ticket.body
+    assert ("S-09", "S-19", "S-01") in ticket.rewritten
+    assert ("A-02", "A-12", "A-02") in ticket.rewritten
+
+
+def test_keys_title_blockers_and_the_machine_block_are_never_rewritten():
+    payload = {**_citing(), "follows": ["S-09-T"], "overlap": ["S-09"],
+               "unit": {**IMPL["unit"], "key": "S-09", "anchor": "S-09"}}
+    ticket = render(payload, retired=RETIRED, repo="o/n", cut_seq=1)
+    assert ticket.title.startswith("S-09 —")
+    assert "The S-09-T unit is a name." in ticket.body
+    assert "- `S-09-T`" in ticket.body and "- `S-09`" in ticket.body
+    data = _block(ticket.body)
+    assert data["key"] == "S-09" and data["blocked_by"] == ["S-09-T"] and data["mutex"] == ["S-09"]
+
+
+def test_a_dead_end_is_left_as_written_for_the_press_to_refuse():
+    payload = {**IMPL, "entries": [{**IMPL["entries"][0], "body": "Uses S-50."}]}
+    ticket = render(payload, retired=RETIRED)
+    assert "Uses S-50." in ticket.body and ticket.rewritten == ()
+    assert ("S-50", "S-01") in ticket.cites
+
+
+def test_the_rewrite_does_not_move_the_contract_fingerprint():
+    """A rewrite alone must never open a follow-up on a closed issue."""
+    from mu_spec.emit import contract_of
+
+    assert contract_of(render(_citing(), retired=RETIRED).body) == contract_of(render(_citing()).body)

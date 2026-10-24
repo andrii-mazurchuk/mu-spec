@@ -158,6 +158,10 @@ class Graph:
         from the live graph is not the same as deleted."""
         return self._entries.get(identifier)
 
+    def superseded(self) -> tuple[Identifier, ...]:
+        """Every retired id, in spine order."""
+        return tuple(sorted(self._superseded, key=sort_key))
+
     def superseded_by(self, identifier: Identifier) -> Identifier | None:
         return self._superseded.get(identifier)
 

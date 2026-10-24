@@ -465,19 +465,35 @@ def _retiring(tmp_path, body: str):
     return store
 
 
-def test_a_press_naming_a_retired_id_is_refused_before_any_call(tmp_path, monkeypatch):
+def test_a_retired_citation_ships_rewritten_to_its_live_successor(tmp_path, monkeypatch):
+    """D3 ruling (b): rewritten, not refused. The stored body is untouched."""
     from mu_spec import service
+    from mu_spec.identifiers import parse
 
     store = _retiring(tmp_path, "Reads the shape S-02 defines.")
     monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
     client = FakeClient()
     result = service.emit_tickets(store, "p", client=client)
+    assert result["emitted"] is True
+    # The test unit carries S-01's body as its direct parent, so it is rewritten too.
+    assert all("Reads the shape S-03 (was S-02) defines." in body
+               for _, _, body, _ in client.created)
+    assert store.load_graph("p").get(parse("S-01")).body == "Reads the shape S-02 defines."
+
+
+def test_a_citation_with_no_live_successor_refuses_before_any_call(tmp_path, monkeypatch):
+    from mu_spec import service
+
+    store = _retiring(tmp_path, "Reads the shape S-02 defines.")
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(service, "_retired_map", lambda graph: {"S-02": None})
+    client = FakeClient()
+    result = service.emit_tickets(store, "p", client=client)
     assert result["emitted"] is False
-    # The test unit carries S-01's body as its direct parent, so it cites too.
     assert result["refused"] == [
-        {"key": key, "retired": "S-02", "successor": "S-03", "in": "S-01"}
+        {"key": key, "retired": "S-02", "successor": None, "in": "S-01"}
         for key in ("S-01-T", "S-01")]
-    assert "S-02" in result["reason"] and "S-03" in result["reason"]
+    assert "S-02" in result["reason"]
     assert client.created == [] and not store.emissions_path("p").exists()
 
 

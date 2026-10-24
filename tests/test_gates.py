@@ -339,3 +339,19 @@ def test_an_unlinked_mention_never_blocks():
     from mu_spec.gates import UNLINKED_MENTION
 
     assert UNLINKED_MENTION not in service._BLOCKING
+
+def test_a_live_entry_still_citing_a_retired_id_is_reported_with_its_successor():
+    from mu_spec import service
+    from mu_spec.gates import RETIRED_MENTION
+
+    graph = Graph([
+        _entry("I-01"), _entry("B-01", "I-01"), _entry("A-01", "B-01"),
+        Entry(id=parse("S-01"), derives_from=(parse("A-01"),), body="old"),
+        Entry(id=parse("S-02"), derives_from=(parse("A-01"),), supersedes=parse("S-01"),
+              body="new\n\n*(Supersedes S-01, verbatim.)*"),
+        Entry(id=parse("S-03"), derives_from=(parse("A-01"),), body="Calls S-01's `load`."),
+        _entry("T-02", "S-02"), _entry("T-03", "S-03"),
+    ])
+    found = [(str(f.id), f.detail) for f in admission_gates(graph) if f.kind == RETIRED_MENTION]
+    assert found == [("S-03", "cites retired S-01 (now S-02) in its body")]
+    assert RETIRED_MENTION not in service._BLOCKING

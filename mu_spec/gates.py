@@ -84,6 +84,8 @@ NO_IMPORTS_LINE = "no_imports_line"
 TWO_SUCCESSORS = "two_successors"
 # A spec id in an entry's body that no edge of the entry reaches. Reported.
 UNLINKED_MENTION = "unlinked_mention"
+# A live entry whose body cites a retired id. Reported; tickets rewrite it.
+RETIRED_MENTION = "retired_mention"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -428,6 +430,26 @@ def unlinked_mentions(graph: Graph) -> list[Finding]:
     return findings
 
 
+def retired_mentions(graph: Graph) -> list[Finding]:
+    """A live entry whose body still cites a retired id. Tickets rewrite it
+    to the live successor as they render; this says which stored prose to
+    clean. COMPLETENESS, reported and never blocking (D3 ruling (b)).
+    Provenance lines are history and are read without."""
+    findings: list[Finding] = []
+    for entry in graph.entries():
+        named = parse_body(strip_provenance(entry.body), entry.id.layer).id_mentions
+        stale = []
+        for cited in named:
+            old = parse(cited)
+            end = live_successor(graph, old)
+            if end != old:
+                stale.append(f"{old} (now {end if end in graph else 'no live successor'})")
+        if stale:
+            findings.append(Finding(RETIRED_MENTION, entry.id,
+                                    f"cites retired {', '.join(stale)} in its body"))
+    return findings
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
@@ -440,5 +462,6 @@ def admission_gates(graph: Graph) -> list[Finding]:
         + imports(graph)
         + two_successors(graph)
         + unlinked_mentions(graph)
+        + retired_mentions(graph)
     )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

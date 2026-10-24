@@ -475,7 +475,13 @@ _V2 = "2:"
 _V3 = "3:"
 
 
+# The renderer's rewrite of a retired citation, `S-317 (was S-128)`. Read as
+# the one identifier it stands for, so a rewrite is never a contract change.
+_WAS = re.compile(rf"({_IDENT.pattern}) \(was {_IDENT.pattern}\)")
+
+
 def _digest(section: str) -> str:
+    section = _WAS.sub(r"\1", section)
     return hashlib.sha256(" ".join(_IDENT.sub("#", section).split()).encode()).hexdigest()
 
 
@@ -772,6 +778,7 @@ def emit(
     pickup: "tuple[str, ...] | list[str]" = (),
     renamed: "dict[str, tuple[str, ...]] | None" = None,
     project: "str | None" = None,
+    retired: "dict[str, str | None] | None" = None,
 ) -> dict:
     """Make the tracker say what the cut says (docs/TICKETS.md §3).
 
@@ -1091,7 +1098,8 @@ def emit(
                 continue
             try:
                 ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                                extra_labels=labels, batch=batch, existing=existing)
+                                extra_labels=labels, batch=batch, existing=existing,
+                                retired=retired)
             except (ValueError, KeyError) as exc:
                 failed.append({"key": key, "reason": f"could not be rendered: {exc}"})
                 frozen.add(key)
@@ -1200,7 +1208,8 @@ def emit(
         for key in missing:
             try:
                 ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
-                                extra_labels=labels, batch=batch, existing=existing)
+                                extra_labels=labels, batch=batch, existing=existing,
+                                retired=retired)
             except (ValueError, KeyError) as exc:
                 # An unsound graph refuses one unit at a time. One bad unit must
                 # not cost the other hundred and forty-three.
