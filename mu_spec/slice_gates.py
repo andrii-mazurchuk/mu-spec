@@ -272,8 +272,10 @@ def _module_files(dotted: str) -> tuple[str, str]:
 def module_gates(
     manifest: Manifest, graph: Graph, read: Reader = strict_imports
 ) -> list[Finding]:
-    """The checks that read spec bodies against the module map. All three
-    block (`sound`), so a cut is refused while one stands.
+    """The checks that read spec bodies against the module map.
+    `bad_module_import` and `undeclared_path` block (`sound`), so a cut is
+    refused while one stands; `split_ownership` is reported only (10-24,
+    see `service._BLOCKING`).
 
     - **`bad_module_import` (M2).** An `Imports:` item naming a dotted module
       under a code root must name a declared module, and the entry must

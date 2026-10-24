@@ -79,12 +79,17 @@ COMMENTS_FILE = "comments.jsonl"
 # on the other end changes nothing the emitter relied on -- see the branch
 # in `slice_gates` that raises it.
 #
-# The last five are read from bodies and the module map (M2, M3) or are the
+# The last four are read from bodies and the module map (M2, M3) or are the
 # one-successor rule. `module_gates` kinds block the cut through `sound` but
 # are not checked on the amendment path -- see its docstring.
+#
+# `split_ownership` is deliberately absent: reported, never refused (Andrey,
+# 10-24). DESIGN 4a expects one file written from several slices, and the
+# slice audit catches it before ratify. A questionable call -- revisit after
+# the audit pilot; promoting it is adding it back here.
 _BLOCKING = (
     ORPHAN, BAD_DEPENDENCY, BAD_EMISSION, STRANDED, BAD_IMPORT, TWO_SUCCESSORS,
-    BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
+    BAD_MODULE_IMPORT, UNDECLARED_PATH,
 )
 
 

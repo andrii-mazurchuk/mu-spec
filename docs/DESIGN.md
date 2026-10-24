@@ -613,8 +613,9 @@ package is issued:*
 - Read against the module map, and so refusing the cut rather than the amendment — a
   module is declared after its entry exists: does every imported module under a code
   root resolve to a declared module whose implementer is depended on (bad module
-  import); is every file implemented from one slice only (split ownership); does every
-  file a spec names under a code root have a declaring module (undeclared path)?
+  import); does every file a spec names under a code root have a declaring module
+  (undeclared path)? A file implemented from two slices (split ownership) is *reported*,
+  not refused, for now (10-24): §4a expects shared files, and the slice audit catches it.
 
 *Complete — the report of what is left to do, never a blocker:*
 - Does every entry above have at least one entry below serving it? (unserved

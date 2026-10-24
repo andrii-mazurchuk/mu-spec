@@ -264,7 +264,10 @@ def test_a_project_with_no_imports_lines_and_no_modules_is_unaffected(store, pro
     assert payload["gates"]["sound"] is True
 
 
-def test_split_ownership_makes_the_graph_unsound(store, prompts):
+def test_split_ownership_is_reported_but_leaves_the_graph_sound(store, prompts):
+    """Andrey, 10-24: report-only for now -- DESIGN 4a expects one file
+    written from several slices (t-finance's server.py), and the slice audit
+    (SL4) is where it is caught before ratify. Revisit after the audit pilot."""
     mid = seed(store, prompts)
     _amend(store, prompts, mid, {"layer": "S", "title": "b", "derives_from": ["A-01"]})
     manifest = store.load_manifest("m")
@@ -274,5 +277,5 @@ def test_split_ownership_makes_the_graph_unsound(store, prompts):
     call(store, prompts, "POST", "/projects/m/modules",
          {"path": "dark/x.py", "implements": ["S-01", "S-02"]})
     report = service._gate_report(store.load_graph("m"), store.load_manifest("m"))
-    assert report["sound"] is False
+    assert report["sound"] is True
     assert {f["kind"] for f in report["findings"]} >= {SPLIT_OWNERSHIP}

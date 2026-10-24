@@ -302,8 +302,8 @@ def module_slices(
 
     A module may serve more than one, and on real data it does: one file
     here implements four capture entries and four observability ones. This
-    view only reports it; the refusal is `slice_gates.module_gates`
-    (`split_ownership`, M3), because slices define write ownership.
+    view only reports it; `slice_gates.module_gates` raises it as
+    `split_ownership` (M3), reported rather than refused for now (10-24).
 
     Ordered by how many of the module's entries come from each slice so a
     caller needing a single value can take the first without this unit
