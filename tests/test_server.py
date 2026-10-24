@@ -3332,6 +3332,25 @@ def test_a_press_naming_a_retired_id_is_a_400_before_any_job_starts(store, promp
         assert client.created == []
 
 
+def test_a_merge_order_that_loops_is_a_400_naming_the_cycle(store, prompts, monkeypatch):
+    """M31: the cycle is named, and no job is started for a press that would
+    write nothing."""
+    from mu_spec import emit as emitting
+    from mu_spec.emit import Runs
+
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    _emit_ready(store, prompts)
+    monkeypatch.setattr(emitting, "merge_cycle", lambda *a: ["S-01", "S-02-T", "S-01"])
+    monkeypatch.setattr(emitting, "open_numbers", lambda *a: set())
+    for runs in (Runs(spawn=lambda fn: fn()), None):
+        client = _Client()
+        status, payload = _emit_call(store, prompts, "POST", "/projects/m/emit",
+                                     {}, runs=runs, client=client)
+        assert status == 400 and payload["cycle"] == ["S-01", "S-02-T", "S-01"]
+        assert "S-01 -> S-02-T -> S-01" in payload["reason"]
+        assert client.created == []
+
+
 def test_the_progress_of_a_run_is_readable(store, prompts, monkeypatch):
     from mu_spec.emit import Runs
 

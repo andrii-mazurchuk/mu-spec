@@ -1218,3 +1218,117 @@ def test_a_settled_blocker_of_an_open_issue_is_still_verified(tmp_path):
     gh.issues[2]["state_reason"] = "not_planned"
     result = ship(tmp_path, gh, labels=("team:x",))
     assert [d["blocker"] for d in result["dead"]] == ["S-01"]
+
+
+# -- M31 (D11): merge order, derived at render time, never an entry edge -------
+#
+# Two DARK cases, both a TEST follow-up of a unit D and an IMPLEMENTATION
+# follow-up of a unit X that D waits on, transitively, both open:
+# - m1210-3: S-325's follow-up (#852) was out; the tests of S-308/S-309/S-330
+#   (which wait on S-325) were restated after it (#876, #877, #878) to pass
+#   before and after S-325, and had to merge FIRST or 21 tests went red.
+# - m1206-17: S-271-T's test follow-up (#645) was out; S-217's storage fix
+#   followed (the #374 follow-up, iss-0222), and #645 had to wait for IT.
+# In both the later-opened follow-up merges first: it is the repair.
+
+M_ORDER = ["S-01-T", "S-01", "S-02-T", "S-02"]
+M_EDGES = {"S-01": ("S-01-T",), "S-02": ("S-02-T", "S-01")}
+M_WAVES = [["S-01-T"], ["S-01"], ["S-02-T"], ["S-02"]]
+
+
+def _mship(tmp_path, gh, bodies=None, edges=M_EDGES):
+    return ship(tmp_path, gh, order=M_ORDER, edges=edges, waves=M_WAVES, bodies=bodies or {})
+
+
+def _block(gh, n):
+    import json
+    return json.loads(gh.issues[n]["body"].split("```json")[-1].split("```")[0])
+
+
+def _two_merged(tmp_path, gh):
+    """#1..#4 out; S-01 (#2) and S-02-T (#3) merged."""
+    _mship(tmp_path, gh)
+    gh.issues[2].update(state="closed", state_reason="completed")
+    gh.issues[3].update(state="closed", state_reason="completed")
+
+
+def test_no_follow_up_means_no_merge_order_and_no_new_field(tmp_path):
+    gh = Tracker()
+    result = _mship(tmp_path, gh)
+    assert all("order" not in _block(gh, n) for n in gh.issues)
+    assert result["merge_order"] == []
+
+
+def test_a_restated_test_merges_before_the_older_follow_up_it_guards(tmp_path):
+    """m1210-3: X's follow-up is out; D's test is restated after it. X waits,
+    and the press that opens the restated test is the one that says so."""
+    gh = Tracker()
+    _two_merged(tmp_path, gh)
+    [x] = _mship(tmp_path, gh, bodies={"S-01": "S-01 grown"})["follow_ups"]
+    bodies = {"S-01": "S-01 grown", "S-02-T": "restated"}
+    second = _mship(tmp_path, gh, bodies=bodies)
+    [t] = second["follow_ups"]
+    assert (x["number"], t["number"]) == (5, 6)
+    assert 6 in gh.issues[5]["blocked_by"], "GitHub sees it"
+    block = _block(gh, 5)
+    assert "S-02-T" in block["blocked_by"] and block["order"] == {"S-02-T": "merge"}
+    assert "order" not in _block(gh, 6) and 5 not in gh.issues[6]["blocked_by"]
+    assert second["merge_order"] == [{"blocked": "S-01", "blocker": "S-02-T", "order": "merge"}]
+    gh.calls.clear()
+    _mship(tmp_path, gh, bodies=bodies)
+    assert gh.writes() == [], "settled in the press that derived it"
+
+
+def test_a_test_follow_up_waits_for_the_newer_fix_it_needs(tmp_path):
+    """m1206-17: D's test follow-up is out; X's fix follows it. The test waits."""
+    gh = Tracker()
+    _two_merged(tmp_path, gh)
+    _mship(tmp_path, gh, bodies={"S-02-T": "restated"})                       # #5
+    result = _mship(tmp_path, gh, bodies={"S-02-T": "restated", "S-01": "fixed"})  # #6
+    assert 6 in gh.issues[5]["blocked_by"]
+    assert _block(gh, 5)["order"] == {"S-01": "merge"}
+    assert result["merge_order"] == [{"blocked": "S-02-T", "blocker": "S-01", "order": "merge"}]
+
+
+def test_a_merge_order_leaves_when_its_blocker_merges(tmp_path):
+    gh = Tracker()
+    _two_merged(tmp_path, gh)
+    _mship(tmp_path, gh, bodies={"S-01": "S-01 grown"})
+    bodies = {"S-01": "S-01 grown", "S-02-T": "restated"}
+    _mship(tmp_path, gh, bodies=bodies)
+    gh.issues[6].update(state="closed", state_reason="completed")
+    result = _mship(tmp_path, gh, bodies=bodies)
+    assert "order" not in _block(gh, 5) and 6 not in gh.issues[5]["blocked_by"]
+    assert result["merge_order"] == []
+
+
+def test_a_merge_order_is_never_an_entry_edge(tmp_path):
+    """Derived per press from the record: the edges handed in are untouched."""
+    gh = Tracker()
+    edges = {k: tuple(v) for k, v in M_EDGES.items()}
+    _two_merged(tmp_path, gh)
+    _mship(tmp_path, gh, bodies={"S-01": "g"}, edges=edges)
+    _mship(tmp_path, gh, bodies={"S-01": "g", "S-02-T": "r"}, edges=edges)
+    assert edges == M_EDGES
+
+
+def test_a_merge_order_that_closes_a_cycle_refuses_the_press_before_any_write(tmp_path):
+    """S-02 waits on S-01; S-03 on S-02. Open follow-ups S-01 #1 < S-03-T #2 <
+    S-02 #3: S-01 waits on S-03-T, S-03-T on S-02, S-02 on S-01."""
+    import json
+    order = ["S-01", "S-03-T", "S-02", "S-03"]
+    edges = {"S-02": ("S-01",), "S-03": ("S-03-T", "S-02")}
+    waves = [["S-01"], ["S-03-T"], ["S-02"], ["S-03"]]
+    gh = Tracker()
+    ship(tmp_path, gh, order=order, edges=edges, waves=waves)
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    for key in ("S-01", "S-03-T", "S-02"):
+        lines[-1]["issues"][key]["follow_up_of"] = 90
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    gh.calls.clear()
+    result = ship(tmp_path, gh, order=order, edges=edges, waves=waves,
+                  bodies={"S-03": "changed"})
+    assert result["emitted"] is False and gh.writes() == []
+    assert result["refused"] == [{"cycle": ["S-01", "S-03-T", "S-02", "S-01"]}]
+    assert "S-01 -> S-03-T -> S-02 -> S-01" in result["reason"]

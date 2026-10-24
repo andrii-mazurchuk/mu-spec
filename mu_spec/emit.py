@@ -525,6 +525,69 @@ def completed(live: dict[str, dict]) -> frozenset[str]:
                      if (issue.get("settled") or {}).get("state_reason") == "completed")
 
 
+MERGE = "merge"
+
+
+def merge_orders(edges: dict, issues: dict[str, dict], open_now) -> dict[str, tuple[str, ...]]:
+    """Merge-order blockers (M31, D11): unit key -> keys that must merge first.
+
+    Derived on every press from the emission record, never stored as an entry
+    edge. One rule, read off DARK's two cases: a TEST follow-up of unit D and an
+    IMPLEMENTATION follow-up of a unit D waits on, transitively, both open --
+    the one opened later merges first. It is the repair. m1210-3: S-325's
+    follow-up was out and the tests of units waiting on it were restated after
+    it to pass on both sides of it, so S-325 waited for them. m1206-17: S-271-T's
+    test follow-up was out and the storage fix it needed (S-217) came after, so
+    the test waited for the fix. Which of the two was the repair is read off
+    issue numbers, the one order the record holds for certain.
+
+    `open_now(key, record)` says whether a recorded issue is still open."""
+    follow = {k: int(v["number"]) for k, v in issues.items()
+              if v.get("follow_up_of") and v.get("number") and open_now(k, v)}
+    out: dict[str, list[str]] = {}
+    for test in sorted(k for k in follow if is_test_key(k)):
+        seen: set[str] = set()
+        stack = [test[: -len(TEST_SUFFIX)]]
+        while stack:
+            for blocker in edges.get(stack.pop(), ()) or ():
+                if blocker not in seen:
+                    seen.add(blocker)
+                    stack.append(blocker)
+        for impl in sorted(k for k in seen if k in follow and not is_test_key(k)):
+            blocked, first = (impl, test) if follow[test] > follow[impl] else (test, impl)
+            out.setdefault(blocked, []).append(first)
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def merge_cycle(edges: dict, merge: dict) -> "list[str] | None":
+    """A loop through the projected edges and the merge orders, as a route
+    `[a, b, ..., a]`, or None. The projected edges alone cannot loop (DESIGN
+    §4a); a merge order gives a test unit an outbound edge, and with it a way
+    back out."""
+    if not merge:
+        return None
+    from mu_spec.slice_gates import _path, cycles
+    joined = {k: tuple(edges.get(k, ()) or ()) + tuple(merge.get(k, ()))
+              for k in set(edges) | set(merge)}
+    found = cycles(joined)
+    return _path(joined, found[0]).split(" -> ") if found else None
+
+
+def cycle_refusal(cycle: list[str]) -> dict:
+    """The press refused, naming the loop: no order in it can be honoured."""
+    return {"emitted": False, "refused": [{"cycle": cycle}], "cycle": cycle,
+            "reason": "the merge order Ship derives would close a cycle, so nothing "
+                      f"was written: {' -> '.join(cycle)}. Every unit in it waits on "
+                      "the next. Merge or close one of these follow-ups, or amend the "
+                      "spec, and press again."}
+
+
+def open_numbers(client, repo: str, project: "str | None") -> "set[int] | None":
+    """The numbers of this project's open issues, or None if unlistable."""
+    ours = _open_by_key(client, repo, project)
+    return None if ours is None else {int(i["number"]) for f in ours.values() for i in f}
+
+
 def _contract_v1(body: str) -> str:
     """The fingerprint records held before the contract ran to the next
     renderer section: up to the first `## ` of any kind."""
@@ -874,6 +937,20 @@ def emit(
         live[key] = _adopt(first, pickup)
         adopted.append({"key": key, "number": first["number"], "url": first.get("url", "")})
 
+    # Merge order (M31), from the record as it stands, before anything is
+    # written: a loop through it refuses the press. Open means listed open;
+    # without a listing, not recorded as settled.
+    listed = {int(i["number"]) for found in (ours or {}).values() for i in found}
+
+    def open_in(numbers: set[int]):
+        return lambda _k, v: (int(v["number"]) in numbers if ours is not None
+                              else not v.get("settled"))
+
+    orders = {"now": merge_orders(edges, live, open_in(listed))}
+    cycle = merge_cycle(edges, orders["now"])
+    if cycle:
+        return {**cycle_refusal(cycle), "repo": repo, "cut_seq": cut_seq}
+
     missing = [key for key in order if key not in live]
     held: list[str] = []
     if horizon == "shipped":
@@ -960,6 +1037,8 @@ def emit(
         that blocker's old key is closed `completed` for work the follow-up has
         not done, and a consumer reading the old key would count it done."""
         unit = fetch(key)
+        if isinstance(unit, dict) and orders["now"].get(key):
+            unit = {**unit, "merge_after": list(orders["now"][key])}
         asks[key] = unit
         was = unit.get("follows_was") if isinstance(unit, dict) else None
         if was:
@@ -1046,7 +1125,8 @@ def emit(
                     or any(l in pickup for l in open_labels.get(int(mine["number"]), ()))):
                 continue
             was = asks[blocked].get("follows_was") or {}
-            for blocker in asks[blocked].get("follows") or ():
+            for blocker in (list(asks[blocked].get("follows") or ())
+                            + list(asks[blocked].get("merge_after") or ())):
                 names = {blocker, *was.get(blocker, ())}
                 why = f"no issue carries {blocker}"
                 for name in sorted(names):
@@ -1088,6 +1168,36 @@ def emit(
         if any(label in pickup for label in state.get("labels") or ()):
             raced.append({"key": key, "number": issues[key]["number"],
                           "reason": f"{what} while it was being picked up"})
+
+    def write(key: str, ticket, state: dict) -> None:
+        """Edit an untouched open issue in place to say what `ticket` says."""
+        mine = issues[key]
+        try:
+            # Labels by difference, never by replacement: a PATCH of the whole
+            # set would erase a pickup label added since our read, and the
+            # issue would look untouched to every Ship after.
+            number = int(mine["number"])
+            of = mine.get("follow_up_of")
+            title, body = followed(ticket, key, of) if of else (ticket.title, ticket.body)
+            client.update_issue(repo, number, title, body)
+            current = list(state.get("labels") or ())
+            add = [l for l in ticket.labels if l not in current]
+            if add:
+                client.add_labels(repo, number, add)
+            wrote = tuple(mine.get("labels") or ()) + tuple(labels)
+            for label in current:
+                if _ours(label, wrote) and label not in ticket.labels:
+                    client.remove_label(repo, number, label)
+        except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+            failed.append({"key": key, "reason": f"could not be edited: {exc}"})
+            frozen.add(key)
+            return
+        after(key, "edited")
+        issues[key] = {**mine, "fingerprint": ticket.fingerprint,
+                       "contract": contract_of(ticket.body),
+                       "batch": batch, "labels": list(ticket.labels)}
+        if not any(e["key"] == key for e in edited):
+            edited.append({"key": key, "number": mine["number"], "url": mine.get("url", "")})
 
     closed: dict[str, int] = {}
     now_wired = {p for p in wired_before if all(k in issues for k in p.split("<-"))}
@@ -1215,33 +1325,7 @@ def emit(
                 frozen.add(key)
                 tick("editing")
                 continue
-            try:
-                # Labels by difference, never by replacement: a PATCH of the whole
-                # set would erase a pickup label added since our read, and the
-                # issue would look untouched to every Ship after.
-                number = int(live[key]["number"])
-                of = live[key].get("follow_up_of")
-                title, body = followed(ticket, key, of) if of else (ticket.title, ticket.body)
-                client.update_issue(repo, number, title, body)
-                current = list(state.get("labels") or ())
-                add = [l for l in ticket.labels if l not in current]
-                if add:
-                    client.add_labels(repo, number, add)
-                wrote = tuple(live[key].get("labels") or ()) + tuple(labels)
-                for label in current:
-                    if _ours(label, wrote) and label not in ticket.labels:
-                        client.remove_label(repo, number, label)
-            except (GitHubError, TypeError, ValueError, AttributeError) as exc:
-                failed.append({"key": key, "reason": f"could not be edited: {exc}"})
-                frozen.add(key)
-                tick("editing")
-                continue
-            after(key, "edited")
-            issues[key] = {**live[key], "fingerprint": ticket.fingerprint,
-                           "contract": contract_of(ticket.body),
-                           "batch": batch, "labels": list(ticket.labels)}
-            edited.append({"key": key, "number": live[key]["number"],
-                           "url": live[key].get("url", "")})
+            write(key, ticket, state)
             tick("editing")
 
         # -- new units, within the horizon ----------------------------------------
@@ -1312,11 +1396,51 @@ def emit(
             marks["changed"] = True
             linked.append({"key": key, "number": mine.get("number"), "parent": parent})
 
+        # -- merge order, again, as this press left the tracker ------------------
+        # A follow-up opened above changes what merges first, and the unit it
+        # orders was rendered before it existed (m1210-3: the restated tests
+        # came after S-325's follow-up). Re-rendered and edited now, so the
+        # press that opens a repair is the one that says what it precedes.
+        opened = {int(i["number"]) for i in created + follow_ups}
+        open_after = (listed | opened) - set(closed.values())
+        post = merge_orders(edges, issues, open_in(open_after))
+        loop = merge_cycle(edges, post) if post != orders["now"] else None
+        if loop:
+            failed.append({"key": loop[0], "reason": "merge order left as it was: the "
+                           f"follow-ups opened now would close a cycle, {' -> '.join(loop)}. "
+                           "The next press refuses until one of them merges or closes."})
+        elif post != orders["now"]:
+            before, orders["now"] = orders["now"], post
+            for key in order:
+                mine = issues.get(key) or {}
+                if (post.get(key) == before.get(key) or key in frozen
+                        or int(mine.get("number") or 0) not in open_after):
+                    continue
+                try:
+                    ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
+                                    extra_labels=labels, batch=batch, existing=existing,
+                                    retired=retired)
+                except (ValueError, KeyError):
+                    continue
+                if ticket.fingerprint == mine.get("fingerprint") or ticket.oversized:
+                    continue
+                why, state = look(key)
+                if why is not None:
+                    touched.append({"key": key, "number": mine.get("number"),
+                                    "reason": f"merge order changed, not edited: {why}"})
+                    frozen.add(key)
+                    continue
+                write(key, ticket, state)
+        merging = orders["now"]
+        wiring = {k: tuple(edges.get(k, ()) or ()) + tuple(
+                      b for b in merging.get(k, ()) if b not in (edges.get(k, ()) or ()))
+                  for k in set(edges) | set(merging)}
+
         # -- the order: declare what the cut has, remove what it dropped ---------
         wanted = {
             _pair(blocked, blocker)
             for blocked in order if blocked in issues
-            for blocker in edges.get(blocked, ()) or ()
+            for blocker in wiring.get(blocked, ()) or ()
         }
         # A follow-up is a new issue under an old key: every order touching that
         # key is declared again, against the new number.
@@ -1326,7 +1450,7 @@ def emit(
                      and not renewed.intersection(p.split("<-"))}
         pace["to_wire"] = sum(
             1 for blocked in order if blocked in issues and blocked not in frozen
-            for blocker in edges.get(blocked, ()) or ()
+            for blocker in wiring.get(blocked, ()) or ()
             if _pair(blocked, blocker) not in now_wired)
         tick("wiring")
         # The order as GitHub holds it, for every open issue nobody picked up:
@@ -1344,7 +1468,7 @@ def emit(
                 except GitHubError:
                     continue
                 synced.add(blocked)
-                want = {int(issues[b]["id"]) for b in edges.get(blocked, ()) or () if b in issues}
+                want = {int(issues[b]["id"]) for b in wiring.get(blocked, ()) or () if b in issues}
                 have = {int(x["id"]) for x in native}
                 for link in native:
                     if int(link["id"]) in want or not any(
@@ -1358,12 +1482,12 @@ def emit(
                         continue
                     removed.append({"blocked": blocked, "blocker": f"#{link.get('number')}"})
                 now_wired = {p for p in now_wired if p.partition("<-")[0] != blocked}
-                now_wired.update(_pair(blocked, b) for b in edges.get(blocked, ()) or ()
+                now_wired.update(_pair(blocked, b) for b in wiring.get(blocked, ()) or ()
                                  if b in issues and int(issues[b]["id"]) in have)
         for blocked in order:
             if blocked not in issues or blocked in frozen:
                 continue
-            for blocker in edges.get(blocked, ()) or ():
+            for blocker in wiring.get(blocked, ()) or ():
                 pair = _pair(blocked, blocker)
                 if pair in now_wired:
                     continue
@@ -1459,6 +1583,8 @@ def emit(
                 undone=(), closed=closed,
             ))
 
+    merge_order = [{"blocked": k, "blocker": b, "order": MERGE}
+                   for k in order for b in orders["now"].get(k, ())]
     return {
         "emitted": True,
         "repo": repo,
@@ -1483,6 +1609,8 @@ def emit(
         "dead": dead,
         "linked": linked,
         "unlinked": unlinked,
+        # Derived this press, never stored as an entry edge (M31, D11).
+        "merge_order": merge_order,
         "counts": {
             "units": len(order),
             "created": len(created),
@@ -1503,5 +1631,6 @@ def emit(
             "dead": len(dead),
             "linked": len(linked),
             "unlinked": len(unlinked),
+            "merge_order": len(merge_order),
         },
     }

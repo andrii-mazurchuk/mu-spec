@@ -337,6 +337,12 @@ This is a property rather than a policy, and it is what the earlier module-group
 could not claim: grouping entries by file could manufacture a cycle the entry graph did
 not have, which then had to be contracted and reported.
 
+**Merge order is the one exception, and it is checked (M31, D11).** Ship derives, on each
+press and never as an entry edge, which open follow-up merges before which
+(`docs/TICKETS.md` §5). That can give a test unit an outbound order, and so a way back
+out, so the union of projected edges and merge orders is walked for a loop before
+anything is written, and a loop refuses the press, naming it.
+
 ### Identity, and the cut
 
 Identity **is** the spec entry, plus which of the two kinds the unit is — `S-13` and

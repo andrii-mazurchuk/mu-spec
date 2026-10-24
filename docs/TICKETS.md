@@ -184,6 +184,24 @@ consumer's business.
   counts as closed `completed` if a closed `completed` issue's block carries its key **or
   any key listed for it here**.
 
+**Merge order (M31, D11, ratified 2026-10-23).** Some orders keep main green without
+being dependencies, and the edge rules cannot state them (DARK m1210-3, m1206-17: forge
+held S-325 and #645 by hand). Ship derives them on every press from its own record --
+**never stored as an entry edge** -- for one shape: an open **test** follow-up of unit D
+and an open **implementation** follow-up of a unit D waits on, transitively. The one
+opened later merges first, because it is the repair: S-325's follow-up waited for the
+tests restated after it to pass on both sides of it (m1210-3); S-271-T's test follow-up
+waited for the S-217 storage fix filed after it (m1206-17).
+- A derived blocker is in the machine block's `blocked_by`, so a consumer waits on it
+  like any other, and in `"order": {"<key>": "merge"}`, so it can tell it from a
+  dependency. The field is absent when there is none. GitHub gets the native link.
+- Derived again after this press's follow-ups exist, and the unit it orders is edited in
+  place in the same press. It leaves when its blocker closes.
+- **A loop refuses the press**, before anything is written: projected edges and merge
+  orders together are walked, and a cycle is a 400 naming it (`A -> B -> C -> A`). A loop
+  only follow-ups opened mid-press would close is not applied, is reported in `failed`,
+  and refuses the next press.
+
 ## 6. Batch
 
 Every ticket's machine block carries `batch`: the sequence number of the Ship press that

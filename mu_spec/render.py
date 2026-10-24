@@ -207,7 +207,8 @@ def _machine(
         for path, others in (payload.get("file_scope") or {}).items()
         if others
     }
-    return {
+    merge = _merge_only(payload)
+    block = {
         "key": unit["key"],
         "anchor": unit.get("anchor"),
         "project": payload.get("project"),
@@ -217,7 +218,7 @@ def _machine(
         "batch": batch,
         "slices": list(unit.get("slices") or ()),
         "write_set": write_set,
-        "blocked_by": list(payload.get("follows") or ()),
+        "blocked_by": _blocked_by(payload),
         # Blocker key -> the keys it had before its anchor was superseded. A
         # renamed unit keeps its issue (docs/TICKETS.md section 1), but a
         # touched issue is never edited, so its own block may still carry an
@@ -228,6 +229,23 @@ def _machine(
         "file_scope": scope,
         "context_ids": list(context_ids or ()),
     }
+    # Merge order (M31, D11): blockers Ship derived this press, never entry
+    # edges. In `blocked_by` so a consumer waits on them as it waits on any
+    # blocker; named here so it can tell them apart. Absent when there are
+    # none, so a ticket without one is byte for byte what it was.
+    if merge:
+        block["order"] = {key: "merge" for key in merge}
+    return block
+
+
+def _merge_only(payload: dict) -> list[str]:
+    """The merge-order blockers that are not also dependencies."""
+    follows = set(payload.get("follows") or ())
+    return [k for k in payload.get("merge_after") or () if k not in follows]
+
+
+def _blocked_by(payload: dict) -> list[str]:
+    return list(payload.get("follows") or ()) + _merge_only(payload)
 
 
 def _bullets(lines) -> str:
@@ -362,9 +380,11 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
     if rule:
         out.append(f"> {rule}")
 
-    if payload.get("follows"):
+    if _blocked_by(payload):
         out.append("## Blocked by")
-        out.append(_bullets(f"- `{key}`" for key in payload["follows"]))
+        out.append(_bullets([f"- `{key}`" for key in payload.get("follows") or ()]
+                            + [f"- `{key}` — merge order: it merges first so main stays "
+                               "green; not a dependency" for key in _merge_only(payload)]))
 
     if payload.get("overlap"):
         out.append("## Must not run at the same time as")
@@ -479,7 +499,7 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
         title=title,
         body="\n\n".join(part for part in out if str(part).strip()),
         labels=labels,
-        blocked_by=tuple(payload.get("follows") or ()),
+        blocked_by=tuple(_blocked_by(payload)),
         fingerprint=fingerprint,
         cites=tuple(cites),
         rewritten=tuple(rewritten),
