@@ -505,6 +505,10 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 .bignum.zero b{color:var(--dim)}
 /* Already out. True, worth having, and not what anyone is looking for. */
 .bignum.quiet b{font-size:19px;color:var(--ink-soft);font-weight:600;padding-top:9px}
+/* Held by a `shipped` press: the number S-331 needed to see (M29). */
+.bignum.held b{font-size:19px;color:var(--warn);font-weight:600;padding-top:9px}
+.shipopts input.unitkey{width:7em;background:var(--panel-alt);color:var(--ink);
+  border:1px solid var(--rule);border-radius:var(--radius);padding:3px 6px;font:12.5px var(--mono)}
 
 /* A major commitment, and it must not look like the other buttons. */
 .shipgo{background:var(--brand);color:var(--brand-ink);border:0;border-radius:var(--radius);
@@ -2890,6 +2894,11 @@ function shipPre(r){
           the press. */
       preChip(r.token, r.token ? "token" : "no token",
         "set MU_SPEC_GITHUB_TOKEN in this unit's environment")}
+    ${/* WHICH build answers (M30): the press sends it back, and another
+          build refuses. Shown, not judged -- this page cannot know HEAD. */
+      (STATE.emission && STATE.emission.build)
+        ? `<span class="pill">build <b>${esc(String(STATE.emission.build).slice(0, 7))}</b></span>`
+        : `<span class="pill quiet">build unknown</span>`}
     ${/* WHO the issues will be authored by. Not a precondition -- a missing
           answer blocks nothing -- but the fact a consumer authorizing on the
           issue author has to be able to check rather than assume, and the one
@@ -2930,10 +2939,17 @@ function shipPreflight(){
   const gaps = new Set(mates), stack = keys.filter(k => already[k]).concat(mates);
   while(stack.length) for(const b of edges[stack.pop()] || [])
     if(!gaps.has(b)){ gaps.add(b); stack.push(b); }
-  const blocking = [...gaps].filter(k => !already[k]).length;
+  /* The unit computes the `shipped` press with the function the press runs
+     (M29: also what tests out import, and new leaves at the frontier); the
+     local walk is only the fallback while a run is in flight. */
+  const server = e.shipped;
+  const blocking = server ? server.create.length : [...gaps].filter(k => !already[k]).length;
   const mode = horizonMode(out);
   let inside, span = 0;
-  if(mode === "shipped"){
+  const unit = (STATE.shipUnit || "").trim();
+  if(mode === "one"){
+    inside = unit && keys.includes(unit) && !already[unit] ? 1 : 0;
+  } else if(mode === "shipped"){
     inside = blocking;
   } else {
     const open = waves.filter(w => w.some(k => !already[k]));
@@ -2942,7 +2958,8 @@ function shipPreflight(){
     span = Math.min(n, open.length);
   }
   return {total: keys.length, already: out, fresh: inside, mode, blocking,
-          held: keys.length - out - inside, waves: span};
+          held: keys.length - out - inside, waves: span, unit,
+          known: !!unit && keys.includes(unit), keys};
 }
 
 function horizonMode(already){
@@ -2971,6 +2988,7 @@ function shipTally(c){
     ${box(c.failed||0, "failed", (c.failed||0) ? "bad" : "")}
     ${box(c.unwired||0, "orders not declared", (c.unwired||0) ? "bad" : "")}
     ${(c.dead||0) ? box(c.dead, "waiting on a dead key", "bad") : ""}
+    ${(c.unlabelled||0) ? box(c.unlabelled, "created without their labels", "bad") : ""}
     ${/* "already out" is the standing count in the launch band; this is what
           THIS run passed over, which is a different number. Named apart, and
           omitted at zero -- an empty box for a non-problem is the kind of
@@ -3122,6 +3140,8 @@ function drawShip(){
 
   const running = !!e.running;
   const pf = shipPreflight();
+  // One unit (M30) needs a key of this cut.
+  const noUnit = pf.mode === "one" && !pf.known;
 
   /* One band, across: where it goes, what it would create, and the press.
      Paste the repository's address and the owner/name is taken out of it --
@@ -3167,12 +3187,19 @@ function drawShip(){
           <label><input type="radio" name="horizon-mode" id="hm-more" ${pf.mode === "more" ? "checked" : ""}>
             the next <input id="horizon-in" type="number" min="1" step="1" value="${esc(STATE.horizon)}"
 > waves still missing issues</label>
+          <label><input type="radio" name="horizon-mode" id="hm-one" ${pf.mode === "one" ? "checked" : ""}>
+            one unit only: <input id="unit-in" class="unitkey" list="unit-keys" spellcheck="false"
+              value="${esc(STATE.shipUnit || "")}" placeholder="S-01"></label>
+          <datalist id="unit-keys">${pf.keys.map(k => `<option value="${esc(k)}">`).join("")}</datalist>
         </div>
         <p class="shiphelp">${pf.already
           ? `<b>${pf.blocking}</b> unit${pf.blocking===1?"":"s"} with no issue yet
-             block${pf.blocking===1?"s":""} work already on GitHub. The first choice creates
-             only those and opens no new work.`
-          : `Nothing on GitHub yet, so the first press opens the next waves.`}</p>
+             ${pf.blocking===1?"is":"are"} needed by work already on GitHub: what it waits on,
+             what its tests import, and new leaves whose blockers are all out. The first
+             choice creates only those.`
+          : `Nothing on GitHub yet, so the first press opens the next waves.`}
+          One unit creates or edits that unit alone and wires its orders — the probe that
+          proves the consumer ingests a ticket before a full batch.</p>
         <div class="shipopts">
           <label><input type="checkbox" id="deleg-in" ${STATE.delegation.enabled ? "checked" : ""}>
             delegate Ship to agents</label>
@@ -3190,17 +3217,19 @@ function drawShip(){
           ? `<div class="bignum quiet"><b>${pf.already}</b><span>already out (on record)</span></div>`
           : ""}
         ${pf.held
-          ? `<div class="bignum quiet"><b>${pf.held}</b><span>held for later waves</span></div>`
+          ? `<div class="bignum ${pf.mode === "shipped" ? "held" : "quiet"}"><b>${pf.held}</b><span>held back</span></div>`
           : ""}
       </div>
       <div class="go">
-        <button class="shipgo" id="do-ship" ${blocked || running ? "disabled" : ""}>${
+        <button class="shipgo" id="do-ship" ${blocked || running || noUnit ? "disabled" : ""}>${
           running ? "Shipping…" : "Ship to GitHub"}</button>
         <span class="gonote">${
           running ? "in flight"
           : blocked ? "not ready"
+          : noUnit ? "name a unit of this cut"
+          : pf.mode === "one" ? `${pf.fresh ? "creates" : "edits if changed"} ${esc(pf.unit)} only, and wires its orders; nothing else is written`
           : `creates ${pf.fresh} issue${pf.fresh===1?"":"s"} ${pf.mode === "shipped"
-               ? `that work already out is blocked by, opening no new work`
+               ? `that work already out needs`
                : `across ${pf.waves} wave${pf.waves===1?"":"s"}`},
              and edits or withdraws whatever changed`}</span>
       </div>
@@ -3248,6 +3277,10 @@ function drawShip(){
   const hms = $("hm-shipped"), hmm = $("hm-more");
   if(hms) hms.onchange = () => { STATE.horizonMode = "shipped"; drawShip(); };
   if(hmm) hmm.onchange = () => { STATE.horizonMode = "more"; drawShip(); };
+  const hmo = $("hm-one"), uinput = $("unit-in");
+  if(hmo) hmo.onchange = () => { STATE.horizonMode = "one"; drawShip(); };
+  if(uinput) uinput.onchange = () => {
+    STATE.shipUnit = uinput.value.trim(); STATE.horizonMode = "one"; drawShip(); };
   if(save) save.onclick = () => setRepo(input.value);
   const deleg = $("deleg-in");
   if(deleg) deleg.onchange = () => setDelegation(deleg.checked);
@@ -3352,6 +3385,18 @@ async function setDelegation(enabled){
   drawShip();
 }
 
+/* What a press sends: the horizon or the one unit, and the build this page
+   read (M30) -- another process answering refuses rather than ships. */
+function shipBody(){
+  const pf = shipPreflight();
+  const out = pf.mode === "one" ? {unit: pf.unit}
+    : {waves: pf.mode === "shipped" ? "shipped" : Math.max(1, STATE.horizon || 1)};
+  const build = STATE.emission && STATE.emission.build;
+  if(build) out.build = build;
+  out.actor = "dashboard";
+  return out;
+}
+
 async function shipTickets(){
   const btn = $("do-ship");
   if(btn) btn.disabled = true;
@@ -3360,8 +3405,7 @@ async function shipTickets(){
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify({waves: shipPreflight().mode === "shipped"
-        ? "shipped" : Math.max(1, STATE.horizon || 1), actor:"dashboard"})
+      body: JSON.stringify(shipBody())
     });
     const text = await res.text();
     let payload = null;
@@ -3403,7 +3447,7 @@ function watchEmission(){
         STATE.shipFlash = d.error
           ? {kind:"bad", text:"The run stopped — " + d.error}
           : c
-            ? {kind:(c.failed || c.unwired || c.dead) ? "bad" : "ok",
+            ? {kind:(c.failed || c.unwired || c.dead || c.unlabelled) ? "bad" : "ok",
                text:"Shipped " + c.created + " issue" + (c.created===1?"":"s") +
                     (c.edited ? ", edited " + c.edited : "") +
                     (c.withdrawn ? ", withdrew " + c.withdrawn : "") +
@@ -3414,7 +3458,8 @@ function watchEmission(){
                     (c.unwired ? ". " + c.unwired + " order" +
                       (c.unwired===1?"":"s") + " could not be declared" : "") +
                     (c.dead ? ". " + c.dead + " wait" + (c.dead===1?"s":"") +
-                      " on a dead key" : "") + "."}
+                      " on a dead key" : "") +
+                    (c.unlabelled ? ". " + c.unlabelled + " created without labels" : "") + "."}
             : {kind:"bad", text:(d.result && d.result.reason) || "The run did nothing."};
         if(MODE_SHIP()) drawShip();
         // The cut and the graph did not move, but the log did, so re-read
