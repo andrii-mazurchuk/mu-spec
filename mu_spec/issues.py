@@ -44,7 +44,19 @@ KINDS = (ADDITIVE, SEMANTIC)
 OPEN = "open"
 RESOLVED = "resolved"
 ESCALATED = "escalated"
-STATUSES = (OPEN, RESOLVED, ESCALATED)
+# Ruled not a fault, or out of scope. Terminal, and it always says why: an
+# issue dismissed without a reason is indistinguishable from one lost.
+REJECTED = "rejected"
+STATUSES = (OPEN, RESOLVED, ESCALATED, REJECTED)
+
+# Escalated is a middle state -- it hands the issue to a human, whose ruling
+# still has to land somewhere. Resolved and rejected are where it ends.
+TRANSITIONS = {
+    OPEN: (RESOLVED, REJECTED, ESCALATED),
+    ESCALATED: (RESOLVED, REJECTED),
+}
+# Who may be cited by an amendment: anything not yet ended.
+LIVE = tuple(TRANSITIONS)
 
 # A repair can raise its own issues, which can raise their own. Without a cap
 # the system oscillates and nobody notices until it has burned a day. Two
@@ -227,20 +239,50 @@ class IssueLog:
         at: float = 0.0,
         by: str = "unknown",
     ) -> Issue:
-        if status not in (RESOLVED, ESCALATED):
+        if status == REJECTED and not str(note or "").strip():
             raise IssueError(
-                f"closing status must be {RESOLVED!r} or {ESCALATED!r}"
+                "rejecting needs a reason in 'note' -- why this is not a "
+                "fault, or why it is out of scope"
             )
         issue = self.get(issue_id)
         if issue is not None:
-            if issue.status != OPEN:
-                raise IssueError(f"{issue_id} is already {issue.status}")
+            allowed = TRANSITIONS.get(issue.status, ())
+            if status not in allowed:
+                raise IssueError(
+                    f"{issue_id} is {issue.status}; it may move to "
+                    + (" | ".join(allowed) if allowed else "nothing -- that is terminal")
+                    + f", not {status!r}"
+                )
+            # Amendments that cited this issue recorded what they produced;
+            # closing keeps that and adds whatever the closer names.
+            earlier = (issue.resolution or {}).get("produced", [])
             closed = dataclasses.replace(
                 issue,
                 status=status,
-                resolution={"note": note, "produced": list(produced),
+                resolution={"note": note,
+                            "produced": earlier + [p for p in produced if p not in earlier],
                             "at": at, "by": by},
             )
             self._append(closed)
             return closed
         raise IssueError(f"unknown issue {issue_id!r}")
+
+    def record_produced(self, issue_id: str, produced: list[str]) -> None:
+        """Append what an amendment citing this issue created, without
+        closing it -- the fix and its propagation downward are usually
+        several amendments, and the issue must stay citable for all of them.
+
+        ponytail: whole issue per line, same as the inbox; append a delta
+        line if issues.jsonl ever gets slow to read."""
+        issue = self.get(issue_id)
+        if issue is not None:
+            existing = (issue.resolution or {}).get("produced", [])
+            self._append(
+                dataclasses.replace(
+                    issue,
+                    resolution={
+                        **(issue.resolution or {"note": ""}),
+                        "produced": existing + list(produced),
+                    },
+                )
+            )

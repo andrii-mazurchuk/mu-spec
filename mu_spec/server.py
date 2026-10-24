@@ -362,7 +362,7 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "list_issues",
             "The issue queue for a project. Filter by status "
-            "(open/resolved/escalated) or by the slice an issue targets.",
+            "(open/resolved/escalated/rejected) or by the slice an issue targets.",
             "GET",
             "/projects/{project}/issues",
             {"project": s, "status": enum(ISSUE_STATUSES), "slice": s},
@@ -370,13 +370,16 @@ def _tools() -> list[dict[str, Any]]:
         ),
         tool(
             "close_issue",
-            "Close an issue: resolved (with what it produced) or escalated "
-            "(it needs a human). `note` is what the person reading an "
-            "escalation has to go on.",
+            "Move an issue on: resolved (with what it produced), rejected "
+            "(ruled not a fault, or out of scope -- `note` is the reason and "
+            "is required), or escalated (it needs a human). An open issue "
+            "may go to any of the three; an escalated one only to resolved "
+            "or rejected; resolved and rejected are final. `note` is what "
+            "the person reading an escalation has to go on.",
             "POST",
             "/projects/{project}/issues/{iid}/close",
             {"project": s, "iid": s,
-             "status": enum(("resolved", "escalated")),
+             "status": enum(("resolved", "rejected", "escalated")),
              "note": s, "produced": strings},
             ("project", "iid"),
         ),

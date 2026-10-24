@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from mu_spec.graph import Entry, Graph
@@ -8,6 +10,7 @@ from mu_spec.issues import (
     ADDITIVE,
     ESCALATED,
     OPEN,
+    REJECTED,
     RESOLVED,
     SEMANTIC,
     IssueError,
@@ -402,3 +405,72 @@ def test_an_issue_against_a_test_routes_to_its_spec_entrys_slice():
     batches, escalations = route(_manifest(), graph, [issue])
     assert escalations == []
     assert [b.slice for b in batches] == ["payouts"]
+
+
+# -- transitions -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        [RESOLVED],
+        [REJECTED],
+        [ESCALATED],
+        [ESCALATED, RESOLVED],
+        [ESCALATED, REJECTED],
+    ],
+)
+def test_every_allowed_transition(tmp_path, path):
+    log = _log(tmp_path)
+    log.raise_issue(_body(), "listings", _clock)
+    for status in path:
+        log.close("iss-0001", status, "because", at=float(len(status)), by="x")
+    assert log.get("iss-0001").status == path[-1]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        [RESOLVED, RESOLVED],
+        [RESOLVED, REJECTED],
+        [RESOLVED, ESCALATED],
+        [REJECTED, RESOLVED],
+        [REJECTED, REJECTED],
+        [REJECTED, ESCALATED],
+        [ESCALATED, ESCALATED],
+        [OPEN],
+        ["closed"],
+    ],
+)
+def test_every_other_transition_is_refused(tmp_path, path):
+    log = _log(tmp_path)
+    log.raise_issue(_body(), "listings", _clock)
+    for status in path[:-1]:
+        log.close("iss-0001", status, "because")
+    with pytest.raises(IssueError):
+        log.close("iss-0001", path[-1], "because")
+
+
+@pytest.mark.parametrize("note", ["", "   "])
+def test_rejecting_needs_a_reason(tmp_path, note):
+    log = _log(tmp_path)
+    log.raise_issue(_body(), "listings", _clock)
+    with pytest.raises(IssueError, match="reason"):
+        log.close("iss-0001", REJECTED, note)
+    assert log.get("iss-0001").status == OPEN
+
+
+def test_each_transition_appends_a_line_with_at_and_by(tmp_path):
+    log = _log(tmp_path)
+    log.raise_issue(_body(), "listings", _clock)
+    log.close("iss-0001", ESCALATED, "needs a human", at=1.0, by="router")
+    log.close("iss-0001", RESOLVED, "ruled: fix it", ["S-09"], at=2.0, by="andrey")
+    lines = [
+        json.loads(l)
+        for l in (tmp_path / "issues.jsonl").read_text().splitlines()
+    ]
+    assert [l["status"] for l in lines] == [OPEN, ESCALATED, RESOLVED]
+    assert [(l["resolution"]["at"], l["resolution"]["by"]) for l in lines[1:]] == [
+        (1.0, "router"),
+        (2.0, "andrey"),
+    ]

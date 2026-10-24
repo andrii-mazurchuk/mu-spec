@@ -2795,7 +2795,7 @@ function drawPending(){
 function drawQueues(){
   const reqs=STATE.requests, iss=STATE.issues;
   const open=reqs.filter(r=>r.status==="pending").length;
-  const live=iss.filter(i=>i.status!=="resolved").length;
+  const live=iss.filter(i=>i.status==="open"||i.status==="escalated").length;
   const f=STATE.flash;
   $("queues").innerHTML= (f?`<div class="flash ${f.kind}">${esc(f.text)}`+
       `<button id="flash-x" title="dismiss">&times;</button></div>`:"")+
@@ -2818,7 +2818,7 @@ function drawQueues(){
      <td><button class="pill" data-goto="${esc(i.target)}">${esc(i.target)}</button></td>
      <td>${esc(i.target_slice||"—")}</td><td>${esc(i.kind)}</td><td>${esc(i.claim)}</td>
      <td>${esc(i.round==null?"":i.round)}</td>
-     <td><span class="flag ${i.status==="escalated"?"down":i.status==="resolved"?"ok":"warn"}">${
+     <td><span class="flag ${i.status==="escalated"?"down":i.status==="open"?"warn":"ok"}">${
        esc(i.status)}</span></td></tr>`).join("")+`</table>`
    :`<p class="muted">No issues raised.</p>`)+
   `<p class="muted" style="max-width:64ch">A <b>semantic</b> issue invalidates the entries that
