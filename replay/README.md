@@ -93,7 +93,11 @@ by `body.legacy_imports`, as M2 is; `M5` is `same_wave_edge`, the only row that
 reads the step before (the edge itself moves the slice, so the after state
 alone never shows it); `M6` `unknown_member`, `M7` `sweep_collision` and `M10`
 `no_module` are the gate report's own kinds. (`M9` was built and dropped
-10-24: 0/2 cases, it never fired -- DARK's B/A bodies hold no code names.)
+10-24: 0/2 cases, it never fired -- DARK's B/A bodies hold no code names.
+`M22`, a test building a type declared outside its anchor and `Exercises:`
+line, was built and dropped 10-24: 0/3 muspec-spec-14 cases, 37 tests flagged
+at cut 45 (the peak), 1 in 5 sampled genuine -- the broken fixtures were in
+test helper code, which no T body describes.)
 Every one is a regex approximation; a missed case whose fault is only in the
 prose's meaning (S-195's unnamed prediction type, S-251's missing velocity,
 A-145's uncalled `tune()`) is one no mechanical row can see.
