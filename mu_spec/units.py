@@ -487,6 +487,51 @@ def _build(
     return units
 
 
+# A dotted module as a scenario names one: `dark.health.preconditions`.
+_DOTTED = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b")
+
+
+def test_uses(units, graph: Graph) -> dict[str, tuple[str, ...]]:
+    """Test unit key -> the implementation units owning what its scenarios
+    name: a module path, a dotted module (`a.b` as `a/b.py` or
+    `a/b/__init__.py`, and each shorter prefix), or an `Exercises:` id. Read
+    off the bodies, never the repository -- a test that imports a module
+    whose owner has no issue stays red on main (M29, DARK S-229, S-134). A
+    name no unit owns is not a use."""
+    from mu_spec.body import parse as facts_of
+    by_path: dict[str, set[str]] = {}
+    by_id: dict[str, str] = {}
+    for unit in units:
+        if unit.tests:
+            continue
+        for path in unit.modules:
+            by_path.setdefault(path, set()).add(unit.key)
+        for ident in unit.entries:
+            by_id[str(ident)] = unit.key
+    out: dict[str, tuple[str, ...]] = {}
+    for unit in units:
+        if not unit.tests:
+            continue
+        found: set[str] = set()
+        for ident in unit.entries:
+            entry = graph.get(ident)
+            if entry is None:
+                continue
+            text = "\n".join((entry.title or "", entry.purpose or "", entry.body or ""))
+            facts = facts_of(entry.body or "", TEST)
+            for path in facts.path_mentions:
+                found |= by_path.get(path, set())
+            for dotted in _DOTTED.findall(text):
+                parts = dotted.split(".")
+                for n in range(len(parts), 0, -1):
+                    stem = "/".join(parts[:n])
+                    found |= by_path.get(stem + ".py", set()) | by_path.get(stem + "/__init__.py", set())
+            found |= {by_id[i] for i in facts.exercises if i in by_id}
+        if found:
+            out[unit.key] = tuple(sorted(found))
+    return out
+
+
 def overlap(units: list[Unit]) -> dict[str, tuple[str, ...]]:
     """Which units share a module, and so may not be dispatched at once.
 

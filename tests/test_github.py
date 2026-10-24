@@ -125,6 +125,19 @@ def test_a_created_issue_says_which_labels_github_kept():
     assert gh.create_issue(REPO, "t", "b").labels is None
 
 
+def test_whether_the_token_can_label_is_read_off_the_repository():
+    """M30: labels on a new issue need push access, so a press can know before
+    it writes whether every label would be dropped. One GET of the repo."""
+    gh, rec, slept = client(FakeResponse({"permissions": {"push": False, "pull": True}}, 200))
+    assert gh.can_label(REPO) is False
+    assert rec.requests[0].full_url == f"https://api.github.com/repos/{REPO}"
+    assert rec.requests[0].get_method() == "GET" and slept == []
+    gh, _, _ = client(FakeResponse({"permissions": {"push": True}}, 200))
+    assert gh.can_label(REPO) is True
+    gh, _, _ = client(FakeResponse({"name": "dark"}, 200))
+    assert gh.can_label(REPO) is None, "a response that does not say is not a no"
+
+
 def test_every_request_carries_the_headers_github_requires():
     """`X-GitHub-Api-Version` pins the shape this client was written against --
     without it a future default could change a field under us. A `User-Agent`

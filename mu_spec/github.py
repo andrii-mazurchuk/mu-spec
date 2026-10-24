@@ -224,6 +224,16 @@ class GitHub:
             }
         return self._identity
 
+    def can_label(self, repo: str) -> "bool | None":
+        """Whether this token may set labels on a new issue: push access, as
+        the repository reports it for the token (M30). None when the response
+        does not say -- not knowing is not a no."""
+        raw = self._get(f"/repos/{repo}")
+        permissions = raw.get("permissions") if isinstance(raw, dict) else None
+        if not isinstance(permissions, dict) or "push" not in permissions:
+            return None
+        return bool(permissions["push"])
+
     def issue_state(self, repo: str, number: int) -> dict:
         """`{"state", "state_reason"}` for one issue.
 
