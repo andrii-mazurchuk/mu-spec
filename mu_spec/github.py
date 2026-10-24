@@ -341,6 +341,39 @@ class GitHub:
             None,
         )
 
+    def add_sub_issue(self, repo: str, parent_number: int, sub_issue_id: int) -> None:
+        """Attach the issue with `sub_issue_id` under `parent_number`.
+
+        The dependency asymmetry again: the parent's NUMBER in the path, the
+        child's database ID in the body. A 422 for a link GitHub already holds
+        is the caller's to read as done.
+
+        UNVERIFIED: whether attaching under a CLOSED parent reopens it. The
+        caller reads the parent back afterwards rather than trusting either
+        answer."""
+        self._post(f"/repos/{repo}/issues/{int(parent_number)}/sub_issues",
+                   {"sub_issue_id": int(sub_issue_id)})
+
+    def sub_issues(self, repo: str, number: int) -> list[dict]:
+        """The sub-issues GitHub holds under `number`: id, number, state."""
+        out: list[dict] = []
+        page = 1
+        while True:
+            raw = self._get(f"/repos/{repo}/issues/{int(number)}/sub_issues"
+                            f"?per_page=100&page={page}")
+            items = raw.get("data") if isinstance(raw.get("data"), list) else []
+            out.extend({"id": int(item.get("id") or 0), "number": int(item.get("number") or 0),
+                        "state": str(item.get("state") or "")}
+                       for item in items if isinstance(item, dict))
+            if len(items) < 100:
+                return out
+            page += 1
+
+    def remove_sub_issue(self, repo: str, parent_number: int, sub_issue_id: int) -> None:
+        """Detach a sub-issue. Singular `sub_issue`, and the id in the body."""
+        self._request("DELETE", f"/repos/{repo}/issues/{int(parent_number)}/sub_issue",
+                      {"sub_issue_id": int(sub_issue_id)})
+
     def close_issue(self, repo: str, number: int, reason: str = "not_planned") -> None:
         """Close one issue, as `not_planned` rather than `completed`.
 

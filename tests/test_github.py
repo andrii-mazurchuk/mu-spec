@@ -527,3 +527,51 @@ def test_an_edit_without_labels_does_not_send_them():
     gh, rec, _ = client(FakeResponse({}, status=200))
     gh.update_issue(REPO, 12, "t", "b")
     assert rec.bodies[0] == {"title": "t", "body": "b"}
+
+
+# -- sub-issues ----------------------------------------------------------------
+
+
+def test_a_sub_issue_is_attached_by_the_parents_number_and_the_childs_id():
+    """The same asymmetry as a dependency: the parent's NUMBER in the path,
+    the sub-issue's database ID in the body."""
+    gh, rec, _ = client(FakeResponse({}, status=201))
+    gh.add_sub_issue(REPO, parent_number=10, sub_issue_id=3141592653)
+    request = rec.requests[0]
+    assert request.get_method() == "POST"
+    assert request.full_url == f"https://api.github.com/repos/{REPO}/issues/10/sub_issues"
+    assert rec.bodies[0] == {"sub_issue_id": 3141592653}
+
+
+def test_attaching_a_sub_issue_is_a_paced_write():
+    gh, _, slept = client(FakeResponse({}, status=201), pace=0.5)
+    gh.add_sub_issue(REPO, 10, 1)
+    assert slept == [0.5]
+
+
+def test_a_refused_attach_carries_what_github_said():
+    body = json.dumps({"message": "Validation Failed",
+                       "errors": [{"message": "Issue may not contain duplicate sub-issues"}]})
+    error = http_error(422)
+    error.read = lambda: body.encode()
+    gh, _, _ = client(error)
+    with pytest.raises(GitHubError) as caught:
+        gh.add_sub_issue(REPO, 10, 1)
+    assert caught.value.status == 422 and "duplicate" in str(caught.value)
+
+
+def test_sub_issues_lists_the_children_github_holds():
+    page = [{"id": 1001, "number": 11, "state": "open", "labels": []}]
+    gh, rec, _ = client(FakeResponse({"data": page}, status=200))
+    assert gh.sub_issues(REPO, 10) == [{"id": 1001, "number": 11, "state": "open"}]
+    assert rec.requests[0].get_method() == "GET"
+    assert f"/repos/{REPO}/issues/10/sub_issues" in rec.requests[0].full_url
+
+
+def test_removing_a_sub_issue_is_a_delete_on_the_singular_path_with_the_id_in_the_body():
+    gh, rec, _ = client(FakeResponse({}, status=200))
+    gh.remove_sub_issue(REPO, 10, 3141592653)
+    request = rec.requests[0]
+    assert request.get_method() == "DELETE"
+    assert request.full_url.endswith(f"/repos/{REPO}/issues/10/sub_issue")
+    assert rec.bodies[0] == {"sub_issue_id": 3141592653}
