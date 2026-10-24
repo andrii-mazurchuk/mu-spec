@@ -37,6 +37,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from mu_spec.identifiers import merge_ids
+
 ADDITIVE = "additive"
 SEMANTIC = "semantic"
 KINDS = (ADDITIVE, SEMANTIC)
@@ -260,7 +262,7 @@ class IssueLog:
                 issue,
                 status=status,
                 resolution={"note": note,
-                            "produced": earlier + [p for p in produced if p not in earlier],
+                            "produced": merge_ids(earlier, list(produced)),
                             "at": at, "by": by},
             )
             self._append(closed)
@@ -282,7 +284,7 @@ class IssueLog:
                     issue,
                     resolution={
                         **(issue.resolution or {"note": ""}),
-                        "produced": existing + list(produced),
+                        "produced": merge_ids(existing, list(produced)),
                     },
                 )
             )

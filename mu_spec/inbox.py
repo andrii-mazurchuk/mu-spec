@@ -37,7 +37,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from mu_spec.identifiers import BEHAVIOUR, INTENT, TEST
+from mu_spec.identifiers import BEHAVIOUR, INTENT, TEST, merge_ids
 
 INBOX_FILE = "inbox.jsonl"
 
@@ -268,10 +268,14 @@ class Inbox:
         if message is not None:
             if message.status != PENDING:
                 raise InboxError(f"{message_id} is already {message.status}")
+            # Amendments citing the message already recorded what they made;
+            # a resolve adds to that, never replaces it with a shorter list.
+            earlier = (message.resolution or {}).get("produced", [])
             resolved = dataclasses.replace(
                 message,
                 status=status,
-                resolution={"note": note, "produced": list(produced),
+                resolution={"note": note,
+                            "produced": merge_ids(earlier, list(produced)),
                             "at": at, "by": by},
             )
             self._append(resolved)
@@ -294,7 +298,7 @@ class Inbox:
                     message,
                     resolution={
                         **(message.resolution or {"note": ""}),
-                        "produced": existing + list(produced),
+                        "produced": merge_ids(existing, list(produced)),
                     },
                 )
             )

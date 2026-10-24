@@ -155,6 +155,23 @@ def parse(text: str) -> Identifier:
     return Identifier(layer=match.group(1), number=int(match.group(2)))
 
 
+def merge_ids(earlier: list[str], new: list[str]) -> list[str]:
+    """`earlier` then `new`, each identifier once, in its canonical spelling.
+
+    A recorded list (what an amendment produced) is fed from several calls
+    that may spell one id two ways; a plain string compare kept both. Text
+    that is not an identifier is kept as given, once."""
+    out: list[str] = []
+    for item in [*earlier, *new]:
+        try:
+            item = str(parse(item))
+        except InvalidIdentifier:
+            pass
+        if item not in out:
+            out.append(item)
+    return out
+
+
 def derives_legally(source: Identifier, target: Identifier) -> bool:
     """True when `source` may declare `target` as a parent: `target` must sit
     exactly one layer closer to intent.

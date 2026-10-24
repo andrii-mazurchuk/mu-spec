@@ -118,6 +118,17 @@ def test_closing_an_issue_records_what_it_produced(tmp_path):
     assert closed.resolution["produced"] == ["S-09"]
 
 
+def test_one_id_in_two_spellings_is_recorded_once(tmp_path):
+    """10-24 migration: an amendment recorded S-06, the close passed S·06,
+    and the issue kept both. One identifier, one entry -- canonical spelling."""
+    log = _log(tmp_path)
+    log.raise_issue(_body(), "listings", _clock)
+    log.record_produced("iss-0001", ["S-06"])
+    log.record_produced("iss-0001", ["S·06", "S-07"])
+    closed = log.close("iss-0001", RESOLVED, "restated", ["S·06", "S-07"])
+    assert closed.resolution["produced"] == ["S-06", "S-07"]
+
+
 def test_closing_twice_is_refused(tmp_path):
     log = _log(tmp_path)
     log.raise_issue(_body(), "listings", _clock)
