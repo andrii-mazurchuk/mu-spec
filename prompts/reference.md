@@ -15,14 +15,13 @@ that fills the graph in -- is `GET /prompts/wayfinding`.
  "title": "capture/store.py: an append-only store whose every read names an account",
  "derives_from": ["A-04"],
  "depends_on":   ["S-02"],
- "emits_into":   ["S-31"],
  "body": "Module capture/store.py. CapturedRecord is frozen ..."}
 ```
 
 - **`layer`** is one of `I`, `B`, `A`, `S`, or `T`. You never choose the
   identifier; this unit allocates it. `T` is a **test**: one scenario,
-  deriving from exactly one spec entry, carrying no horizontal edge of
-  either kind and no slice. It may also carry a free-text `purpose` for
+  deriving from exactly one spec entry, carrying no horizontal edge and no
+  slice. It may also carry a free-text `purpose` for
   whoever writes the test; nothing mechanical branches on it.
 - **`title`** is one line, and it is what everyone reads in the spine
   forever. Write it as a claim, not a label: `A person can see where one
@@ -30,17 +29,18 @@ that fills the graph in -- is `GET /prompts/wayfinding`.
 - **`body`** carries the substance, and at spec level it carries enough to
   implement and test from.
 
-Three kinds of edge, answering three different questions:
+Two kinds of edge, answering two different questions:
 
 | edge | means | direction |
 |---|---|---|
 | `derives_from` | what this **serves** | vertical, exactly one layer up |
 | `depends_on` | what this **needs** | horizontal, same layer |
-| `emits_into` | what this **publishes** | horizontal, into a cross-cutting slice only |
 
 `depends_on` is the only edge that imposes an order, which is why the wave
-schedule is computed from it and from nothing else. An emission imposes no
-order at all: nothing comes back, so nothing waits.
+schedule is computed from it and from nothing else. `emits_into` is refused:
+the cross-cutting slice type it served was removed (D6, 10-24). An ambient
+concern -- audit, observability -- is a foundational slice, reached with
+`depends_on` like any other.
 
 ---
 
@@ -80,7 +80,7 @@ naming something that does not exist is caught — but a guess that lands on a
 real identifier belonging to a *different* entry is a well-formed edge saying
 something false, and there is no gate that can see it.
 
-Placeholders work in `depends_on` and `emits_into`. Not in `derives_from`:
+Placeholders work in `depends_on`. Not in `derives_from`:
 that points one layer up, and an amendment writes one layer, so an entry in
 this batch is never a legal parent.
 
@@ -117,7 +117,7 @@ something retired or out of layer.
 Two owners means two writers may edit it, both do, neither knows, and the
 audit passes for both.
 
-**A slice cycle**, or a cross-cutting slice reaching into a feature slice.
+**A slice cycle.**
 
 **Architecture or spec with no slice.** Both are derived after slicing, so
 an owner always exists. Behaviour is the exception: slices are cut *after*
@@ -203,7 +203,7 @@ probably undocumented, and that is an issue against the spec, not a scenario.
 
 ### A scenario carries no horizontal edges
 
-No `depends_on`, no `emits_into`, and both are refused. One scenario needs
+No `depends_on`, and it is refused. One scenario needs
 nothing from another. This is also what leaves a work unit holding test files
 with no outbound edge, so it cannot sit in a cycle and the ordering that puts
 implementation after tests can never deadlock. It does not put such a unit at
@@ -272,7 +272,7 @@ Read `GET /projects/{project}/slice-context?slice=…` before writing: its
 ## Reading
 
 **Load the spine first.** `GET /projects/{project}/spine` returns
-identifier, one-line title and all three edge lists, with no bodies. Filter
+identifier, one-line title and both edge lists, with no bodies. Filter
 it with `?layer=B`. Then fetch only the bodies you actually need with
 `GET /projects/{project}/entries/{id}`.
 
@@ -290,8 +290,8 @@ Identifiers are pure ASCII: a layer letter, a hyphen, a number — `S-31`. A uni
   half-carried. Unsound **blocks**: writes are refused and no work unit is
   issued.
 
-  Two shapes of unsound, and they want different responses. A `orphan`,
-  `bad_dependency` or `bad_emission` is **malformed** -- fix the graph, do
+  Two shapes of unsound, and they want different responses. An `orphan` or
+  `bad_dependency` is **malformed** -- fix the graph, do
   not work around it. A **`stranded`** entry is well formed and merely
   behind: a parent was retired and the finding names its successor. The
   remedy is to re-derive, not to repair.
@@ -312,11 +312,6 @@ Identifiers are pure ASCII: a layer letter, a hyphen, a number — `S-31`. A uni
   the contract cannot also rewrite the tests. Expect two requests for one
   correction, and expect the graph to stay unsound in between.
 
-  A `stale_emission` does **not** block. An emission consumes nothing, so a
-  successor on the other end changes nothing the emitter relied on -- and
-  an emitter that needs its target's shape has declared a dependency by
-  mistake. Reported so the drift is visible; refusing it would be the
-  dependency rule applied to an edge that is not one.
 - **Complete** -- knowledge has reached spec on every branch. Incomplete
   **never blocks**. It is the to-do list, and `unserved` findings are that
   list rather than defects.

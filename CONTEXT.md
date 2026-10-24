@@ -4,7 +4,7 @@ Inherits: [holonic node system](../../CONTEXT.md). Terms defined there are used 
 defined there and not restated here.
 
 This unit owns the **specification pipeline** vocabulary: layer, entry, identifier,
-derives-from, slice, spine, cross-cutting, admission gate, judgement gate, conflict
+derives-from, slice, spine, admission gate, judgement gate, conflict
 gate, amendment, upward reconciliation, blast radius, write set, read set.
 
 None of it is glossarised yet, but it is the most fully reasoned vocabulary in the

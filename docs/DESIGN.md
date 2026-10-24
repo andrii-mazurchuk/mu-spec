@@ -76,11 +76,9 @@ Every entry at every layer carries:
 - **Derives-from** — *vertical*, exactly one layer up. What this entry serves.
 - **Depends-on** — *horizontal*, within its own layer. What this entry needs, and the
   only edge that imposes an order.
-- **Emits-into** — *horizontal*, and only into a cross-cutting slice. What this entry
-  publishes. Fire-and-forget: nothing is consumed back, so it imposes no order.
 - **Body** — the content, in that layer's idiom.
 
-The three edge lists answer different questions, and keeping them apart is what makes
+The two edge lists answer different questions, and keeping them apart is what makes
 slice dependency computable instead of guesswork.
 
 Rules:
@@ -132,7 +130,7 @@ match the org's mental model survive. Clever technical slices get abandoned.
    authored beside them. Two statements of the same fact drift, and the one a human
    maintains is the one that goes stale.
 4. **Ubiquity test.** If everything touches it and it owns almost no behaviour of its
-   own, it is not a slice. It is cross-cutting — see §4.5 for the deciding test.
+   own, it is a foundational slice others depend on — see §4.5.
 5. **Size test.** A basket with forty behaviours and no internal structure is probably
    two slices.
 
@@ -141,65 +139,18 @@ These run pairwise across all candidate baskets before anything is proposed.
 Do **not** slice by technical layer — frontend, backend, database. That is the classic
 failure. Slice where changes land together.
 
-### 4.5 Cross-cutting slices
+### 4.5 Ambient concerns are foundational slices
 
-Cross-cutting is a **slice type, not a shared file and not a reserved name**. Audit
-logging deserves its own architecture and its own specs — it is as complex as any slice
-and needs its own column to work in. There can be several, each with a full column at
-every layer, stored exactly like everything else.
+An ambient concern — audit logging, observability, policy — is an ordinary slice that
+others reach with `depends_on`, which makes it foundational: topology puts it in an early
+wave. A separate cross-cutting type, reached by a third edge kind (`emits_into`), was
+removed 10-24 per D6: across every project it showed no benefit, and DARK's one
+misclassified concern cost ~170 supersessions to split. History written under it stays
+readable — stored `emits_into` edges and `cross_cutting` slice types load and are
+ignored; new ones are refused.
 
-**The deciding test.** Both must pass:
-
-1. **Does the caller branch on what comes back?** If a slice calls it and then changes
-   what it does based on the answer, that answer is part of the caller's behaviour, and
-   this is an ordinary dependency.
-2. **Does its contract name a domain object someone else owns?** If it takes a user, an
-   invoice, a listing, it is a dependency, not cross-cutting.
-
-Tiebreak: would a slice added next year invoke this by default, without anyone deciding?
-
-The surviving category is narrow — roughly observability and ambient policy. Narrow is
-the correct outcome. Notifications fails test 2 (it takes a recipient, and accounts owns
-users). A permission check fails test 1 (it returns allow/deny and the caller branches).
-Both are slices.
-
-**Fan-in is not the criterion.** Many slices depending on one slice is a foundational
-slice, not a cross-cutting one — `listings` is depended on by everything and is
-unambiguously a slice. Fundamentality is topological; cross-cutting is semantic.
-
-**What the type actually changes** is whose context the slice lands in. A cross-cutting
-slice's spec spine is included in *every* other slice's assembled context, whether or not
-anything depends on it. That is the whole operational difference: its behaviour ranges
-over the other slices rather than naming a subject of its own, so requiring n identical
-declarations would fill the dependency graph with edges that are always true and carry
-no signal.
-
-Read-only-from-another-slice is **not** a cross-cutting rule — it is universal. One
-entry belongs to exactly one slice, and slices define write ownership, so no slice may
-ever write into another.
-
-**The edges that are legal.** An edge *into* a cross-cutting slice is an `emits_into`,
-never a `depends_on` — depending on something means branching on what it returns, and a
-concern whose answer you branch on fails the first test. The two claims cannot both
-hold, so the unit refuses the edge rather than leaving it to convention. And a
-cross-cutting slice holds **no outbound dependency into a feature slice**: if it has to
-ask, it needs to know its caller.
-
-Those two rules together are what makes the classification enforceable rather than
-declarative, and they resolve the case that looks like a fourth kind of connection —
-two slices leaning on a concern while the concern reaches back at them. That is not a
-new shape, it is a cycle. Flip the concern's outbound dependency into an inbound
-emission and it has no outbound edges left, so the cycle cannot exist.
-
-**Derivation order is not build order.** An emission imposes no ordering on
-*derivation* — which is what lets a cross-cutting slice be derived before everything
-that emits into it, and what makes a cycle involving one impossible to express. At
-*build* time the relation runs the other way: the emitter's code calls the concern's
-code, so that symbol has to exist. The two orders differ, and the difference is
-invisible only while every cross-cutting work unit sits at wave 0 — which is not
-guaranteed, because a cross-cutting slice may depend on another cross-cutting slice, and
-`depends_on` within one is unconstrained. Order is computed from `depends_on` alone; the
-emission case is checked and reported, never gated.
+No slice ever writes into another: one entry belongs to exactly one slice, and slices
+define write ownership.
 
 ### 4.6 Splitting rule
 
@@ -409,7 +360,7 @@ Refused at declaration. There is deliberately **no `kind` field** on a module: w
 module is follows from the identifiers it claims, and a field would be the second
 statement of exactly that.
 
-**A test entry carries no `depends_on` and no `emits_into`.** One scenario needs nothing
+**A test entry carries no `depends_on`.** One scenario needs nothing
 from another scenario. This is not tidiness — with no outbound edge to have, a test unit
 has no way back out of it, so it cannot sit inside a cycle and the ordering rule in §4b.3
 can never deadlock against a dependency. Arranged by the edge rules, not by a scheduler.
@@ -545,7 +496,7 @@ behaviour/
   listings.jsonl
   discovery.jsonl
   messaging.jsonl
-  audit.jsonl                a cross-cutting slice is filed like any other
+  audit.jsonl                an ambient concern is filed like any other slice
 architecture/
   listings.jsonl  …
 spec/
@@ -578,8 +529,7 @@ one thing this whole design cannot tolerate. Nothing outside this unit reads the
 anyway — retrieval arrives over the API.
 
 Typical session load: manifest, all spines, target column's full entries, the spines of
-the columns it depends on, and every cross-cutting spine. Full bodies only for the blast
-radius.
+the columns it depends on. Full bodies only for the blast radius.
 
 **No vector search, no embeddings.** Semantic retrieval is non-deterministic: same
 question, different chunks, different day. The edge graph is already a precise
@@ -603,11 +553,8 @@ split along one axis that matters: **sound** blocks, **complete** only reports.
 package is issued:*
 - Does every entry below trace to something exactly one layer above? (orphans)
 - Does every same-layer edge point at a live entry in the same layer? (bad dependencies)
-- Is every edge the right *kind* for what it points at — emissions into cross-cutting
-  slices, dependencies into everything else? (bad emissions)
 - Is every derives-from edge pointing at a parent that is still live? (**stranded**)
 - Is the projected slice dependency graph acyclic? (bad slicing — see below)
-- Does any cross-cutting slice depend on a feature slice? (misclassification)
 - Does any entry belong to more than one slice? (overlapping ownership)
 - Does every entry a spec's `Imports:` line names have a `depends_on` edge from it?
   (bad import)
@@ -636,21 +583,6 @@ radius exists to prevent. But a reader needs to tell "a correction landed and ha
 been carried down yet", which is the ordinary course of correcting anything, from "this
 graph has a reference that never made sense". Filing both as `orphan` threw away a
 distinction the graph already held.
-
-**A retired *emission* target does not block, and this is the one place the emission
-rule parts company with the dependency rule.** A dependency on a retired entry blocks
-because the dependent **consumed** a meaning that has since moved. An emission consumes
-nothing — that is the whole definition of the edge, and it is why an emission imposes no
-order and why a concern is derivable before everything that emits into it. If nothing
-came back, nothing moved for the emitter.
-
-The test that settles it: **an emitter that needs to know its target's shape has
-declared the wrong edge kind.** Needing what is on the other end is what makes something
-a dependency. So either the emission is true and the supersession cannot touch it, or the
-edge was mislabelled and the repair is the edge rather than the gate. Refusing here was
-the dependency rule inherited rather than argued for emissions. It is reported as
-`stale_emission` and never refused. An emission into a target that never existed is a
-dangling edge and still blocks — stale is not broken.
 
 **A slice cycle is not a scheduling problem.** The entry graph can never cycle —
 `derives_from` runs strictly one layer up and `depends_on` strictly within a layer — so
@@ -690,10 +622,6 @@ by hand:
   nothing to lock.
 - **Every earlier wave is complete before the next begins**, so a wave-N agent reads its
   dependencies as frozen artifacts. No coordination, no consistency problem.
-
-A cross-cutting slice lands in **wave 0 by construction** — the edge rules leave it no
-outbound dependency to have, so it has no path to anything. Nothing arranges this, which
-is a useful sign the edge rules are doing real work.
 
 **Diagnostics.** Every wave one slice wide means the graph is a chain and nothing can be
 done in parallel — the slices are too coupled. Reported, never acted on.
@@ -914,7 +842,7 @@ worth speaking of, no architecture, no history. Two signals, and that is genuine
   same thing. The strongest signal available, and free, because the edge is already
   there.
 - **Spread** — a parent whose children scatter widely is either constraint-shaped
-  ("every action must be auditable", a cross-cutting tell) or evidence the cut runs
+  ("every action must be auditable") or evidence the cut runs
   across the grain of intent. Two opposite readings from one number, which is exactly why
   it is reported for an agent to argue from rather than acted on.
 
@@ -926,9 +854,6 @@ edges that stay inside it), coupling, fan-in and fan-out asymmetry, wave shape, 
 package ratio. Real numbers, and they arrive incrementally — cross-slice edges appearing
 at architecture that nobody predicted at behaviour is an early warning, and it lands
 while a split is still cheap. Splits are always available; merges never are.
-
-Emissions are excluded from coupling. They impose no order and cross into a concern by
-design, so counting them would penalise exactly what the edge exists to make cheap.
 
 **Retrospective, from history.** Change locality, the correction distribution, issue-pair
 density, escalation rate, repair rounds used.
@@ -1081,8 +1006,8 @@ anything that exists.
 4. Reconciliation runs upward before propagation runs downward.
 5. Amendments are append-only; identifiers are permanent.
 6. Slices are vertical and persist unchanged to code. Slice-level dependency is
-   projected from the entries' own edges, never authored. Cross-cutting is a slice
-   type defined by legal edges and by landing in everyone's context — not by fan-in.
+   projected from the entries' own edges, never authored. An ambient concern is a
+   foundational slice, reached with `depends_on` like any other (D6, 10-24).
 7. Retrieval is graph traversal, not similarity search.
 8. The agent must declare what it could not derive.
 9. Spec is the source of truth for planning; code is the source of truth for audit.

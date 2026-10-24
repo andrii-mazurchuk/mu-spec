@@ -31,8 +31,7 @@ architecture, and this section is only the orientation.
 
 Five layers — intent, behaviour, architecture, implementation spec, code —
 each entry carrying an identifier, a derives-from list (vertical, exactly one
-layer up), a depends-on list (horizontal, within its layer), an emits-into
-list (horizontal, only into a cross-cutting slice), and a body.
+layer up), a depends-on list (horizontal, within its layer), and a body.
 Those structural fields turn a pile of records into a directed graph, and that
 graph is the entire point: it makes the blast radius of any change
 mechanically computable, so human review can be scoped to the radius instead
@@ -58,7 +57,7 @@ refused to build the one thing the unit exists for.
 |---|---|
 | Storing entries; enforcing identifier permanence and append-only history | Authoring entry bodies |
 | Spine generation; retrieval of bodies by identifier | Deciding which entries a task needs |
-| Admission gates: orphans, broken same-layer edges, slice cycles, cross-cutting reaching into a feature slice, unserved requirements | Judgement gates: flagging what could not be derived |
+| Admission gates: orphans, broken same-layer edges, slice cycles, unserved requirements | Judgement gates: flagging what could not be derived |
 | Blast radius; spec-diff → write set / read set; auditing a diff against the declared write set | Classifying a correction to its layer |
 | Wave assignment: the order slices may be worked in, from the projected graph | Deciding a slice is worth working at all |
 | The issue queue: storing it, grouping it by target slice, computing each batch's re-run scope, escalating what is not a repair | Whether an issue is additive or semantic, and what the actual fix is |
@@ -105,12 +104,7 @@ is an error the caller sees, not a warning in a log.
   edited in place; history is what makes the pipeline auditable.
 - **Slices split, never merge.** Merging destroys identifier locality.
 - **No slice ever writes into another.** One entry belongs to exactly one
-  slice, and slices define write ownership. This is universal, not a
-  cross-cutting rule.
-- **Cross-cutting is a slice type, decided by two tests** — does the caller
-  branch on what comes back, and does the contract name a domain object
-  someone else owns. Both must pass. Fan-in is never the criterion: a slice
-  everything depends on is a foundational slice, not a cross-cutting one.
+  slice, and slices define write ownership.
 - **Slice dependency is projected from entry edges, never authored.** There is
   deliberately no field to declare it in; two statements of the same fact
   drift, and the authored one goes stale.
@@ -124,13 +118,6 @@ is an error the caller sees, not a warning in a log.
   pipeline to another is an issue filed against the target *entry*, and the
   raiser proceeds on a stated assumption. Anything else means blocking or
   nondeterminism, and the audit property is gone either way.
-- **An edge into a cross-cutting slice is `emits_into`, never `depends_on`;
-  a cross-cutting slice has no outbound dependency into a feature slice.**
-  An edge between two entries of the same cross-cutting slice is not *into*
-  it: `depends_on` there is build order, and is admitted.
-  An emission imposes no order, which is what keeps a concern derivable
-  before everything that emits into it -- and what makes a cycle involving
-  one impossible to express.
 
 ### Two decisions already made — do not reopen
 

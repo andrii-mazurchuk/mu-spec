@@ -16,11 +16,10 @@ Full architecture: **`docs/DESIGN.md`**. Read it before writing code here.
 ## The shape
 
 Five layers — intent, behaviour, architecture, implementation spec, code.
-Every entry carries an identifier, a body, and three kinds of edge:
-`derives_from` (vertical, exactly one layer up — what it serves),
+Every entry carries an identifier, a body, and two kinds of edge:
+`derives_from` (vertical, exactly one layer up — what it serves) and
 `depends_on` (horizontal, same layer — what it needs, and the only edge that
-imposes an order), and `emits_into` (horizontal, only into a cross-cutting
-slice — what it publishes, fire-and-forget). Those edges turn a pile of
+imposes an order). Those edges turn a pile of
 records into a directed graph, and the graph is the whole system.
 
 ## Asking it for something
@@ -58,8 +57,8 @@ Every operation is deterministic and derivable from the graph: storage,
 identifier permanence, spine generation, retrieval by identifier, the
 admission gates, blast radius, wave assignment, the issue queue and its
 grouping, spec diffs, and the measurement surface. Anything needing
-judgement — authoring entries, classifying a correction to its layer, ruling
-a slice cross-cutting, calling an issue additive or semantic, grouping
+judgement — authoring entries, classifying a correction to its layer,
+calling an issue additive or semantic, grouping
 behaviours by what they are about, deciding whether a slicing is any good —
 belongs to whoever calls this one.
 
@@ -81,9 +80,6 @@ Enforced, not documented. Violating one is a hard error, not a warning.
 - Slices split, never merge.
 - No slice ever writes into another. One entry belongs to exactly one slice,
   and slices define write ownership.
-- An edge into a cross-cutting slice is `emits_into`, never `depends_on`, and
-  a cross-cutting slice holds no outbound dependency into a feature slice.
-  Within one cross-cutting slice, `depends_on` orders its own entries.
 - Slice dependency is projected from entry edges, never authored.
 - No metric ever gates. Gates block on what is definitionally broken; a
   metric is a proxy for a question nobody can answer yet.
@@ -108,7 +104,7 @@ python walkthrough.py --keep ./demo   # leave the files behind to read
 It calls the request handler directly by default (`--http` binds a real socket
 instead); nothing is stubbed either way, since `handle()` is the whole
 service. It walks intent → behaviour → architecture → spec across two feature
-slices and one cross-cutting one, shows the gates refusing what they should,
+slices and one foundational one, shows the gates refusing what they should,
 computes waves, files issues and routes them, plans spec-to-code, audits a
 diff, issues a work package, splits a slice, scores an alternative slicing
 without creating it, prints the lifecycle, and shows what ended up on disk.
@@ -116,8 +112,8 @@ Read it top to bottom and you can judge whether the shape is right.
 
 ## Status
 
-Working end to end, over HTTP. Storage, the graph and its three edge kinds,
-six admission checks, slice classification, wave assignment, the issue queue
+Working end to end, over HTTP. Storage, the graph and its two edge kinds,
+the admission checks, wave assignment, the issue queue
 and its router, module backlinks, spec-level diffs resolved into write and
 read sets, the git-diff audit, the work package, and the measurement surface
 — change locality, correction distribution, cohesion, the lifecycle log, and
