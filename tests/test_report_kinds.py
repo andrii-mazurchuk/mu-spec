@@ -228,3 +228,54 @@ def test_the_amendment_reports_a_same_wave_edge_and_admits_it(store, prompts):
     assert status == 200 and payload["admitted"] is True
     assert [f["id"] for f in payload["same_wave_edges"]] == ["S-03"]
     assert payload["gates"]["sound"] is True
+
+
+# -- M22 ---------------------------------------------------------------------
+
+
+def _t(ident, body, anchor="S-01"):
+    return _e(ident, body, derives=anchor)
+
+
+_SPECS = [
+    _e("S-01", _code("def resolve(doc): ...")),
+    _e("S-02", _code("@dataclass(frozen=True)\nclass Cell:\n    rates: float")),
+    _e("S-03", _code("class RunConfig:\n    seed: int")),
+]
+
+
+def test_a_scenario_constructing_a_type_its_anchor_does_not_define_is_reported():
+    from mu_spec.gates import UNNAMED_FIXTURE, unnamed_fixtures
+    g = Graph([*_SPECS, _t("T-01", "Build `Cell(rates=1.0)` and resolve it.")])
+    found = unnamed_fixtures(g)
+    assert _ids(found, UNNAMED_FIXTURE) == ["T-01"]
+    assert "`Cell`" in found[0].detail and "S-02" in found[0].detail
+    assert "Exercises:" in found[0].detail
+
+
+def test_a_fixture_described_in_prose_is_reported():
+    from mu_spec.gates import UNNAMED_FIXTURE, unnamed_fixtures
+    g = Graph([*_SPECS, _t("T-01", "Build a run config from the smallest document. "
+                                   "Resolving it is refused.")])
+    found = unnamed_fixtures(g)
+    assert _ids(found, UNNAMED_FIXTURE) == ["T-01"]
+    assert "`RunConfig`" in found[0].detail and "S-03" in found[0].detail
+
+
+def test_exercises_the_anchor_or_no_live_definition_silences_it():
+    from mu_spec.gates import unnamed_fixtures
+    g = Graph([
+        *_SPECS,
+        _t("T-01", "Exercises: S-02\n\nBuild `Cell(rates=1.0)`."),
+        _t("T-02", "Build `Cell(rates=1.0)`.", anchor="S-02"),
+        _t("T-03", "Build `Plant(1)`. A run config is only mentioned."),
+        _t("T-04", "A cell is refused."),
+    ])
+    assert unnamed_fixtures(g) == []
+
+
+def test_unnamed_fixture_is_in_the_report_and_never_blocks():
+    from mu_spec.gates import UNNAMED_FIXTURE, admission_gates
+    assert UNNAMED_FIXTURE not in service._BLOCKING
+    g = Graph([*_SPECS, _t("T-01", "Build `Cell(rates=1.0)`.")])
+    assert UNNAMED_FIXTURE in {f.kind for f in admission_gates(g)}

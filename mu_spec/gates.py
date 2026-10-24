@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import re
 from typing import Callable
 
 from mu_spec import body
@@ -92,6 +93,8 @@ RETIRED_MENTION = "retired_mention"
 UNDEFINED_NAME = "undefined_name"
 # M6: a spec reads a member a producer's class does not declare.
 UNKNOWN_MEMBER = "unknown_member"
+# M22: a test builds a type a spec outside its anchor and Exercises declares.
+UNNAMED_FIXTURE = "unnamed_fixture"
 # M9 (every B/A observable produced by an S) was built and dropped 10-24: on
 # DARK it caught 0 of 2 cases and never fired -- B and A bodies there carry no
 # code names, and the real faults were semantic. That belongs to the audits.
@@ -588,6 +591,59 @@ def unknown_members(graph: Graph) -> list[Finding]:
     return findings
 
 
+_CONSTRUCTED = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*)\(")
+_BUILD = re.compile(r"\b(?:build|construct|create|make)(?:s|ed|ing)?\b|\bbuilt\b|\bmade\b", re.I)
+_SENTENCES = re.compile(r"(?<=[.;:!?])\s+")
+
+
+@functools.lru_cache(maxsize=4096)
+def _phrase(cls: str) -> str:
+    """`RunConfig` -> `run config`, the way prose names the type."""
+    return " ".join(w.lower() for w in re.findall(r"[A-Z][a-z0-9]*", cls))
+
+
+def unnamed_fixtures(graph: Graph) -> list[Finding]:
+    """M22: a test scenario that builds a domain object -- `Cell(...)` in its
+    text, or a sentence that builds "a cell" -- whose class only a spec other
+    than its anchor declares, and which its `Exercises:` line does not name.
+    DARK's fixtures built cells through S-266's `build_cell` from S-256's
+    tests, and broke when S-266 tightened.
+
+    The class is matched to the prose by its words only (`RunConfig` -> "a
+    run config"), a type no live spec declares is never judged, and nothing
+    here orders anything: `Exercises:` is a check, never an edge (D4)."""
+    owners: dict[str, list[str]] = {}
+    for entry in _specs(graph):
+        for name, _, _ in code(entry.body).classes:
+            owners.setdefault(name, []).append(str(entry.id))
+    findings: list[Finding] = []
+    for entry in graph.entries():
+        if entry.id.layer != TEST or not isinstance(entry.body, str):
+            continue
+        named = {*map(str, entry.derives_from), *parse_body(entry.body, TEST).exercises}
+        built = set(_CONSTRUCTED.findall(entry.body))
+        for sentence in _SENTENCES.split(entry.body):
+            if _BUILD.search(sentence):
+                low = sentence.lower()
+                built |= {
+                    c for c in owners
+                    if _phrase(c) in low and re.search(rf"\b(?:a|an|the)\s+{re.escape(_phrase(c))}\b", sentence, re.I)
+                }
+        bad = [
+            f"`{c}` ({', '.join(owners[c])})"
+            for c in sorted(built)
+            if c in owners and not set(owners[c]) & named
+        ]
+        if bad:
+            findings.append(Finding(
+                UNNAMED_FIXTURE, entry.id,
+                f"builds {', '.join(bad)}, declared outside its anchor -- name the "
+                "declaring entry on its `Exercises:` line, so the fixture is "
+                "checked against that contract",
+            ))
+    return findings
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
@@ -603,5 +659,6 @@ def admission_gates(graph: Graph) -> list[Finding]:
         + retired_mentions(graph)
         + undefined_names(graph)
         + unknown_members(graph)
+        + unnamed_fixtures(graph)
     )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
