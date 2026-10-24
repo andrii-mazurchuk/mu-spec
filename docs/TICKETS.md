@@ -72,8 +72,8 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
 - **The write set is part of the contract (M26, D1).** The fingerprint (V4) covers the
   `## Files you may write` paths, sorted. A unit closed `completed` that now owns a file
   it did not own when it merged gets a follow-up -- under its root, as a sub-issue, on a
-  lineage project -- never a reopen. A V3 record (DARK's, all of them) still compares the
-  contract alone, so no closed issue moves because the fingerprint grew. mu-spec cannot tell whether merged code already satisfies
+  lineage project -- never a reopen. Every older record (DARK's: V1, V2 or none) still
+  compares the contract alone, so no closed issue moves because the fingerprint grew. mu-spec cannot tell whether merged code already satisfies
   a changed contract -- that needs reading code -- so the follow-up says to close it
   if so. The report (`touched`) is kept for **open** issues somebody holds,
   the one case where "release it and ship again" is advice anyone can act on.

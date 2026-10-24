@@ -480,8 +480,9 @@ _V2 = "2:"
 _V3 = "3:"
 # V4 adds the write set (M26): a unit closed `completed` that now owns a file
 # it did not own when it merged has a contract nothing merged meets. Paths are
-# sorted, so a reordered module map is not a change. A V3 record -- every one
-# DARK holds -- is still compared as V3, so its closed issues stay settled.
+# sorted, so a reordered module map is not a change. Every older record is
+# still compared as V3 -- DARK's hold V1, V2 or none, read through the closed
+# issue's own text -- so no closed issue moves because the fingerprint grew.
 _V4 = "4:"
 _WRITE_PATH = re.compile(r"^- `([^`]+)`$", re.M)
 

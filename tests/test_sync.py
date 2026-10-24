@@ -416,8 +416,9 @@ def test_a_write_set_follow_up_hangs_under_the_root(tmp_path):
 
 
 def test_a_v3_record_ignores_the_write_set_so_darks_closed_issues_stay_settled(tmp_path):
-    """DARK's records hold V3: the contract alone. Reading the write set into
-    them would move every closed unit whose module map changed after merge."""
+    """A record older than V4 holds the contract alone (DARK's: V1, V2, none).
+    Reading the write set into it would move every closed unit whose module
+    map changed after merge."""
     import json
     from mu_spec.emit import _contract_v3, _V3
     gh = Tracker()
@@ -434,6 +435,22 @@ def test_a_v3_record_ignores_the_write_set_so_darks_closed_issues_stay_settled(t
     assert moved["follow_ups"] == [] and [s["key"] for s in moved["settled"]] == ["S-02"]
     grown = ship(tmp_path, gh, bodies={"S-02": "the contract, grown"})
     assert [f["key"] for f in grown["follow_ups"]] == ["S-02"], "V3 still sees the contract"
+
+
+def test_a_record_with_no_contract_ignores_the_write_set_too(tmp_path):
+    """Most of DARK's records: compared through the closed issue's own text."""
+    import json
+    gh = Tracker()
+    ship(tmp_path, gh)
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text().splitlines()]
+    for line in lines:
+        for issue in (line.get("issues") or {}).values():
+            issue.pop("contract", None)
+    log.write_text("".join(json.dumps(l) + chr(10) for l in lines))
+    gh.issues[3].update(state="closed", state_reason="completed")
+    moved = ship(tmp_path, gh, fetch=_with_write_set(["S-02.py", "x.py"]))
+    assert moved["follow_ups"] == [] and [s["key"] for s in moved["settled"]] == ["S-02"]
 
 
 def test_a_closed_issue_whose_unit_left_the_cut_is_settled_not_reported(tmp_path):
