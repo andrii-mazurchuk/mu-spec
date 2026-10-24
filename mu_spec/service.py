@@ -2061,6 +2061,16 @@ def emit_tickets(
             }
     if not create:
         horizon = 0
+    # One unit (M30): the probe before a full batch.
+    only = (body or {}).get("unit")
+    if only is not None and (not isinstance(only, str) or not only.strip()):
+        return {
+            "emitted": False,
+            "project": project,
+            "repo": manifest.repo,
+            "reason": f"'unit' must be one work unit's key, not {only!r}",
+        }
+    only = units.canonical_key(only.strip()) if only else None
 
     # Every ticket rendered before anything is written (M27). A retired
     # citation is rewritten to its live successor; one with no live successor
@@ -2077,6 +2087,26 @@ def emit_tickets(
 
     if client is None:
         client = github.GitHub(token)
+
+    # Labels need push access, and without it GitHub drops every one silently
+    # (M30, DARK m1109-5): the consumer then ingests nothing. Asked before any
+    # write; a read that fails says nothing, and the create's own response is
+    # checked anyway.
+    if hasattr(client, "can_label"):
+        try:
+            can = client.can_label(manifest.repo)
+        except github.GitHubError:
+            can = None
+        if can is False:
+            return {
+                "emitted": False,
+                "project": project,
+                "repo": manifest.repo,
+                "cut_seq": cut.seq,
+                "reason": f"the token has no push access to {manifest.repo}, so GitHub "
+                "would create every issue and silently drop its labels -- the consumer "
+                "admits by label and would ingest nothing. Use a token with push access.",
+            }
 
     result = emitting.emit(
         log_path=store.emissions_path(project),
@@ -2095,6 +2125,8 @@ def emit_tickets(
         project=project,
         retired=retired,
         lineage=lineage,
+        uses=units.test_uses(cut.units, graph),
+        only=only,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
@@ -2407,12 +2439,25 @@ def get_emission(
         # These were two copies until a withdrawal made them disagree.
         already, _wired = emitting.standing(store.emissions_path(project), repo)
 
+    # What a `shipped` press would create and hold, from the function the
+    # press runs (M29) -- so the pane's held count is the press's. Skipped
+    # while a run is in flight: that poll comes every second.
+    shipped = None
+    if cut is not None and not (snapshot and snapshot.get("phase") == "running"):
+        keys = [u.key for u in cut.units]
+        create = emitting.shipped_horizon(
+            keys, {k: tuple(v) for k, v in cut.edges.items()}, already,
+            units.test_uses(cut.units, store.load_graph(project)))
+        shipped = {"create": sorted(create),
+                   "held": sum(1 for k in keys if k not in already and k not in create)}
+
     return {
         "project": project,
         "running": bool(snapshot and snapshot.get("phase") == "running"),
         **(snapshot or {}),
         "cut_seq": cut.seq if cut is not None else None,
         "already": already,
+        "shipped": shipped,
         # Whether a token exists. Never what it is, and there is no route that
         # returns one -- a secret on a page that is read, screenshotted and
         # rendered in somebody's browser has leaked whatever it protected.

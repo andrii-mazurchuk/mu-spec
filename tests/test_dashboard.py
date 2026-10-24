@@ -702,3 +702,20 @@ def test_the_token_is_a_verdict_and_never_a_value():
     assert 'id="token' not in page
     assert "token-in" not in page
     assert page.count("MU_SPEC_GITHUB_TOKEN") == 1
+
+
+def test_the_ship_pane_offers_one_unit_and_sends_the_build_it_read():
+    """M30: a one-unit press is a setting in the left column, and every press
+    names the build the page read, so another build answering refuses."""
+    page = dashboard.read_page()
+    where = page[page.index('<div class="where">'):page.index('<div class="count">')]
+    assert 'id="hm-one"' in where and 'id="unit-in"' in where
+    assert "{unit: pf.unit}" in page and "out.build = build" in page
+    assert "STATE.emission.build" in page
+
+
+def test_the_shipped_preview_is_the_units_own_count():
+    """M29: the held count is what the press holds, computed by the unit."""
+    page = dashboard.read_page()
+    assert "const server = e.shipped;" in page
+    assert "held back" in page

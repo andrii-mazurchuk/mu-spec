@@ -128,7 +128,7 @@ def test_the_result_names_every_issue_it_made(tmp_path):
         "wired": 2, "unwired": 0, "edited": 0, "withdrawn": 0,
         "touched": 0, "settled": 0, "follow_ups": 0, "adopted": 0, "swept": 0,
         "raced": 0, "held": 0, "removed": 0, "dead": 0, "linked": 0, "unlinked": 0,
-        "merge_order": 0, "dropped_orders": 0,
+        "unlabelled": 0, "merge_order": 0, "dropped_orders": 0,
     }
 
 
@@ -1103,3 +1103,96 @@ def test_a_project_whose_record_predates_lineage_keeps_live_anchor_keys(tmp_path
     assert [e.get("was") for e in unit["entries"]] == [["S-01"]]
     tests = service.get_work_unit(store, "p", "S-02-T")
     assert [e.get("was") for e in tests["entries"]] == [["T-01"]]
+
+
+# -- M29 / M30 through the service ---------------------------------------------
+
+
+def _imports_another(tmp_path):
+    """S-01's scenario imports app.other (S-02), which S-03 waits on."""
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse
+    store = _project(tmp_path)
+    store.append("p", [Entry(id=parse("T-02"), derives_from=(parse("S-01"),),
+                             title="the other case", body="imports `app.other`")])
+    store.set_module("p", "tests/test_thing.py", ["T-01", "T-02"])
+    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
+                             title="other", body="build it")], slice_name="core")
+    store.append("p", [Entry(id=parse("S-03"), derives_from=(parse("A-01"),),
+                             depends_on=(parse("S-02"),), title="third", body="build it")],
+                 slice_name="core")
+    store.set_module("p", "app/other.py", ["S-02"])
+    store.set_module("p", "app/third.py", ["S-03"])
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    return store
+
+
+def test_one_unit_is_pressed_through_the_service(tmp_path, monkeypatch):
+    from mu_spec import service
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    result = service.emit_tickets(store, "p", client=FakeClient(), body={"unit": "S-01-T"})
+    assert [c["key"] for c in result["created"]] == ["S-01-T"] and result["held"] == ["S-01"]
+    bad = service.emit_tickets(store, "p", client=FakeClient(), body={"unit": 5})
+    assert bad["emitted"] is False and "unit" in bad["reason"]
+
+
+def test_a_token_that_cannot_label_refuses_before_any_write(tmp_path, monkeypatch):
+    """M30, DARK m1109-5: without push access every label is dropped and the
+    consumer ingests nothing. Asked once, before the press writes."""
+    from mu_spec import service
+    from test_sync import Tracker
+
+    class NoPush(Tracker):
+        def can_label(self, repo):
+            self.calls.append(("perm", 0))
+            return False
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    gh = NoPush()
+    result = service.emit_tickets(store, "p", client=gh)
+    assert result["emitted"] is False and "push" in result["reason"]
+    assert gh.calls == [("perm", 0)]
+
+
+def test_shipped_reaches_the_owner_of_what_tests_on_the_tracker_import(tmp_path, monkeypatch):
+    from mu_spec import service
+    store = _imports_another(tmp_path)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    client = FakeClient()
+    service.emit_tickets(store, "p", client=client, body={"unit": "S-01-T"})
+    preview = service.get_emission(store, "p")["shipped"]
+    result = service.emit_tickets(store, "p", client=client, body={"waves": "shipped"})
+    assert "S-02" in [c["key"] for c in result["created"]]
+    assert sorted(preview["create"]) == sorted(c["key"] for c in result["created"])
+    assert preview["held"] == len(result["held"])
+
+
+def test_a_press_checked_against_another_build_is_refused(tmp_path, monkeypatch):
+    """M30, DARK p03-2 / cross-10: a cut was shipped from a node that lagged
+    the emitter, and three builds were live at once. The pane shows the build
+    it read and the press names it; a process that is another build refuses."""
+    from mu_spec.server import handle
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
+    _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    client = FakeClient()
+
+    def call(method, body=None):
+        status, _, raw = handle(method, "/projects/p/emit", store, tmp_path, body,
+                                emit_client=client, identity_client=client,
+                                sha_fn=lambda: "abc1234def")
+        return status, json.loads(raw)
+
+    assert call("GET")[1]["build"] == "abc1234def"
+    status, refused = call("POST", {"build": "0ld0ld0"})
+    assert status == 409 and "0ld0ld0" in refused["reason"] and client.created == []
+    status, done = call("POST", {"build": "abc1234"})
+    assert status == 200 and done["emitted"] is True

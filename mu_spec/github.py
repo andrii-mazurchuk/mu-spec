@@ -94,6 +94,9 @@ class Issue:
     id: int
     number: int
     url: str = ""
+    # The labels GitHub kept, or None when the response did not say. GitHub
+    # drops labels silently for a token without push access (M30).
+    labels: "tuple[str, ...] | None" = None
 
 
 def _is_rate_limit(message: str) -> bool:
@@ -152,8 +155,8 @@ class GitHub:
 
         Note that labels, assignees and milestones are **silently dropped** by
         GitHub when the token lacks push access -- no error, no warning, and
-        every issue simply arrives unlabelled. Nothing here can detect that;
-        whoever emits should check its own token once rather than wonder later.
+        every issue simply arrives unlabelled. The returned `labels` are what
+        GitHub kept, so the caller compares them with what it sent.
         """
         payload: dict = {"title": title, "body": body}
         if labels:
@@ -166,6 +169,8 @@ class GitHub:
                 id=int(raw["id"]),
                 number=int(raw["number"]),
                 url=str(raw.get("html_url", "")),
+                labels=None if raw.get("labels") is None else tuple(
+                    str(l.get("name") if isinstance(l, dict) else l) for l in raw["labels"]),
             )
         except (KeyError, TypeError, ValueError) as exc:
             # Defaulting the id to 0 here would wire every dependency in the
@@ -218,6 +223,16 @@ class GitHub:
                 "type": str(raw.get("type") or ""),
             }
         return self._identity
+
+    def can_label(self, repo: str) -> "bool | None":
+        """Whether this token may set labels on a new issue: push access, as
+        the repository reports it for the token (M30). None when the response
+        does not say -- not knowing is not a no."""
+        raw = self._get(f"/repos/{repo}")
+        permissions = raw.get("permissions") if isinstance(raw, dict) else None
+        if not isinstance(permissions, dict) or "push" not in permissions:
+            return None
+        return bool(permissions["push"])
 
     def issue_state(self, repo: str, number: int) -> dict:
         """`{"state", "state_reason"}` for one issue.

@@ -373,3 +373,21 @@ def test_without_lineage_a_unit_is_keyed_by_its_live_anchor():
     projection = project(manifest, _chain_graph(), lineage=False)
     assert sorted(projection.by_key()) == ["S-02", "S-140", "S-140-T"]
     assert projection.edges["S-02"] == ("S-140",)
+
+
+# -- what a test unit names (M29) ------------------------------------------
+
+
+def test_a_test_unit_uses_the_units_owning_what_its_scenarios_name():
+    """A path, a dotted module, or an `Exercises:` id in a scenario names the
+    implementation unit owning it -- read off the bodies, never the repo."""
+    from mu_spec.units import test_uses
+    s1, s2, s3, s4 = (_entry(i) for i in ("S-01", "S-02", "S-03", "S-04"))
+    t1 = Entry(id=parse("T-01"), derives_from=(parse("S-01"),), title="the case",
+               body="Exercises: S-04\nimports `app.other.Thing`, reads app/third.py")
+    graph = _graph(s1, s2, s3, s4, t1)
+    manifest = _manifest({"app/thing.py": "S-01", "app/other.py": "S-02",
+                          "app/third.py": "S-03", "app/four/__init__.py": "S-04",
+                          "tests/test_thing.py": "T-01"})
+    uses = test_uses(project(manifest, graph).units, graph)
+    assert uses == {"S-01-T": ("S-02", "S-03", "S-04")}

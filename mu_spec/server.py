@@ -838,7 +838,10 @@ def _tools() -> list[dict[str, Any]]:
             "which is not the same as the unit count and is the number worth "
             "knowing before starting one. `token` says whether this unit holds "
             "a tracker token at all -- a boolean, never the value, and the one "
-            "precondition nothing in the project can answer. Starting an "
+            "precondition nothing in the project can answer. `build` is the "
+            "commit this process serves (null if unknown). `shipped` is what a "
+            "`shipped` press would create (`create`, keys) and how many units it "
+            "would hold (`held`), null while a run is in flight. Starting an "
             "emission is a person's decision and is not offered here -- "
             "except under a delegation, through auto_ship.",
             "GET",
@@ -1190,7 +1193,14 @@ def _actions() -> list[dict[str, Any]]:
                 "One live issue per unit across every cut, so a re-run or a "
                 "new cut that says the same thing creates nothing. `waves` is "
                 "the horizon: how many waves still holding an unshipped unit "
-                "get issues in this press; omitted means all. Answers "
+                "get issues in this press, or \"shipped\" for what work already "
+                "out waits on, what its tests import, and new leaves whose "
+                "blockers are out; omitted means all. `unit` presses one work "
+                "unit only: created or edited, its orders wired, nothing else "
+                "written -- the probe before a full batch. `build` is the commit "
+                "the press was checked against; another build answering refuses "
+                "(409). Refused too, before any write, when the token has no push "
+                "access and so every label would be dropped. Answers "
                 "immediately with a run id; progress is read back from GET "
                 "on the same path."
             ),
@@ -1198,7 +1208,12 @@ def _actions() -> list[dict[str, Any]]:
             "path": "projects/{project}/emit",
             "input_schema": {
                 "type": "object",
-                "properties": {"waves": {"type": "integer", "minimum": 1}},
+                "properties": {
+                    "waves": {"oneOf": [{"type": "integer", "minimum": 1},
+                                        {"type": "string", "enum": ["shipped"]}]},
+                    "unit": {"type": "string"},
+                    "build": {"type": "string"},
+                },
             },
         },
         {
@@ -1727,6 +1742,18 @@ def _handle(
             # deterministic and thread-free.
             # A ticket naming a superseded entry is a 400, answered before a job
             # starts: the press would write nothing, and saying so takes no job.
+            # The build the press was checked against (M30): the pane sends the
+            # one it read. Another process answering -- a redeploy since, or
+            # two builds live at once (DARK cross-10) -- refuses before a job.
+            expected = body.get("build")
+            if isinstance(expected, str) and expected.strip():
+                running = sha_fn()
+                if not running or not running.startswith(expected.strip()):
+                    return 409, JSON, json.dumps({
+                        "emitted": False, "project": project, "build": running,
+                        "reason": f"this press was checked against build {expected.strip()}, "
+                                  f"but this process is {running or 'a build it cannot name'}"
+                                  ". Reload the page, check again, and press."})
             refusal = service.emission_refusal(store, project) if runs is not None else None
             if refusal is not None:
                 return 400, JSON, json.dumps(refusal)
@@ -1788,10 +1815,12 @@ def _handle(
         if name == "get_emission":
             # The injected client answers the identity lookup too, so the
             # suite never opens a socket to report who a token belongs to.
-            return 200, JSON, json.dumps(
-                service.get_emission(store, project, runs,
-                                     identity_client=identity_client)
-            )
+            # `build`: which build answers, for the pane to show and send back
+            # with a press (M30).
+            return 200, JSON, json.dumps({
+                **service.get_emission(store, project, runs,
+                                       identity_client=identity_client),
+                "build": sha_fn()})
 
         if name == "set_labels":
             return 200, JSON, json.dumps(service.set_labels(store, project, body))

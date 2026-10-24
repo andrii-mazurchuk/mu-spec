@@ -73,7 +73,19 @@ touched, mu-spec never edits it and never closes it. It reports it instead.
   `## Files you may write` paths, sorted. A unit closed `completed` that now owns a file
   it did not own when it merged gets a follow-up -- under its root, as a sub-issue, on a
   lineage project -- never a reopen. Every older record (DARK's: V1, V2 or none) still
-  compares the contract alone, so no closed issue moves because the fingerprint grew. mu-spec cannot tell whether merged code already satisfies
+  compares the contract alone, so no closed issue moves because the fingerprint grew.
+- **A renumber is no change (M25).** The fingerprint (V5) reads the contract's entries as
+  a set: a unit lists its scenarios in id order, so a renumbered scenario moved to the end
+  and V4 saw a change in an unchanged contract. A V4 record is compared through the closed
+  issue's own text, and every older one is also settled when its entries are the same set.
+  Measured on DARK: its 91 recorded follow-ups and the three named as relabels (#503, #810,
+  #829) each also changed text, so none would have been spared -- restatements merged code
+  already met need code read, which this unit does not do.
+- **The code follows its tests (T-623).** A press that opens a follow-up for a test unit
+  while its implementation is closed `completed` opens one for the implementation too,
+  under its root, headed `## Tests changed since #N`: make the code pass them, or close
+  it as already satisfied. Signal: the test unit's contract moved in this press. A press
+  that dies between the two loses the second (not persisted). mu-spec cannot tell whether merged code already satisfies
   a changed contract -- that needs reading code -- so the follow-up says to close it
   if so. The report (`touched`) is kept for **open** issues somebody holds,
   the one case where "release it and ship again" is advice anyone can act on.
@@ -163,9 +175,15 @@ consumer's business.
   press reached. An implementation whose own test unit is out is included too, with
   what it waits on (never what waits on it): merged tests with no code are broken
   whether or not anything follows it -- DARK's `tests/test_health.py` could not even
-  be collected. Any other new unit nothing shipped waits on is new work and waits for
-  a numeric press. The dashboard offers it by default once anything is out and shows how
-  many units block shipped work. With nothing out it creates nothing.
+  be collected. **Two more count (M29):** a unit owning a module path, dotted module or
+  `Exercises:` id that the scenarios of a test unit already out name -- read off the
+  bodies, never the repository (DARK S-229, S-134: merged tests imported them, main stayed
+  red) -- with what it waits on; and a **new leaf one step past the frontier**: nothing
+  waits on it, and everything it and its own test unit wait on is out or comes in this
+  press (DARK S-331, the study, held by two presses). Any other new unit is new work and
+  waits for a numeric press. The dashboard offers it by default once anything is out and
+  shows the unit's own preview: how many it creates and how many it **holds**. With nothing
+  out it creates nothing.
 - Edits and closes always apply to *every* live issue, whatever the horizon. The horizon
   limits creation only.
 - **Why it exists:** later waves are derived before the code of earlier waves exists.
@@ -203,6 +221,22 @@ waited for the S-217 storage fix filed after it (m1206-17).
   a count), and every other order stands. The press goes on. Only a loop through the
   units' own edges refuses, a 400 naming it, before anything is written -- the gates make
   that impossible, so it is a guard.
+
+## 5a. One unit, and what a press checks first (M30)
+
+DARK shipped two 144-issue batches and withdrew both before one ticket was seen to ingest
+(p09-1, m1201-8). So:
+
+- **One unit.** `POST /emit {"unit": "S-31"}` -- a person's press like any other, from the
+  dashboard's third horizon choice. That unit is created or edited, the orders touching it
+  are wired, and nothing else is written: no other edit, no withdrawal, no sweep.
+- **The build.** The pane shows the build answering `GET /emit` (`build`) and sends it with
+  the press; a process that is another build answers 409 before any job (DARK p03-2:
+  a cut shipped from a node behind the emitter; cross-10: three builds live at once).
+- **The labels.** Before any write, the repository is asked whether the token has push
+  access (`GET /repos/{repo}`); without it GitHub creates every issue and drops its labels
+  silently, so the press refuses. After each create, the labels GitHub returned are
+  compared with those sent and a loss is reported in `unlabelled` (DARK m1109-5).
 
 ## 6. Batch
 
