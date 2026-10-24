@@ -234,7 +234,12 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
-            "path. Cite the request it serves in `in_response_to`. Each "
+            "path. Cite the request it serves in `in_response_to`: an inbox "
+            "message id, or an issue id (iss-NNNN, open or escalated, this "
+            "project) when repairing what that issue names. An issue-cited "
+            "fix starts at the layer of the issue's target and may then "
+            "propagate downward citing the same issue; one reaching above "
+            "the target is refused -- escalate the issue instead. Each "
             "entry needs a "
             "'layer' and a 'title', and may carry 'body', 'purpose', "
             "'supersedes', and "
@@ -1601,7 +1606,7 @@ def _handle(
 
         if name == "amendment":
             result = service.submit_amendment(
-                store, inbox, project, body, events, now_fn
+                store, inbox, project, body, events, now_fn, issues
             )
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
 

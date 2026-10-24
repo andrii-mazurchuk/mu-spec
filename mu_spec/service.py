@@ -47,7 +47,7 @@ from mu_spec.identifiers import (
     sort_key,
 )
 from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
-from mu_spec.issues import OPEN, RESOLVED, IssueError, IssueLog
+from mu_spec.issues import LIVE as LIVE_ISSUE, OPEN, RESOLVED, IssueError, IssueLog
 from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
 from mu_spec.metrics import change_locality, corrections_by_layer, structural
@@ -305,6 +305,32 @@ def _require_message(inbox: Inbox, body: dict, expected_types=None):
     return message
 
 
+def _require_live_issue(issues: IssueLog | None, project: str, issue_id: str):
+    """An issue cited as authority: it must exist here and not have ended.
+    A resolved or rejected issue is a ruling already made; repairing under
+    it again is scope nobody asked for."""
+    issue = issues.get(issue_id) if issues is not None else None
+    if issue is None:
+        raise ServiceError(f"unknown issue {issue_id!r}")
+    if issue.project != project:
+        raise ServiceError(
+            f"{issue_id} belongs to project {issue.project!r}, not {project!r}"
+        )
+    if issue.status not in LIVE_ISSUE:
+        raise ServiceError(
+            f"{issue_id} is {issue.status}, so it no longer authorises a "
+            "change -- cite a live issue or an inbox message"
+        )
+    try:
+        parse(issue.target)
+    except InvalidIdentifier as exc:
+        raise ServiceError(
+            f"{issue_id} targets {issue.target!r}, which is not an "
+            "identifier, so there is no layer to originate at"
+        ) from exc
+    return issue
+
+
 # -- the propagation write path ---------------------------------------------
 
 
@@ -373,6 +399,7 @@ def submit_amendment(
     body: dict,
     events: Lifecycle | None = None,
     now_fn: Callable[[], float] = time.time,
+    issues: IssueLog | None = None,
 ) -> dict:
     """Record a batch of derived entries -- the result of an agent
     propagating a change downward.
@@ -397,8 +424,23 @@ def submit_amendment(
     a `correction` may start at intent or behaviour, never at spec. Once that
     origin exists, propagating downward from it is unrestricted -- the
     restriction is on where a change may *enter*, not how far it may travel.
+
+    The citation may instead be an issue (`iss-NNNN`, open or escalated, in
+    this project). An issue names its target, so the origination depth is
+    mechanical: the fix enters at the target's own layer (DESIGN §8 -- fix
+    at the layer where the error lives) and may then propagate downward.
+    Reaching *above* the target is never a repair of it, and is refused with
+    a pointer to escalate the issue instead.
     """
-    message = _require_message(inbox, body)
+    cited = str(body.get("in_response_to") or "")
+    issue = None
+    if cited.startswith("iss-"):
+        issue = _require_live_issue(issues, project, cited)
+        message = None
+    else:
+        message = _require_message(inbox, body)
+    cite_id = issue.id if issue else message.id
+    request_type = "issue" if issue else message.type
     items = body.get("entries")
     if not isinstance(items, list) or not items:
         raise ServiceError("'entries' must be a non-empty list")
@@ -511,8 +553,7 @@ def submit_amendment(
             "slice splits"
         )
 
-    spec_type = TYPES[message.type]
-    already = (message.resolution or {}).get("produced", [])
+    already = ((issue or message).resolution or {}).get("produced", [])
     # "Has this message already produced an entry?" -- asked by PARSING, not
     # by sniffing for the separator. This line used to test `"·" in a`, which
     # silently answered "no, nothing yet" for every message the moment the
@@ -520,7 +561,27 @@ def submit_amendment(
     # refused as a second origination. A separator inside a comparison is the
     # exact hazard that made this change worth doing.
     is_origination = not any(_is_identifier(a) for a in already)
-    if is_origination:
+    if issue is not None:
+        target = parse(issue.target)
+        layer = staged[0].id
+        if layer.depth < target.depth:
+            raise ServiceError(
+                f"{issue.id} is against {target} ({target.layer_name}); this "
+                f"amendment writes {layer.layer_name}, above it. A fix that "
+                "reaches a higher layer means the error lives there, not in "
+                "the target -- escalate the issue (close_issue with status "
+                "'escalated' and a note saying which layer is wrong) instead "
+                "of repairing upward from here"
+            )
+        if is_origination and layer.layer != target.layer:
+            raise ServiceError(
+                f"{issue.id} is against {target}, so its fix originates at "
+                f"{target.layer_name}; this amendment starts at "
+                f"{layer.layer_name}. Fix the target's layer first, then "
+                "propagate downward citing the same issue"
+            )
+    elif is_origination:
+        spec_type = TYPES[message.type]
         if not spec_type.originates_at:
             raise ServiceError(
                 f"a {message.type!r} message never creates entries -- it "
@@ -593,7 +654,7 @@ def submit_amendment(
                 lc.REFUSAL,
                 project,
                 now_fn,
-                refs=[message.id],
+                refs=[cite_id],
                 reason="broken edge",
                 findings=[
                     {"kind": f.kind, "id": str(f.id)} for f in blocking
@@ -620,7 +681,7 @@ def submit_amendment(
                 lc.REFUSAL,
                 project,
                 now_fn,
-                refs=[message.id],
+                refs=[cite_id],
                 reason="slice structure",
                 findings=[
                     {"kind": f.kind, "slice": f.slice}
@@ -651,7 +712,7 @@ def submit_amendment(
         store.allocate(project, entry.id.layer)
     store.append(project, staged, slice_name=slice_name)
     created = [str(e.id) for e in sorted(staged, key=lambda e: sort_key(e.id))]
-    inbox.record_produced(message.id, created)
+    (issues if issue else inbox).record_produced(cite_id, created)
 
     after = store.load_graph(project)
     retired = [str(e.supersedes) for e in staged if e.supersedes is not None]
@@ -661,8 +722,8 @@ def submit_amendment(
             project,
             now_fn,
             refs=created,
-            in_response_to=message.id,
-            request_type=message.type,
+            in_response_to=cite_id,
+            request_type=request_type,
             slice=slice_name,
             layers=sorted({e.id.layer_name for e in staged}),
         )
@@ -675,8 +736,8 @@ def submit_amendment(
                 project,
                 now_fn,
                 refs=retired,
-                in_response_to=message.id,
-                request_type=message.type,
+                in_response_to=cite_id,
+                request_type=request_type,
                 entered_at=topmost.layer_name,
                 replaced_by=created,
                 stranded=[str(f.id) for f in stale],
@@ -684,7 +745,7 @@ def submit_amendment(
     return {
         "admitted": True,
         "created": created,
-        "in_response_to": message.id,
+        "in_response_to": cite_id,
         # What this amendment stranded by retiring something. Each of these
         # must be re-derived; until then the graph is unsound and no work
         # package will be issued.
