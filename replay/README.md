@@ -103,3 +103,44 @@ module" (M10) means "no `Module:` line" for a retired entry -- and an entry live
 at the export takes its final declarations from birth, so M10 cannot see that
 S-73, S-77 and S-103 had no module at cut 3; a fault visible
 only in code, a ticket or a CI log is outside what any graph replay can score.
+
+## Comparing a project against DARK (V3, and how V4 uses it)
+
+`baseline.py` measures a snapshot on the numbers two projects can share, and
+`compare.py` prints them side by side. Both report; neither gates, and the exit
+code never depends on a number.
+
+```
+python -m replay.baseline <snapshot_dir> [--ledger forge-metrics.json] [--out file.json]
+python -m replay.compare replay\baselines\dark.json <current> [--ledger forge-metrics.json]
+```
+
+`<current>` is a file `replay.baseline` wrote, a snapshot directory, or a live
+project URL (`http://127.0.0.1:9006/projects/<name>`, read-only through GET
+`/insights` and `/spine`; supersessions are `n/a` there, history is not served).
+
+Two kinds of number (`METRICS` and `LEDGER` in `baseline.py`, each with the
+direction that counts as better, or none for size context):
+
+- **Computed by mu-spec** from the replayed graph, requests and issues through
+  `mu_spec.metrics`: live entries by layer, slices, wave depth, supersessions
+  (and per live entry), change locality mean and single-slice share,
+  corrections and the layer they entered at, weighted cohesion, issues
+  (semantic, per live spec).
+- **Supplied by forge's ledger**, passed through: stops, spec-fault rulings,
+  rulings with no issue, permission denials, first-attempt share, follow-ups,
+  idle gaps over 1 h, cost and median lead time -- per unit where a count
+  scales. A retro-shaped `index/metrics.json` is normalised; a flat file in
+  `LEDGER` names is taken as is.
+
+`baselines/dark.json` is DARK's: the export's final state plus one line per cut,
+with the snapshot, its last event and the code sha in `provenance`.
+`disagrees_with_node_insights` compares the replay with the node's own
+`insights.json` on every field both hold; empty means the replay is right.
+
+**V4.** When the pilot is done, export its snapshot the way DARK's was taken,
+have forge produce its ledger metrics, then
+`python -m replay.compare replay\baselines\dark.json <pilot snapshot> --ledger <pilot ledger>`.
+Mid-run, point `<current>` at the live project URL. Read each `worse` against
+its size context: a smaller pilot is not a better one. Write the pilot's own
+baseline next to DARK's with `replay.baseline ... --out replay\baselines\<pilot>.json`.
