@@ -23,6 +23,10 @@ before anything derives from a slice costs nothing.
   overlapping ownership is no ownership: two work packages would hand the
   same entry out as editable, and the audit would pass for both.
 
+Two read against the module map only report (D3): `no_module` (M10) and
+`sweep_collision` (M7). `service._gate_report` adds them; `module_gates`
+holds the ones the cut can refuse on.
+
 There is no judgement here, and never will be.
 """
 
@@ -31,7 +35,15 @@ from __future__ import annotations
 import dataclasses
 import re
 
-from mu_spec.gates import Finding, Reader, live_successor, spec_facts, strict_imports
+from mu_spec.gates import (
+    STDLIB_NAMES,
+    Finding,
+    Reader,
+    code,
+    live_successor,
+    spec_facts,
+    strict_imports,
+)
 from mu_spec.graph import Graph
 from mu_spec.identifiers import SPEC, TEST, Identifier, InvalidIdentifier, parse, sort_key
 from mu_spec.storage import Manifest
@@ -42,6 +54,11 @@ OVERLAPPING_MEMBERSHIP = "overlapping_membership"
 BAD_MODULE_IMPORT = "bad_module_import"
 SPLIT_OWNERSHIP = "split_ownership"
 UNDECLARED_PATH = "undeclared_path"
+# Reported, never refused (D3). M10: a live spec no module implements, once
+# the project declares modules at all. M7: a sweep banning what a sibling's
+# code, in a file the sweep covers, has to contain.
+NO_MODULE = "no_module"
+SWEEP_COLLISION = "sweep_collision"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -247,6 +264,82 @@ def module_gates(
             findings.append(Finding(BAD_MODULE_IMPORT, entry.id, "; ".join(problems)))
 
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
+
+
+def no_module(manifest: Manifest, graph: Graph) -> list[Finding]:
+    """M10: a live spec entry no module says it implements. It is in no work
+    unit, so no ticket will ever carry it -- DARK's S-77 ("no new module, one
+    line in each builder") sat out of every cut while `complete` was true.
+    Only once the project declares a spec module at all: before that, every
+    spec would say the same thing."""
+    implemented = {i for ids in manifest.modules.values() for i in ids}
+    if not any(i.layer == SPEC for i in implemented):
+        return []
+    return [
+        Finding(
+            NO_MODULE, entry.id,
+            "no module implements it, so no work unit carries it -- declare the "
+            "file its code goes in (declare_module), or say which entry's file "
+            "it amends and declare that file for it too",
+        )
+        for entry in graph.entries()
+        if entry.id.layer == SPEC and entry.id not in implemented
+    ]
+
+
+def _uses(text: str, token: str) -> bool:
+    """`token` in `text` as a whole word (`direct` is not in `direction`)."""
+    left = r"(?<!\w)" if re.match(r"\w", token) else ""
+    right = r"(?!\w)" if re.search(r"\w$", token) else ""
+    return re.search(left + re.escape(token) + right, text) is not None
+
+
+def sweep_collisions(manifest: Manifest, graph: Graph) -> list[Finding]:
+    """M7: a spec whose prose has a test sweep a directory for tokens -- one
+    sentence naming `sweep`, a backticked scope ending in `/`, the backticked
+    tokens it bans and the files it allows -- against a sibling spec whose
+    module sits under that scope, is not allowed, and whose code uses one of
+    the tokens without defining it. Both entries are reported. DARK's S-34
+    swept `dark/` for `VARIANT_NAMES` while S-69 required `schema.py` to
+    spell those names out.
+
+    A mechanical approximation: prose mentions, the token's own definer and
+    standard-library names are never a collision, and a sweep phrased
+    without backticked paths is not seen at all."""
+    specs = [e for e in graph.entries() if e.id.layer == SPEC and isinstance(e.body, str)]
+    owns: dict[Identifier, list[str]] = {}
+    for path, ids in sorted(manifest.modules.items()):
+        for i in ids:
+            owns.setdefault(i, []).append(path)
+    hits: dict[Identifier, list[str]] = {}
+    for sweeper in specs:
+        for scope, allowed, banned in code(sweeper.body).sweeps:
+            banned = [t for t in banned if t.strip(".()") not in STDLIB_NAMES]
+            for other in specs:
+                if other.id == sweeper.id:
+                    continue
+                paths = [p for p in owns.get(other.id, ()) if p.startswith(scope) and p not in allowed]
+                if not paths:
+                    continue
+                facts = code(other.body)
+                used = [t for t in banned if t not in facts.local and _uses(facts.code, t)]
+                if not used:
+                    continue
+                tokens = ", ".join(f"`{t}`" for t in used)
+                hits.setdefault(sweeper.id, []).append(
+                    f"its sweep of {', '.join(scope)} bans {tokens}, which {other.id}'s "
+                    f"code in {paths[0]} uses")
+                hits.setdefault(other.id, []).append(
+                    f"its code in {paths[0]} uses {tokens}, which {sweeper.id}'s sweep "
+                    f"of {', '.join(scope)} bans")
+    return [
+        Finding(
+            SWEEP_COLLISION, i,
+            "; ".join(dict.fromkeys(why)) + " -- one of the two has to give: allow "
+            "the file in the sweep, or change the code it requires",
+        )
+        for i, why in hits.items()
+    ]
 
 
 # ponytail: a word-level negation test, not a parse. It catches "there is no

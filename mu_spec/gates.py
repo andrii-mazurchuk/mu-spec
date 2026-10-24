@@ -53,6 +53,8 @@ from mu_spec import body
 from mu_spec.body import Import, parse as parse_body, strip_provenance
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
+    ARCHITECTURE,
+    BEHAVIOUR,
     LAYERS,
     SPEC,
     TEST,
@@ -85,6 +87,14 @@ TWO_SUCCESSORS = "two_successors"
 UNLINKED_MENTION = "unlinked_mention"
 # A live entry whose body cites a retired id. Reported; tickets rewrite it.
 RETIRED_MENTION = "retired_mention"
+# The report-only kinds read out of code (D3: none of them ever refuses).
+# M4: a name a spec uses or imports that no live spec defines.
+UNDEFINED_NAME = "undefined_name"
+# M6: a spec reads a member a producer's class does not declare.
+UNKNOWN_MEMBER = "unknown_member"
+# M9 (every B/A observable produced by an S) was built and dropped 10-24: on
+# DARK it caught 0 of 2 cases and never fired -- B and A bodies there carry no
+# code names, and the real faults were semantic. That belongs to the audits.
 
 
 @dataclasses.dataclass(frozen=True)
@@ -436,6 +446,148 @@ def retired_mentions(graph: Graph) -> list[Finding]:
     return findings
 
 
+# -- read out of code: reported, never refused (D3) ---------------------------
+#
+# Each of these is a regex over stubs and fragments, so each is a proxy, and a
+# proxy never gates (CLAUDE.md). Every one leans towards silence: a name it
+# cannot place is dropped rather than flagged. The DARK replay is where their
+# noise is measured (replay/README.md).
+
+code = functools.lru_cache(maxsize=8192)(body.code_facts)
+
+
+def _stdlib_names() -> frozenset[str]:
+    """Public names of the modules a spec's stubs lean on without saying so.
+    Not this project's to define, so never an undefined name."""
+    import importlib
+
+    names: set[str] = set()
+    for mod in (
+        "builtins typing collections collections.abc dataclasses enum pathlib "
+        "datetime decimal fractions numbers io types functools itertools "
+        "contextlib abc uuid logging json re os math statistics threading "
+        "asyncio subprocess hashlib tempfile argparse sqlite3 csv operator "
+        "random string time warnings traceback inspect copy heapq bisect "
+        "shutil socket struct queue weakref tomllib"
+    ).split():
+        try:
+            names |= {n for n in dir(importlib.import_module(mod)) if not n.startswith("_")}
+        except ImportError:
+            continue  # tomllib before 3.11
+    return frozenset(names)
+
+
+STDLIB_NAMES = _stdlib_names()
+
+
+def _specs(graph: Graph) -> list[Entry]:
+    return [e for e in graph.entries() if e.id.layer == SPEC and isinstance(e.body, str)]
+
+
+def _stems(entry: Entry) -> set[str]:
+    """`pkg/model.py` -> `model`: a module imported by name is not a name."""
+    return {
+        p.rsplit("/", 1)[-1].split(".")[0]
+        for p in spec_facts(entry.body).path_mentions
+    }
+
+
+def undefined_names(graph: Graph, read: Reader = strict_imports) -> list[Finding]:
+    """M4: a name a spec imports from an entry (`Imports:`), or a CamelCase
+    type its code uses, that no live spec defines -- in a code block, as a
+    top-level def, class or assignment. DARK's S-196 typed `regenerate()`
+    over `Analysis`, which nothing ever defined.
+
+    "Defined" is anywhere in the live graph, not only by the entry imported
+    from: a name in the wrong entry is M2's question. Standard-library names,
+    the body's own bindings and parameters, and module stems are left out."""
+    specs = _specs(graph)
+    defined: set[str] = set()
+    for entry in specs:
+        defined |= code(entry.body).local | _stems(entry)
+    findings: list[Finding] = []
+    for entry in specs:
+        facts = code(entry.body)
+        items = read(entry) or ()
+        imported: list[str] = []
+        from_modules: set[str] = set()
+        for item in items:
+            try:
+                parse(item.target)
+            except InvalidIdentifier:
+                from_modules.update(item.names)
+            else:
+                imported += item.names
+        # Two letters (`Wm`, `Pa`) is a maths symbol in a stub, not a type.
+        used = sorted(n for n in facts.references - from_modules if len(n) > 2)
+        missing = [
+            n for n in dict.fromkeys(imported + used)
+            if n not in defined and n not in STDLIB_NAMES
+        ]
+        if missing:
+            findings.append(Finding(
+                UNDEFINED_NAME, entry.id,
+                f"uses {', '.join(f'`{n}`' for n in missing)}, which no live spec "
+                "entry defines in a code block -- define it in the entry that "
+                "owns it (and depend on that entry), or correct the name",
+            ))
+    return findings
+
+
+# A file name read as `x.attr` (`plant.py`) is not a member read.
+_EXTENSIONS = frozenset("py json jsonl toml md npy npz txt yaml yml png csv cfg ini lock".split())
+# Bases whose members are all declared in the class itself. Any other base
+# may carry the member, so a class with one is never judged.
+_PLAIN_BASES = frozenset({"Protocol", "NamedTuple", "StrEnum", "Enum", "IntEnum", "TypedDict", "object"})
+
+
+def _camel(name: str) -> str:
+    return "".join(p[:1].upper() + p[1:] for p in name.split("_") if p)
+
+
+def unknown_members(graph: Graph) -> list[Finding]:
+    """M6: a spec reads `x.attr` -- `cell.n_drones`, `Cell.n_drones` --
+    where `Cell` is a class another live spec declares, and no declaration of
+    it has that member. DARK's S-77 sized a channel by `cell.n_drones`; the
+    `Cell` of S-38 had no such field.
+
+    The variable is matched to the class by name only (`run_config` ->
+    `RunConfig`), members are pooled over every live declaration of the
+    class, and a class with a base outside `_PLAIN_BASES`, or with no members
+    read, is never judged."""
+    specs = _specs(graph)
+    members: dict[str, set[str]] = {}
+    bases: dict[str, set[str]] = {}
+    owners: dict[str, list[str]] = {}
+    for entry in specs:
+        for name, base, ms in code(entry.body).classes:
+            members.setdefault(name, set()).update(ms)
+            bases.setdefault(name, set()).update(base)
+            owners.setdefault(name, []).append(str(entry.id))
+    findings: list[Finding] = []
+    for entry in specs:
+        facts = code(entry.body)
+        own = {c for c, _, _ in facts.classes}
+        bad: list[str] = []
+        for var, attr in facts.attributes:
+            cls = var if var[:1].isupper() else _camel(var)
+            if (
+                var == "self" or attr.startswith("__") or attr in _EXTENSIONS
+                or cls in own or cls not in members or not members[cls]
+                or bases[cls] - _PLAIN_BASES or attr in members[cls]
+            ):
+                continue
+            bad.append(f"`{cls}.{attr}` ({', '.join(owners[cls])} declares {cls})")
+        if bad:
+            findings.append(Finding(
+                UNKNOWN_MEMBER, entry.id,
+                f"reads {'; '.join(dict.fromkeys(bad))}, but no declaration of the "
+                "class has that member -- add it to the producer (an issue against "
+                "it), or read what the producer does declare",
+            ))
+    return findings
+
+
 def admission_gates(graph: Graph) -> list[Finding]:
     """Every mechanical finding, in spine order -- the human sees only
     failures, so this list is the whole report and should read top-down the
@@ -449,5 +601,7 @@ def admission_gates(graph: Graph) -> list[Finding]:
         + two_successors(graph)
         + unlinked_mentions(graph)
         + retired_mentions(graph)
+        + undefined_names(graph)
+        + unknown_members(graph)
     )
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))

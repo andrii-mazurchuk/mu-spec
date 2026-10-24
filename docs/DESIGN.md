@@ -576,6 +576,15 @@ package is issued:*
 *Complete — the report of what is left to do, never a blocker:*
 - Does every entry above have at least one entry below serving it? (unserved
   requirements)
+- Read out of code, and each a regex approximation that leans towards silence (D3: no
+  proxy gates): does every name a spec imports or types over have a live definition in
+  some spec's code block (undefined name); does every `x.attr` a spec reads exist on the
+  class another spec declares (unknown member); does a spec's test sweep ban a token a
+  sibling's code in the swept directory must use (sweep collision); once modules are
+  declared, does every spec have one (no module)?
+- At the amendment only, since the edge itself then moves the slice: does a new entry
+  depend on a slice that was in its own slice's wave when it was written (same-wave
+  edge)?
 
 Blocking on completeness too would make every legitimate propagation illegal, because a
 half-propagated layer is always incomplete. Blocking on neither makes the gate
