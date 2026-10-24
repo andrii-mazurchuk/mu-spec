@@ -94,6 +94,9 @@ class Issue:
     id: int
     number: int
     url: str = ""
+    # The labels GitHub kept, or None when the response did not say. GitHub
+    # drops labels silently for a token without push access (M30).
+    labels: "tuple[str, ...] | None" = None
 
 
 def _is_rate_limit(message: str) -> bool:
@@ -152,8 +155,8 @@ class GitHub:
 
         Note that labels, assignees and milestones are **silently dropped** by
         GitHub when the token lacks push access -- no error, no warning, and
-        every issue simply arrives unlabelled. Nothing here can detect that;
-        whoever emits should check its own token once rather than wonder later.
+        every issue simply arrives unlabelled. The returned `labels` are what
+        GitHub kept, so the caller compares them with what it sent.
         """
         payload: dict = {"title": title, "body": body}
         if labels:
@@ -166,6 +169,8 @@ class GitHub:
                 id=int(raw["id"]),
                 number=int(raw["number"]),
                 url=str(raw.get("html_url", "")),
+                labels=None if raw.get("labels") is None else tuple(
+                    str(l.get("name") if isinstance(l, dict) else l) for l in raw["labels"]),
             )
         except (KeyError, TypeError, ValueError) as exc:
             # Defaulting the id to 0 here would wire every dependency in the

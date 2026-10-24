@@ -53,6 +53,9 @@ class Tracker:
         # Whether attaching under a closed parent reopens it. UNVERIFIED on
         # GitHub, so both behaviours are tested.
         self.reopen_on_attach = False
+        # A token without push access: GitHub creates the issue and drops
+        # every label, silently (M30, DARK m1109-5).
+        self.drop_labels = False
 
     # -- the client surface --
     def create_issue(self, repo, title, body, labels=()):
@@ -60,8 +63,11 @@ class Tracker:
         self.issues[self.n] = {"title": title, "body": body,
                                "labels": list(labels), "state": "open",
                                "state_reason": "", "blocked_by": set()}
+        if self.drop_labels:
+            self.issues[self.n]["labels"] = []
         self.calls.append(("create", self.n))
-        return Issue(id=1000 + self.n, number=self.n, url=f"u/{self.n}")
+        return Issue(id=1000 + self.n, number=self.n, url=f"u/{self.n}",
+                     labels=tuple(self.issues[self.n]["labels"]))
 
     def add_blocked_by(self, repo, number, blocker_id):
         self.issues[number]["blocked_by"].add(blocker_id - 1000)
@@ -131,13 +137,14 @@ class Tracker:
 
 
 def ship(tmp_path, tracker, *, order=ORDER, edges=EDGES, waves=WAVES,
-         horizon=None, bodies=None, pickup=PICKUP, labels=(), lineage=False, fetch=None):
+         horizon=None, bodies=None, pickup=PICKUP, labels=(), lineage=False, fetch=None, **kw):
     bodies = bodies or {}
     return emit(lineage=lineage,
         log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
         order=list(order), edges=edges, waves=waves, horizon=horizon,
         fetch=fetch or (lambda k: payload(k, edges.get(k, ()), bodies.get(k, "the contract"))),
         client=tracker, now_fn=lambda: 1.0, pickup=pickup, labels=labels, project="dark",
+        **kw,
     )
 
 
@@ -743,6 +750,9 @@ def test_the_horizon_never_holds_back_an_edit(tmp_path):
 ORDER4 = ["S-01-T", "S-01", "S-02", "S-03"]
 EDGES4 = {"S-01": ("S-01-T",), "S-02": ("S-01",), "S-03": ("S-02",)}
 WAVES4 = [["S-01-T"], ["S-01"], ["S-02"], ["S-03"]]
+ORDER5 = ORDER4 + ["S-04"]
+EDGES5 = {**EDGES4, "S-04": ("S-03",)}
+WAVES5 = WAVES4 + [["S-04"]]
 
 
 def test_shipped_creates_only_what_live_issues_wait_on(tmp_path):
@@ -752,20 +762,64 @@ def test_shipped_creates_only_what_live_issues_wait_on(tmp_path):
     nobody has to remember how far the last press reached."""
     gh = Tracker()
     ship(tmp_path, gh, order=["S-02"], edges={}, waves=[["S-02"]])
-    result = ship(tmp_path, gh, horizon="shipped", order=ORDER4, edges=EDGES4, waves=WAVES4)
+    result = ship(tmp_path, gh, horizon="shipped", order=ORDER5, edges=EDGES5, waves=WAVES5)
     assert [c["key"] for c in result["created"]] == ["S-01-T", "S-01"]
-    assert result["held"] == ["S-03"]
+    assert result["held"] == ["S-03", "S-04"]
 
 
-def test_shipped_holds_a_new_unit_nothing_out_waits_on(tmp_path):
-    """New work beside the shipped region is still new work: it waits for a
-    press that opens waves."""
+def test_shipped_holds_new_work_more_than_one_step_past_the_frontier(tmp_path):
+    """New work beside the shipped region is still new work: a chain whose
+    leaf waits on a unit with no issue waits for a press that opens waves."""
     gh = Tracker()
     ship(tmp_path, gh)
-    grown = {**EDGES, "S-01b": ("S-01-T",)}
-    result = ship(tmp_path, gh, horizon="shipped", order=["S-01-T", "S-01", "S-01b", "S-02"],
-                  edges=grown, waves=[["S-01-T"], ["S-01", "S-01b"], ["S-02"]])
-    assert result["created"] == [] and result["held"] == ["S-01b"]
+    grown = {**EDGES, "S-01b": ("S-01-T",), "S-01c": ("S-01b",)}
+    result = ship(tmp_path, gh, horizon="shipped",
+                  order=["S-01-T", "S-01", "S-01b", "S-02", "S-01c"], edges=grown,
+                  waves=[["S-01-T"], ["S-01", "S-01b"], ["S-02", "S-01c"]])
+    assert result["created"] == [] and result["held"] == ["S-01b", "S-01c"]
+
+
+def test_shipped_includes_a_new_leaf_whose_blockers_are_all_out(tmp_path):
+    """M29, DARK S-331: the study was the goal of the cut, nothing waits on a
+    goal, and two `shipped` presses held it and its tests while everything it
+    waits on was out. A leaf one step past the frontier is created, with its
+    own test unit."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    order = ORDER + ["S-09-T", "S-09"]
+    edges = {**EDGES, "S-09": ("S-02", "S-09-T")}
+    result = ship(tmp_path, gh, horizon="shipped", order=order, edges=edges,
+                  waves=WAVES + [["S-09-T"], ["S-09"]])
+    assert [c["key"] for c in result["created"]] == ["S-09-T", "S-09"]
+    assert result["held"] == []
+
+
+def test_shipped_includes_the_owner_of_a_module_tests_on_the_tracker_import(tmp_path):
+    """M29, DARK S-229 / S-134: merged tests imported modules whose owners
+    nothing out waited on, so main stayed red. `uses` is test unit -> the
+    units owning what its scenarios import; the owner comes with what it
+    waits on, never with what waits on it."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    order = ORDER + ["S-05", "S-07", "S-06"]
+    edges = {**EDGES, "S-06": ("S-05", "S-07")}
+    waves = WAVES + [["S-05", "S-07"], ["S-06"]]
+    held = ship(tmp_path, gh, horizon="shipped", order=order, edges=edges, waves=waves)
+    assert held["created"] == [] and held["held"] == ["S-05", "S-07", "S-06"]
+    result = ship(tmp_path, gh, horizon="shipped", order=order, edges=edges, waves=waves,
+                  uses={"S-01-T": ("S-05",)})
+    assert [c["key"] for c in result["created"]] == ["S-05"]
+    assert result["held"] == ["S-07", "S-06"]
+
+
+def test_the_shipped_horizon_is_one_function_the_preview_shares(tmp_path):
+    """The pane's held count is what the press would hold, from the same code."""
+    from mu_spec.emit import shipped_horizon
+    gh = Tracker()
+    ship(tmp_path, gh, order=["S-02"], edges={}, waves=[["S-02"]])
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert shipped_horizon(ORDER5, EDGES5, live) == {"S-01-T", "S-01"}
+    assert shipped_horizon(ORDER5, EDGES5, {}) == set()
 
 
 def test_shipped_includes_an_implementation_whose_tests_are_out(tmp_path):
@@ -1375,3 +1429,150 @@ def test_a_loop_in_the_units_own_edges_still_refuses_before_any_write(tmp_path):
     assert result["emitted"] is False and gh.writes() == []
     assert result["refused"] == [{"cycle": ["S-01", "S-02", "S-01"]}]
     assert "S-01 -> S-02 -> S-01" in result["reason"]
+
+
+# -- M25: a renumber is not a contract change -----------------------------------
+
+
+def test_a_renumbered_scenario_that_moves_to_the_end_opens_no_follow_up(tmp_path):
+    """DARK S-260-T / S-263-T / S-315-T: T-347 became T-669 with the same text,
+    and because a unit lists its scenarios in id order the renamed one moved
+    to the end -- the masked fingerprint moved with it and a full follow-up
+    unit was opened for nothing. Entries are compared as a set."""
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-02", "second", ()), ("T-03", "third", ())])
+    gh.issues[1].update(state="closed", state_reason="completed")
+    result = _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-03", "third", ()),
+                                       ("T-04", "second", ("T-02",))])
+    assert result["follow_ups"] == []
+    assert "S-01-T" in [s["key"] for s in result["settled"]]
+
+
+def test_a_renumber_beside_a_real_change_still_follows_up(tmp_path):
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-02", "second", ())])
+    gh.issues[1].update(state="closed", state_reason="completed")
+    result = _scenarios(tmp_path, gh, [("T-01", "first, now stricter", ()),
+                                       ("T-04", "second", ("T-02",))])
+    assert [f["key"] for f in result["follow_ups"]] == ["S-01-T"]
+
+
+def test_a_v4_record_renumbered_is_compared_through_the_closed_issue(tmp_path):
+    """Records written before V5 hold an order-sensitive hash; the closed
+    issue's own text settles a renumber without a follow-up."""
+    import json
+    from mu_spec.emit import _contract_v4
+    gh = Tracker()
+    _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-02", "second", ()), ("T-03", "third", ())])
+    log = tmp_path / "emissions.jsonl"
+    lines = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
+    for line in lines:
+        for issue in line["issues"].values():
+            issue["contract"] = _contract_v4(gh.issues[issue["number"]]["body"])
+    log.write_text("".join(json.dumps(l) + "\n" for l in lines), encoding="utf-8")
+    gh.issues[1].update(state="closed", state_reason="completed")
+    same = _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-03", "third", ()),
+                                     ("T-04", "second", ("T-02",))])
+    assert same["follow_ups"] == []
+    moved = _scenarios(tmp_path, gh, [("T-01", "first", ()), ("T-03", "third, changed", ()),
+                                      ("T-04", "second", ("T-02",))])
+    assert [f["key"] for f in moved["follow_ups"]] == ["S-01-T"]
+
+
+# -- T-623: the implementation follows its tests ---------------------------------
+
+
+def test_tests_restated_after_the_implementation_merged_follow_up_the_implementation(tmp_path):
+    """DARK T-623: S-262 merged, then S-262-T's follow-ups redefined the
+    tests while S-262's own contract and write set stayed the same, and the
+    test sat red on main with no owner. The signal is mechanical: the test
+    unit's contract moved in a press where the implementation is closed
+    `completed`."""
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[1].update(state="closed", state_reason="completed")   # S-01-T
+    gh.issues[2].update(state="closed", state_reason="completed")   # S-01
+    result = ship(tmp_path, gh, bodies={"S-01-T": "the contract, restated"})
+    assert [(f["key"], f["follow_up_of"]) for f in result["follow_ups"]] == [
+        ("S-01-T", 1), ("S-01", 2)]
+    test_fu, impl_fu = (f["number"] for f in result["follow_ups"])
+    body = gh.issues[impl_fu]["body"]
+    assert "(follow-up to #2)" in gh.issues[impl_fu]["title"]
+    assert f"#{test_fu}" in body and "already satisfied" in body
+    assert "## Changed since" not in body, "its own contract did not change"
+    again = ship(tmp_path, gh, bodies={"S-01-T": "the contract, restated"})
+    assert again["follow_ups"] == [] and again["created"] == []
+
+
+def test_an_open_implementation_is_left_alone_when_its_tests_follow_up(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[1].update(state="closed", state_reason="completed")   # S-01-T only
+    result = ship(tmp_path, gh, bodies={"S-01-T": "the contract, restated"})
+    assert [f["key"] for f in result["follow_ups"]] == ["S-01-T"]
+    assert ("edit", 2) not in gh.calls
+
+
+def test_an_implementation_withdrawn_is_not_followed_up_for_its_tests(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.issues[1].update(state="closed", state_reason="completed")
+    gh.issues[2].update(state="closed", state_reason="not_planned")
+    result = ship(tmp_path, gh, bodies={"S-01-T": "the contract, restated"})
+    assert [f["key"] for f in result["follow_ups"]] == ["S-01-T"]
+
+
+# -- M30: one unit, and the labels GitHub kept --------------------------------------
+
+
+def test_one_unit_mode_creates_only_that_unit_and_touches_nothing_else(tmp_path):
+    """DARK p09-1 / m1201-8: two 144-issue batches shipped and withdrawn before
+    one ticket was seen to ingest. A press of one unit proves the loop."""
+    gh = Tracker()
+    result = ship(tmp_path, gh, only="S-01-T")
+    assert [c["key"] for c in result["created"]] == ["S-01-T"]
+    assert result["held"] == ["S-01", "S-02"]
+    gh.calls.clear()
+    edited = ship(tmp_path, gh, only="S-01-T", bodies={"S-01-T": "changed"},
+                  order=["S-01-T", "S-01"])
+    assert [e["key"] for e in edited["edited"]] == ["S-01-T"]
+    assert not [c for c in gh.writes() if c[0] in ("create", "close")]
+
+
+def test_one_unit_mode_never_withdraws_or_edits_another_unit(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh)
+    gh.calls.clear()
+    result = ship(tmp_path, gh, only="S-01", order=["S-01-T", "S-01"],
+                  bodies={"S-01-T": "changed"})
+    assert gh.writes() == [] and result["withdrawn"] == [] and result["edited"] == []
+    assert result["swept"] == []
+
+
+def test_one_unit_mode_wires_the_orders_that_touch_it(tmp_path):
+    gh = Tracker()
+    ship(tmp_path, gh, horizon=1)
+    result = ship(tmp_path, gh, only="S-01")
+    assert [c["key"] for c in result["created"]] == ["S-01"]
+    assert gh.issues[2]["blocked_by"] == {1}
+    assert result["unwired"] == []
+
+
+def test_one_unit_mode_refuses_a_key_not_in_the_cut(tmp_path):
+    gh = Tracker()
+    result = ship(tmp_path, gh, only="S-99")
+    assert result["emitted"] is False and "S-99" in result["reason"] and gh.calls == []
+
+
+def test_labels_github_dropped_on_create_are_reported(tmp_path):
+    """DARK m1109-5: a token without push access gets every issue created and
+    every label dropped, silently. Compared on the create's own response."""
+    gh = Tracker()
+    gh.drop_labels = True
+    result = ship(tmp_path, gh, only="S-01-T", labels=("team:x",))
+    [bare] = result["unlabelled"]
+    assert bare["key"] == "S-01-T" and "team:x" in bare["missing"]
+    assert result["counts"]["unlabelled"] == 1
+    gh.drop_labels = False
+    fine = ship(tmp_path, gh, only="S-01", labels=("team:x",))
+    assert fine["unlabelled"] == []

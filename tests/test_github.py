@@ -113,6 +113,18 @@ def test_creating_an_issue_returns_both_the_id_and_the_number():
     }
 
 
+def test_a_created_issue_says_which_labels_github_kept():
+    """M30: GitHub drops labels silently for a token without push access
+    (DARK m1109-5). What it kept comes back on the create, so a press can
+    compare it with what it sent; absent means the response did not say."""
+    gh, _, _ = client(FakeResponse({"id": 1, "number": 2, "labels": [
+        {"name": "kind:test"}, "mu-spec:S-01"]}))
+    assert gh.create_issue(REPO, "t", "b", ["kind:test", "team:x"]).labels == (
+        "kind:test", "mu-spec:S-01")
+    gh, _, _ = client(FakeResponse({"id": 1, "number": 2}))
+    assert gh.create_issue(REPO, "t", "b").labels is None
+
+
 def test_every_request_carries_the_headers_github_requires():
     """`X-GitHub-Api-Version` pins the shape this client was written against --
     without it a future default could change a field under us. A `User-Agent`

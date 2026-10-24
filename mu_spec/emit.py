@@ -484,6 +484,11 @@ _V3 = "3:"
 # still compared as V3 -- DARK's hold V1, V2 or none, read through the closed
 # issue's own text -- so no closed issue moves because the fingerprint grew.
 _V4 = "4:"
+# V5 (M25) reads the contract's entries as a set: a unit lists its scenarios in
+# id order, so a renumbered scenario moved to the end and V4 saw a change in an
+# unchanged contract (DARK S-260-T, S-263-T, S-315-T). A V4 record is compared
+# through the closed issue's own text, so nothing settled moves because of it.
+_V5 = "5:"
 _WRITE_PATH = re.compile(r"^- `([^`]+)`$", re.M)
 
 
@@ -503,12 +508,38 @@ def contract_of(body: str) -> str:
     Context -- blockers, the read set, the other contracts a file serves,
     labels -- is not in it, so a closed issue whose context moved stays
     settled and one whose contract moved gets a follow-up. The write set is
-    in it (V4): a file the unit did not own when it merged is unmet work."""
+    in it (V4): a file the unit did not own when it merged is unmet work.
+    Its entries are a set (V5): a renumber that reorders them is no change."""
+    return _V5 + hashlib.sha256(
+        "\n".join(_entry_digests(body) + _write_paths(body)).encode()).hexdigest()
+
+
+def _write_paths(body: str) -> list[str]:
     text = (body or "").replace("\r\n", "\n")
     _, found, rest = text.partition(_AFTER_CONTRACT)
-    paths = sorted(_WRITE_PATH.findall(rest.split("\n## ", 1)[0])) if found else []
+    return sorted(_WRITE_PATH.findall(rest.split("\n## ", 1)[0])) if found else []
+
+
+def _entry_digests(body: str) -> list[str]:
+    """The contract as what precedes its first entry, then each entry's
+    masked digest, sorted."""
+    text = (body or "").replace("\r\n", "\n")
+    _, found, rest = text.partition("## Contract")
+    section = strip_provenance(rest.split(_AFTER_CONTRACT, 1)[0]) if found else ""
+    parts = _ENTRY_HEAD.split(section)
+    return [_digest(parts[0])] + sorted(_digest(parts[i + 1]) for i in range(1, len(parts) - 1, 2))
+
+
+def _contract_set(body: str) -> str:
+    """The contract alone, entries as a set: how a record older than V4 is
+    told a renumber from a change, through the closed issue's own text."""
+    return hashlib.sha256("\n".join(_entry_digests(body)).encode()).hexdigest()
+
+
+def _contract_v4(body: str) -> str:
+    """The fingerprint records held before V5: entries in order."""
     return _V4 + hashlib.sha256(
-        "\n".join([_contract_v3(body)] + paths).encode()).hexdigest()
+        "\n".join([_contract_v3(body)] + _write_paths(body)).encode()).hexdigest()
 
 
 def _contract_v3(body: str) -> str:
@@ -619,27 +650,37 @@ def _contract_moved(recorded: "str | None", issue_body: str, ticket_body: str) -
     """Whether the contract a closed issue was emitted with differs from the
     ticket as it renders now. A record from before the current fingerprint is
     compared through the issue's own text rather than its hash, so the change
-    of fingerprint is not mistaken for a change of contract."""
-    if recorded and recorded.startswith(_V4):
+    of fingerprint is not mistaken for a change of contract. Whatever the
+    record, a contract whose entries are the same set as the closed issue's
+    is not moved (M25): a renumber reorders them and asks for nothing."""
+    if recorded and recorded.startswith(_V5):
         return recorded != contract_of(ticket_body)
+    if recorded and recorded.startswith(_V4):
+        if recorded == _contract_v4(ticket_body):
+            return False
+        return not issue_body or contract_of(issue_body) != contract_of(ticket_body)
     # Everything older compares as it did before V4: the write set it never
     # recorded must not read as a change.
     if recorded and recorded.startswith(_V3):
-        return recorded != _contract_v3(ticket_body)
-    if issue_body:
-        return _contract_v3(issue_body) != _contract_v3(ticket_body)
-    if recorded and recorded.startswith(_V2):
+        moved = recorded != _contract_v3(ticket_body)
+    elif issue_body:
+        moved = _contract_v3(issue_body) != _contract_v3(ticket_body)
+    elif recorded and recorded.startswith(_V2):
         text = (ticket_body or "").replace("\r\n", "\n").partition("## Contract")[2]
-        return recorded != _V2 + _digest(text.split(_AFTER_CONTRACT, 1)[0])
-    return recorded != _contract_v1(ticket_body)
+        moved = recorded != _V2 + _digest(text.split(_AFTER_CONTRACT, 1)[0])
+    else:
+        moved = recorded != _contract_v1(ticket_body)
+    return moved and not (issue_body and _contract_set(issue_body) == _contract_set(ticket_body))
 
 
-def _follow_up(ticket, of: int, delta: str = "") -> "tuple[str, str]":
+def _follow_up(ticket, of: int, delta: str = "", retest: bool = False) -> "tuple[str, str]":
     """Title and body of a follow-up: the ticket as rendered, pointing back,
-    with what changed since `of` between the two."""
+    with what changed since `of` between the two. `retest`: what changed is
+    the tests that judge it, not its own contract (T-623)."""
+    what = "the tests that judge it" if retest else "this contract"
     return (f"{ticket.title} (follow-up to #{of})",
-            f"> **Follow-up to #{of}.** That issue is closed and its work merged; this "
-            f"contract changed after it. Build the difference against what #{of} "
+            f"> **Follow-up to #{of}.** That issue is closed and its work merged; {what} "
+            f"changed after it. Build the difference against what #{of} "
             "merged -- everything below is the contract as it now stands. If what "
             f"#{of} merged already satisfies it, close this as already satisfied.\n\n"
             + (delta + "\n\n" if delta else "") + ticket.body)
@@ -688,8 +729,18 @@ def _delta(old_body: str, ticket_body: str, entries, of: int, diffs: bool = True
                                              lineterm="", n=1))[2:]
             lines.append("````diff\n" + "\n".join(diff) + "\n````")
     lines += [f"- `{ident}` — removed" for ident in old if ident not in claimed and ident not in new]
-    return (f"## Changed since #{of}\n\n" + ("\n".join(lines) if lines else
-            "No entry was added, removed or changed; only identifiers or layout moved."))
+    return (f"## Changed since #{of}\n\n" + ("\n".join(lines) if lines else _NO_CHANGE))
+
+
+_NO_CHANGE = "No entry was added, removed or changed; only identifiers or layout moved."
+
+
+def _retested(of: int, test_key: str, number) -> str:
+    """Above an implementation follow-up opened because its tests moved (T-623)."""
+    return (f"## Tests changed since #{of}\n\n`{test_key}` was restated after #{of} "
+            f"merged: its follow-up #{number} redefines the scenarios that judge this "
+            "unit, while this unit's own contract stayed the same. Make the code pass "
+            "them, or close this as already satisfied.")
 
 
 _FOLLOW_TITLE = re.compile(r"\(follow-up to #(\d+)\)\s*$")
@@ -868,6 +919,48 @@ def rollback(
     }
 
 
+def shipped_horizon(order, edges: dict, live, uses: "dict | None" = None) -> set[str]:
+    """The units with no issue a `shipped` press creates (docs/TICKETS.md §5):
+    everything a live issue waits on, transitively -- the gaps under the
+    frontier. Three kinds of unit count as waited on, and each brings what it
+    waits on, never what waits on it: an implementation whose own tests are
+    out (merged tests with no code are broken); a unit owning what a test unit
+    that is out imports (M29, DARK S-229 / S-134: `uses`, test key -> owners);
+    and a new leaf one step past the frontier -- nothing waits on it, and
+    everything it waits on beyond its own test unit is out or comes in this
+    press (M29, DARK S-331: the goal of a cut, held by two presses). With
+    nothing out it creates nothing. One function, so the pane's held count is
+    what the press holds."""
+    if not live:
+        return set()
+    missing = [k for k in order if k not in live]
+    mates = [k for k in missing if not is_test_key(k) and k + TEST_SUFFIX in live]
+    mates += [u for t, owners in sorted((uses or {}).items()) if t in live
+              for u in owners if u in missing and u not in mates]
+    allowed, stack = set(mates), [k for k in order if k in live] + mates
+    while stack:
+        for blocker in edges.get(stack.pop(), ()) or ():
+            if blocker not in allowed:
+                allowed.add(blocker)
+                stack.append(blocker)
+    waited: dict[str, set[str]] = {}
+    for key in order:
+        for blocker in edges.get(key, ()) or ():
+            waited.setdefault(blocker, set()).add(key)
+    out = {k for k in missing if k in allowed}
+    for leaf in missing:
+        if leaf in waited or leaf in out:
+            continue
+        group = {leaf}
+        mate = leaf + TEST_SUFFIX
+        if not is_test_key(leaf) and mate in missing and waited.get(mate) == {leaf}:
+            group.add(mate)
+        if all(b in live or b in out or b in group
+               for m in group for b in edges.get(m, ()) or ()):
+            out |= group
+    return out
+
+
 def emit(
     *,
     log_path: Path,
@@ -886,8 +979,15 @@ def emit(
     project: "str | None" = None,
     retired: "dict[str, str | None] | None" = None,
     lineage: bool = False,
+    uses: "dict[str, tuple[str, ...]] | None" = None,
+    only: "str | None" = None,
 ) -> dict:
     """Make the tracker say what the cut says (docs/TICKETS.md §3).
+
+    `only` is the one-unit press (M30): that unit is created or edited, the
+    orders touching it are wired, and nothing else is written -- no other
+    edit, no withdrawal, no sweep. The probe before a full batch. `uses` is
+    the `shipped` horizon's test unit -> owners of what it imports (M29).
 
     Per unit: unchanged -> nothing, and no call at all; changed and untouched
     -> edited in place; changed and touched -> reported; new -> created;
@@ -941,6 +1041,18 @@ def emit(
             "repo": repo,
             "cut_seq": cut_seq,
         }
+    if only is not None and only not in order:
+        return {
+            "emitted": False,
+            "reason": f"{only} is not a work unit of cut {cut_seq}, so there is "
+                      "nothing to ship for it",
+            "repo": repo,
+            "cut_seq": cut_seq,
+        }
+
+    def in_scope(key: str) -> bool:
+        """Whether this press may write for `key`: every unit, or the one."""
+        return only is None or key == only
 
     # The sequence the emission record will carry, and so the batch every
     # ticket written in this press is stamped with.
@@ -950,7 +1062,7 @@ def emit(
     ours = _open_by_key(client, repo, project)
     adopted: list[dict] = []
     for key in order:
-        if key in live or not (ours or {}).get(key):
+        if key in live or not (ours or {}).get(key) or not in_scope(key):
             continue
         first = ours[key][0]
         live[key] = _adopt(first, pickup)
@@ -974,18 +1086,11 @@ def emit(
 
     missing = [key for key in order if key not in live]
     held: list[str] = []
-    if horizon == "shipped":
-        # Everything a live issue waits on, transitively: the gaps under the
-        # frontier, never past it. An implementation whose own tests are out
-        # counts as waited on -- merged tests with no code are broken whether or
-        # not anything follows it -- and brings only what it waits on.
-        mates = [k for k in order if k not in live and not is_test_key(k) and k + TEST_SUFFIX in live]
-        allowed, stack = set(mates), [k for k in order if k in live] + mates
-        while stack:
-            for blocker in edges.get(stack.pop(), ()):
-                if blocker not in allowed:
-                    allowed.add(blocker)
-                    stack.append(blocker)
+    if only is not None:
+        held = [key for key in missing if key != only]
+        missing = [key for key in missing if key == only]
+    elif horizon == "shipped":
+        allowed = shipped_horizon(order, edges, live, uses)
         held = [key for key in missing if key not in allowed]
         missing = [key for key in missing if key in allowed]
     elif horizon is not None and waves:
@@ -1010,6 +1115,8 @@ def emit(
     dead: list[dict] = []
     linked: list[dict] = []
     unlinked: list[dict] = []
+    # Issues GitHub created without labels this press sent (M30, m1109-5).
+    unlabelled: list[dict] = []
     # The payload each key was rendered from, and every issue state read.
     asks: dict[str, dict] = {}
     seen: dict[int, dict] = {}
@@ -1019,9 +1126,12 @@ def emit(
     issues: dict[str, dict] = dict(live)
     # Whether a settled marker was set or cleared, so the record carries it.
     marks = {"changed": False}
+    # Implementation key -> the number of its test unit's follow-up, when this
+    # press followed it up because the tests moved after it merged (T-623).
+    retests: dict[str, int] = {}
     # Issues whose dependencies are frozen: picked up, or unreadable.
     frozen: set[str] = set()
-    work = [k for k in order if k in live or k in missing]
+    work = [k for k in order if (k in live or k in missing) and in_scope(k)]
     # How many orders the wiring step will declare, once it is known. That
     # step is one GitHub call per edge and can outlast everything before it;
     # without a total the page sat at "109 of 109" for thirteen minutes.
@@ -1126,11 +1236,33 @@ def emit(
             except (GitHubError, TypeError, ValueError, AttributeError):
                 state = {}
         entries = (asks.get(key) or {}).get("entries")
-        title, body = _follow_up(ticket, of, _delta(state.get("body") or "", ticket.body, entries, of))
+        retest = retests.get(key) or (issues.get(key) or {}).get("retest")
+
+        def head(diffs: bool) -> str:
+            delta = _delta(state.get("body") or "", ticket.body, entries, of, diffs=diffs)
+            if not retest:
+                return delta
+            # Opened because its tests moved (T-623): say so, and add the
+            # delta only if its own contract moved too.
+            note = _retested(of, key + TEST_SUFFIX, retest)
+            return note + ("\n\n" + delta if delta and not delta.endswith(_NO_CHANGE) else "")
+
+        title, body = _follow_up(ticket, of, head(True), retest=bool(retest))
         if len(body) > BODY_LIMIT:
-            title, body = _follow_up(ticket, of, _delta(state.get("body") or "", ticket.body,
-                                                       entries, of, diffs=False))
+            title, body = _follow_up(ticket, of, head(False), retest=bool(retest))
         return title, body
+
+    def check_labels(key: str, issue, sent) -> None:
+        """What GitHub kept against what was sent, from the create's own
+        response: a token without push access drops every label silently."""
+        kept = getattr(issue, "labels", None)
+        if kept is None:
+            return
+        lost = [label for label in sent if label not in kept]
+        if lost:
+            unlabelled.append({"key": key, "number": issue.number, "missing": lost,
+                               "reason": "GitHub created the issue without these labels -- "
+                                         "does the token have push access?"})
 
     def verify(open_now: set[int]) -> None:
         """After the press, as a consumer would read it: every blocker an open,
@@ -1224,7 +1356,7 @@ def emit(
     now_wired = {p for p in wired_before if all(k in issues for k in p.split("<-"))}
     try:
         # -- units that left the cut: withdraw, highest number first --------------
-        gone = sorted((k for k in live if k not in in_cut),
+        gone = sorted((k for k in live if k not in in_cut and only is None),
                       key=lambda k: -int(live[k].get("number") or 0))
         for key in gone:
             reason = still_settled(key, "gone")
@@ -1259,7 +1391,7 @@ def emit(
 
         # -- units already out: compare, edit what changed ------------------------
         for key in order:
-            if key not in live:
+            if key not in live or not in_scope(key):
                 continue
             try:
                 ticket = render(fetched(key), repo=repo, cut_seq=cut_seq,
@@ -1270,7 +1402,16 @@ def emit(
                 frozen.add(key)
                 tick("editing")
                 continue
-            if ticket.fingerprint == live[key].get("fingerprint"):
+            # T-623: this press opened a follow-up for the unit's tests, so if
+            # the implementation is merged its code is judged by tests it was
+            # never built against. A test unit precedes its implementation in
+            # `order`, so the follow-up is already known here.
+            # ponytail: in-press signal only; a press that dies between the two
+            # follow-ups loses the second. Persist a marker if that bites.
+            retest = next((f["number"] for f in follow_ups
+                           if not is_test_key(key) and f["key"] == key + TEST_SUFFIX), None)
+            unchanged = ticket.fingerprint == live[key].get("fingerprint")
+            if unchanged and retest is None:
                 skipped.append({"key": key, "number": live[key].get("number"),
                                 "url": live[key].get("url", ""),
                                 "reason": f"already emitted as #{live[key].get('number')}, "
@@ -1284,7 +1425,7 @@ def emit(
                 tick("editing")
                 continue
             reason = still_settled(key, ticket.fingerprint)
-            if reason is not None:
+            if reason is not None and not (retest and reason == "completed"):
                 settled.append({"key": key, "number": live[key].get("number"),
                                 "reason": f"context changed, contract did not: closed as "
                                           f"{reason} by someone else -- left alone"})
@@ -1293,7 +1434,11 @@ def emit(
                 continue
             why, state = look(key)
             if why is not None and state.get("state") == "closed":
-                if not _contract_moved(live[key].get("contract"), state.get("body") or "", ticket.body):
+                retested = retest is not None and state.get("state_reason") == "completed"
+                if retested:
+                    retests[key] = retest
+                elif not _contract_moved(live[key].get("contract"), state.get("body") or "",
+                                         ticket.body):
                     settled.append({"key": key, "number": live[key].get("number"),
                                     "reason": f"context changed, contract did not: {why}"})
                     settle(key, ticket.fingerprint, state)
@@ -1329,13 +1474,23 @@ def emit(
                     frozen.add(key)
                     tick("editing")
                     continue
+                check_labels(key, issue, ticket.labels)
                 issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
                                "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
                                "batch": batch, "labels": list(ticket.labels), "follow_up_of": of,
-                               **tree}
+                               **({"retest": retests[key]} if key in retests else {}), **tree}
                 follow_ups.append({"key": key, "title": title, "number": issue.number,
                                    "url": issue.url, "follow_up_of": of,
-                                   "labels": list(ticket.labels)})
+                                   "labels": list(ticket.labels),
+                                   **({"retest": retests[key]} if key in retests else {})})
+                tick("editing")
+                continue
+            if unchanged:
+                # Only its tests moved, and it is not merged: nothing to write.
+                skipped.append({"key": key, "number": live[key].get("number"),
+                                "url": live[key].get("url", ""),
+                                "reason": f"already emitted as #{live[key].get('number')}, "
+                                          "unchanged"})
                 tick("editing")
                 continue
             if why is not None:
@@ -1372,6 +1527,7 @@ def emit(
                 failed.append({"key": key, "reason": str(exc)})
                 tick("creating")
                 continue
+            check_labels(key, issue, ticket.labels)
             # The labels written are recorded so a later edit can remove the ones
             # this unit put there -- a project label renamed since is still ours.
             issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
@@ -1388,7 +1544,7 @@ def emit(
         for key in order if lineage else ():
             mine = issues.get(key) or {}
             root = mine.get("root")
-            if not root or mine.get("linked"):
+            if not root or mine.get("linked") or not in_scope(key):
                 continue
             parent = int(root.get("number") or 0)
             try:
@@ -1430,7 +1586,7 @@ def emit(
             before, orders["now"] = orders["now"], post
             for key in order:
                 mine = issues.get(key) or {}
-                if (post.get(key) == before.get(key) or key in frozen
+                if (post.get(key) == before.get(key) or key in frozen or not in_scope(key)
                         or int(mine.get("number") or 0) not in open_after):
                     continue
                 try:
@@ -1465,10 +1621,13 @@ def emit(
         now_wired = {p for p in wired_before
                      if all(k in issues for k in p.split("<-"))
                      and not renewed.intersection(p.split("<-"))}
+        def touches(blocked: str, blocker: str) -> bool:
+            return only is None or only in (blocked, blocker)
+
         pace["to_wire"] = sum(
             1 for blocked in order if blocked in issues and blocked not in frozen
             for blocker in wiring.get(blocked, ()) or ()
-            if _pair(blocked, blocker) not in now_wired)
+            if _pair(blocked, blocker) not in now_wired and touches(blocked, blocker))
         tick("wiring")
         # The order as GitHub holds it, for every open issue nobody picked up:
         # the record keeps pairs of keys, not which issue a link points at, so
@@ -1478,7 +1637,9 @@ def emit(
         synced: set[str] = set()
         if ours is not None and hasattr(client, "blocked_by"):
             for blocked in order:
-                if blocked not in issues or blocked in frozen                         or int(issues[blocked].get("number") or 0) not in open_numbers                         or any(l in pickup for l in open_labels.get(int(issues[blocked]["number"]), ())):
+                if (blocked not in issues or blocked in frozen or not in_scope(blocked)
+                        or int(issues[blocked].get("number") or 0) not in open_numbers
+                        or any(l in pickup for l in open_labels.get(int(issues[blocked]["number"]), ()))):
                     continue
                 try:
                     native = client.blocked_by(repo, int(issues[blocked]["number"]))
@@ -1506,7 +1667,7 @@ def emit(
                 continue
             for blocker in wiring.get(blocked, ()) or ():
                 pair = _pair(blocked, blocker)
-                if pair in now_wired:
+                if pair in now_wired or not touches(blocked, blocker):
                     continue
                 there = issues.get(blocker)
                 if not there:
@@ -1538,7 +1699,8 @@ def emit(
         # `not_planned` as never satisfied.
         for pair in sorted(wired_before):
             blocked, _, blocker = pair.partition("<-")
-            if pair in wanted or blocked not in issues or blocked in frozen or blocked in synced:
+            if (pair in wanted or blocked not in issues or blocked in frozen or blocked in synced
+                    or not in_scope(blocked)):
                 continue
             source = live.get(blocker)
             if not source:
@@ -1554,7 +1716,7 @@ def emit(
 
         # Orphans: open issues of ours that no key owns -- duplicates a lost
         # record left behind, follow-ups the contract no longer calls for.
-        if ours is not None and pickup:
+        if ours is not None and pickup and only is None:
             owned = {int(v["number"]) for v in issues.values() if v.get("number") is not None}
             # A root issue an attach reopened is ours and owned by no key, and
             # its work is merged: sweeping it would overwrite `completed`.
@@ -1626,6 +1788,8 @@ def emit(
         "dead": dead,
         "linked": linked,
         "unlinked": unlinked,
+        "unlabelled": unlabelled,
+        "only": only,
         # Derived this press, never stored as an entry edge (M31, D11).
         "merge_order": merge_order,
         # Orders a loop ran through: dropped, never a refusal (2026-10-24).
@@ -1650,6 +1814,7 @@ def emit(
             "dead": len(dead),
             "linked": len(linked),
             "unlinked": len(unlinked),
+            "unlabelled": len(unlabelled),
             "merge_order": len(merge_order),
             "dropped_orders": sum(len(d["orders"]) for d in orders["dropped"]),
         },
