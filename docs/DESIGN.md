@@ -340,7 +340,9 @@ not have, which then had to be contracted and reported.
 ### Identity, and the cut
 
 Identity **is** the spec entry, plus which of the two kinds the unit is — `S-13` and
-`S-13-T`. Nothing is allocated and nothing is stored, so two projections of the same
+`S-13-T` — named by the first id of the entry's supersession chain (its lineage root), so
+an amendment never renames a unit (M13; `docs/TICKETS.md` §1). Nothing is allocated and
+nothing is stored, so two projections of the same
 graph agree without consulting each other, and a unit's name is readable by whoever
 receives the ticket rather than being a digest nobody can place.
 

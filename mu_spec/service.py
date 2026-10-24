@@ -1134,8 +1134,19 @@ def get_slice_context(store: ProjectStore, project: str, slice_name: str) -> dic
 # -- work units -------------------------------------------------------------
 
 
+def _lineage(store: ProjectStore, project: str) -> bool:
+    """Whether this project's units are keyed by lineage root (M13, D1):
+    decided by its emission record, `emit.keyed_by_lineage`. An unreadable
+    record reads as the old scheme -- and refuses every press anyway."""
+    try:
+        return emitting.keyed_by_lineage(store.emissions_path(project))
+    except emitting.EmissionError:
+        return False
+
+
 def _projection(store: ProjectStore, project: str):
-    return units.project(store.load_manifest(project), store.load_graph(project))
+    return units.project(store.load_manifest(project), store.load_graph(project),
+                         _lineage(store, project))
 
 
 def cut_units(
@@ -1184,7 +1195,7 @@ def cut_units(
             ],
         }
 
-    projection = units.project(manifest, graph)
+    projection = units.project(manifest, graph, _lineage(store, project))
     path = store.units_path(project)
     previous = units.current_cut(path)
     record = units.append_cut(path, projection, now_fn, body.get("note", ""))
@@ -1332,8 +1343,10 @@ def _work_units(store: ProjectStore, project: str) -> Callable[[str], dict]:
             "reason": "graph is unsound -- it contains orphaned entries",
             "gates": gates,
         }
-    projection = units.project(manifest, graph)
-    renamed = _renamed(graph)
+    lineage = _lineage(store, project)
+    projection = units.project(manifest, graph, lineage)
+    # A lineage key is never renamed, so nothing has an old key to name.
+    renamed = {} if lineage else _renamed(graph)
     by_key = projection.by_key()
     unit_of = projection.unit_of()
     return lambda entry: _work_unit(graph, manifest, projection, renamed, by_key,
@@ -1464,6 +1477,8 @@ def _work_unit(graph, manifest, projection, renamed, by_key, unit_of,
         "project": project,
         "issued": True,
         "unit": unit.to_json(),
+        # The anchor's supersession chain, first id to live one.
+        "lineage": [*reversed(_was(graph, unit.anchor)), str(unit.anchor)],
         "write_set": list(unit.modules),
         # Each with the ids it superseded, nearest first, so a follow-up can
         # tell a renumbering from a removal and an addition.
@@ -1654,9 +1669,10 @@ def _was(graph: Graph, identifier: Identifier) -> list[str]:
 def _renamed(graph: Graph) -> dict[str, tuple[str, ...]]:
     """Unit key -> the unit keys its anchor superseded, nearest first.
 
-    A unit is keyed by its spec anchor, so superseding the anchor renames the
-    unit while the work stays the same. The sync reads this to hand the new
-    key its predecessor's issue instead of opening a second one."""
+    Only for a project keyed by live anchor (DARK), where superseding an anchor
+    renamed its unit: a dependent's `blocked_by_was` names the blocker's old
+    keys, because a touched issue's block may still carry one. Its tickets
+    must keep rendering byte for byte, or every one would read as changed."""
     out: dict[str, tuple[str, ...]] = {}
     for entry in graph.entries():
         chain = [parse(p) for p in _was(graph, entry.id)]
@@ -1718,8 +1734,7 @@ def emission_refusal(store: ProjectStore, project: str) -> dict | None:
         return None
     graph = store.load_graph(project)
     try:
-        live, _ = emitting.standing(store.emissions_path(project), manifest.repo or "",
-                                    _renamed(graph))
+        live, _ = emitting.standing(store.emissions_path(project), manifest.repo or "")
     except emitting.EmissionError:
         live = {}
     refused = _retired_citations(graph, [u.key for u in cut.units],
@@ -1795,7 +1810,8 @@ def emit_tickets(
         }
 
     graph = store.load_graph(project)
-    live = units.project(manifest, graph)
+    lineage = _lineage(store, project)
+    live = units.project(manifest, graph, lineage)
     drift = units.drift(cut, live)
     if drift["changed"] or drift["edges_changed"]:
         return {
@@ -1838,12 +1854,11 @@ def emit_tickets(
     # refuses the whole press. Provenance lines are stripped first, and unit
     # keys are names, not citations.
     fetch = _work_units(store, project)
-    renamed = _renamed(graph)
     retired = _retired_map(graph)
     refused = _retired_citations(
         graph, order, fetch,
         emitting.completed(emitting.standing(store.emissions_path(project),
-                                             manifest.repo, renamed)[0]), retired)
+                                             manifest.repo)[0]), retired)
     if refused:
         return _retired_refusal(project, manifest.repo, cut.seq, refused)
 
@@ -1864,9 +1879,9 @@ def emit_tickets(
         waves=[list(w) for w in schedule.waves],
         horizon=horizon,
         pickup=manifest.pickup,
-        renamed=renamed,
         project=project,
         retired=retired,
+        lineage=lineage,
     )
     result["project"] = project
     if events is not None and result.get("emitted"):
@@ -2034,9 +2049,7 @@ def get_emission(
     if cut is not None and repo:
         # The same function `emit` skips on, not a second copy of its rule.
         # These were two copies until a withdrawal made them disagree.
-        already, _wired = emitting.standing(
-            store.emissions_path(project), repo,
-            _renamed(store.load_graph(project)))
+        already, _wired = emitting.standing(store.emissions_path(project), repo)
 
     return {
         "project": project,

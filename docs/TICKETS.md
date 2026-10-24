@@ -21,12 +21,26 @@ DARK reached 288 issues for 144 units.
 
 *Live* means this unit created the issue, and has not since recorded closing it.
 
-**A superseded anchor keeps its issue.** A unit key is its spec anchor, so superseding
-`S-107` with `S-127` renames units `S-107`/`S-107-T` to `S-127`/`S-127-T`. The work is the
-same, so the new key takes over the old key's issue and edges: it is edited in place if
-untouched and reported if touched (§2). It is never withdrawn and recreated. The issue's
-title and machine block then carry the new key, and a consumer matching on `repo#key` sees a
-new key on an issue number it already knows.
+**A unit key is its lineage root (M13, D1, ratified 2026-10-24).** The key is the first id
+of the anchor's supersession chain, forever: `S-107` → `S-127` → `S-140` stays `S-107` /
+`S-107-T`. The graph still mints new ids; only the name of the unit stops moving. The ticket
+names the live entry: the title leads with it, `S-140 (rev of S-107) — <paths>` (leading,
+because a long write set truncates the end of a title), the body opens with the chain, and
+the machine block's `anchor` is the live id while `key` stays the root.
+
+**One tree of issues per unit.** The root issue is created for the first id. Untouched and
+open, it is edited in place as the anchor moves. Once closed, a contract change opens a
+follow-up (§2) that is also attached as a GitHub **sub-issue under the root** -- every
+follow-up, however many, under the same root. A link that fails is recorded and retried by
+the next press; the follow-up is never created twice. A 422 for a link GitHub already holds
+is done. Closed issues are never reopened by this unit; a parent found open after an attach
+is reported in `raced`, and nothing is closed for it.
+
+**Projects keyed the old way stay so.** A project whose emission record holds any line
+without `"keys": "lineage"` -- DARK, frozen -- keeps its units keyed by their live anchor,
+decided from that record and never configured. Its tickets render byte for byte as before,
+`blocked_by_was` included. Its anchors no longer hand their issue to a renamed key: every
+rename DARK made is already recorded under the new key, and DARK takes no new amendments.
 
 ## 2. Touched
 
@@ -157,7 +171,8 @@ consumer's business.
 - **Ordering across presses needs nothing new.** A blocker always sits in an earlier
   wave, or is created in the same press. The consumer admits a unit only when every
   `blocked_by` key is closed `completed`. A blocker not yet shipped just waits.
-- **A blocker may be closed under an old key.** The machine block also carries
+- **A blocker may be closed under an old key** (projects keyed by live anchor only; a
+  lineage key never changes, so the map below is always `{}`). The machine block also carries
   `blocked_by_was`: blocker key → the keys it had before its anchor was superseded
   (§1), e.g. `{"S-127-T": ["S-107-T"]}`, and `{}` when no blocker was renamed. A
   touched issue is never edited, so its own block can still say `S-107-T`. A blocker

@@ -131,6 +131,23 @@ def unit_key(anchor: Identifier, tests: bool = False) -> str:
     return f"{anchor}{TEST_SUFFIX if tests else ''}"
 
 
+def lineage_root(graph: Graph, identifier: Identifier) -> Identifier:
+    """The first id of `identifier`'s supersession chain: S-140 superseded
+    S-127, which superseded S-107, so S-107.
+
+    A unit's key (M13, D1). The graph mints a new id on every amendment; keyed
+    by the live anchor, every amendment renamed the unit, and a rename needed
+    machinery to hand the old key's issue to the new one. Keyed by the root,
+    the name never moves and the live id is a fact the ticket states."""
+    seen = {identifier}
+    entry = graph.get(identifier)
+    while entry is not None and entry.supersedes is not None and entry.supersedes not in seen:
+        identifier = entry.supersedes
+        seen.add(identifier)
+        entry = graph.get(identifier)
+    return identifier
+
+
 @dataclasses.dataclass(frozen=True)
 class Unit:
     key: str
@@ -400,6 +417,7 @@ def _build(
     entry_modules: dict[Identifier, list[str]],
     entry_slice: dict[Identifier, str],
     graph: Graph,
+    lineage: bool = True,
 ) -> list[Unit]:
     """One unit per implemented spec entry, plus one per spec entry with
     built scenarios.
@@ -434,7 +452,15 @@ def _build(
         key=sort_key,
     )
     units: list[Unit] = []
+    named: set[Identifier] = set()
     for anchor in anchors:
+        # Two live entries share a root only when both supersede one id --
+        # `two_successors`, which refuses the cut. The live view still has to
+        # name both, so the second keeps its own anchor.
+        base = lineage_root(graph, anchor) if lineage else anchor
+        if base in named:
+            base = anchor
+        named.add(base)
         # Tests first, so a unit and the one that must precede it sit next to
         # each other in every listing that does not re-sort.
         for tests in (True, False):
@@ -450,7 +476,7 @@ def _build(
             )
             units.append(
                 Unit(
-                    key=unit_key(anchor, tests),
+                    key=unit_key(base, tests),
                     anchor=anchor,
                     entries=held,
                     modules=modules,
@@ -569,7 +595,7 @@ def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]],
     for unit in units:
         if unit.tests:
             continue
-        mate = unit_key(unit.anchor, tests=True)
+        mate = unit.key + TEST_SUFFIX
         if mate in out:
             out[unit.key].add(mate)
 
@@ -579,15 +605,19 @@ def _edges(units: list[Unit], graph: Graph) -> tuple[dict[str, tuple[str, ...]],
     )
 
 
-def project(manifest: Manifest, graph: Graph) -> Projection:
+def project(manifest: Manifest, graph: Graph, lineage: bool = True) -> Projection:
     """Compute the work units of a project.
 
     Deterministic and side-effect free. An empty module map yields no units
     and every spec entry unimplemented -- described rather than refused,
     because a person who cannot cut needs to be able to see why.
+
+    `lineage` keys each unit by its anchor's lineage root (`lineage_root`).
+    False keys it by the live anchor, the scheme of a project whose emission
+    record predates lineage keys; the caller reads which from that record.
     """
     entry_modules, entry_slice, stale = _invert(manifest, graph)
-    units = _build(entry_modules, entry_slice, graph)
+    units = _build(entry_modules, entry_slice, graph, lineage)
     edges, dangling = _edges(units, graph)
 
     unimplemented = tuple(

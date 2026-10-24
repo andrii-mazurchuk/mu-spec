@@ -58,6 +58,13 @@ ROLLBACK = "rollback"
 # overwrite. `completed` is somebody else's word and is never touched.
 WITHDRAWN = "not_planned"
 
+# The `keys` an emission record says its unit keys are: lineage roots.
+LINEAGE = "lineage"
+
+# What GitHub says when asked to attach a sub-issue it already holds. The
+# exact wording is unverified; both words have been seen in its 422s.
+_ALREADY_SUB = re.compile(r"duplicate|already", re.I)
+
 
 @dataclasses.dataclass(frozen=True)
 class Emission:
@@ -72,6 +79,9 @@ class Emission:
     # The edges actually wired, as "blocked<-blocker" pairs, so a re-run does
     # not ask GitHub to declare a dependency it already holds.
     wired: tuple[str, ...] = ()
+    # Whether the keys are lineage roots (M13, D1). Written as `"keys":
+    # "lineage"`; a record without it predates them, and so does its project.
+    lineage: bool = False
 
     def to_json(self) -> dict:
         return {
@@ -81,6 +91,7 @@ class Emission:
             "repo": self.repo,
             "issues": self.issues,
             "wired": list(self.wired),
+            **({"keys": LINEAGE} if self.lineage else {}),
         }
 
 
@@ -189,11 +200,23 @@ def read_emissions(path: Path) -> tuple[Emission, ...]:
                             for k, v in (raw.get("issues") or {}).items()},
                     wired=tuple(_canonical_pair(p)
                                 for p in (raw.get("wired") or ())),
+                    lineage=raw.get("keys") == LINEAGE,
                 )
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise EmissionError(f"{path}:{number} is not an emission: {exc}") from exc
     return tuple(out)
+
+
+def keyed_by_lineage(path: Path) -> bool:
+    """Whether a project's unit keys are lineage roots (M13, D1).
+
+    Read off its own emission record, never configured: true for a project
+    nothing has been emitted for yet, and for one whose every record says so.
+    One record without the marker -- DARK's whole log -- keeps the project on
+    the live-anchor keys its issues were created under, because re-keying
+    them would rename every unit an issue already carries."""
+    return all(e.lineage for e in read_emissions(path))
 
 
 def _append(path: Path, record) -> None:
@@ -380,9 +403,7 @@ class Runs:
         return run.snapshot() if run else None
 
 
-def standing(
-    log_path: Path, repo: str, renamed: "dict[str, tuple[str, ...]] | None" = None
-) -> tuple[dict[str, dict], set[str]]:
+def standing(log_path: Path, repo: str) -> tuple[dict[str, dict], set[str]]:
     """What is live on a repository: unit key -> issue, and the edges wired.
 
     The one place this is computed. It was two places for exactly as long as
@@ -405,16 +426,12 @@ def standing(
     set: an edge the cut dropped is removed from the tracker and from the
     next record, and a union across records would resurrect it.
 
-    **One key per issue.** Units are keyed by their spec anchor, so
-    superseding an anchor renames its unit. `renamed` maps a unit key to the
-    keys of the anchors it superseded, nearest first; a key with no issue of
-    its own adopts its predecessor's, with that predecessor's edges. Without
-    this the sync withdrew the old issue and opened a new one for the same
-    work -- or, if the old one was picked up, left it live and opened a second
-    copy beside it. And once a record holds an issue under its new key, the
-    older line holding it under the old key is history: read naively, a later
+    **One key per issue.** A record that holds an issue under a new key makes
+    an older line holding it under another key history: read naively, a later
     press would see the old key gone from the cut and close the issue the new
-    key owns.
+    key owns. DARK's log moved keys this way while units were keyed by their
+    live anchor; a lineage key (M13) never moves, and every DARK rename is
+    already recorded under its new key, so there is nothing left to alias.
     """
     emissions, rollbacks = read_log(log_path)
     mine = [e for e in emissions if e.repo == repo]
@@ -437,20 +454,8 @@ def standing(
         key: issue for key, issue in known.items()
         if issue.get("number") is None or int(issue["number"]) not in closed
     }
-    alias: dict[str, str] = {}
-    for key, predecessors in (renamed or {}).items():
-        if key in known:
-            continue
-        for old in predecessors:
-            if old in known:
-                known[key] = known.pop(old)
-                alias[old] = key
-                break
-    wired = set()
-    for pair in (mine[-1].wired if mine else ()):
-        keys = [alias.get(k, k) for k in pair.split("<-")]
-        if all(k in known for k in keys):
-            wired.add(_pair(*keys))
+    wired = {pair for pair in (mine[-1].wired if mine else ())
+             if all(k in known for k in pair.split("<-"))}
     return known, wired
 
 
@@ -776,9 +781,9 @@ def emit(
     waves: "list[list[str]] | None" = None,
     horizon: "int | str | None" = None,
     pickup: "tuple[str, ...] | list[str]" = (),
-    renamed: "dict[str, tuple[str, ...]] | None" = None,
     project: "str | None" = None,
     retired: "dict[str, str | None] | None" = None,
+    lineage: bool = False,
 ) -> dict:
     """Make the tracker say what the cut says (docs/TICKETS.md §3).
 
@@ -803,8 +808,15 @@ def emit(
 
     Every write re-reads the issue first and reads it once more after. A
     pickup label that appeared in between is reported in `raced` -- never
-    silent. `renamed` is passed to `standing`: a unit whose anchor superseded
-    another's takes over that unit's issue rather than getting a new one.
+    silent.
+
+    `lineage` (the caller reads it from this log, `keyed_by_lineage`) means
+    the keys are lineage roots, and the record says so. Then a follow-up is
+    also attached as a sub-issue under its unit's ROOT issue -- the first one
+    the key had -- so every id the unit lived through has its own issue,
+    one tree per unit. A link that fails is recorded and retried by the next
+    press; the follow-up is never created twice. A parent found open after
+    the attach is reported in `raced` and left as it is.
 
     With `project`, the press first lists the repository's open issues once.
     A key with no recorded issue but an open one of ours ADOPTS it instead of
@@ -815,7 +827,7 @@ def emit(
     open issue declares is checked against what the tracker holds: one waiting
     on a key no open or `completed` issue carries is reported in `dead`.
     """
-    live, wired_before = standing(log_path, repo, renamed)
+    live, wired_before = standing(log_path, repo)
     # Read before adoption replaces any record: a file is on main once a unit
     # writing it was closed `completed`, as this record holds it.
     existing = completed(live)
@@ -878,6 +890,8 @@ def emit(
     unwired: list[dict] = []
     removed: list[dict] = []
     dead: list[dict] = []
+    linked: list[dict] = []
+    unlinked: list[dict] = []
     # The payload each key was rendered from, and every issue state read.
     asks: dict[str, dict] = {}
     seen: dict[int, dict] = {}
@@ -1138,9 +1152,14 @@ def emit(
                 # The contract moved after its work merged. A fresh open issue is
                 # the only shape that gets the difference built.
                 of = int(live[key]["number"])
-                found = [i for i in (ours or {}).get(key, ()) if int(i["number"]) != of]
+                # Lineage: the follow-up hangs under the unit's first issue, the
+                # one every later follow-up hangs under too.
+                tree = ({"root": live[key].get("root") or {"id": live[key].get("id"), "number": of},
+                         "linked": False} if lineage else {})
+                found = [i for i in (ours or {}).get(key, ())
+                         if int(i["number"]) not in (of, int((tree.get("root") or {}).get("number") or 0))]
                 if found:
-                    issues[key] = {**_adopt(found[0], pickup), "follow_up_of": of}
+                    issues[key] = {**_adopt(found[0], pickup), "follow_up_of": of, **tree}
                     adopted.append({"key": key, "number": found[0]["number"],
                                     "url": found[0].get("url", ""), "follow_up": True})
                     tick("editing")
@@ -1161,7 +1180,8 @@ def emit(
                     continue
                 issues[key] = {"id": issue.id, "number": issue.number, "url": issue.url,
                                "fingerprint": ticket.fingerprint, "contract": contract_of(ticket.body),
-                               "batch": batch, "labels": list(ticket.labels), "follow_up_of": of}
+                               "batch": batch, "labels": list(ticket.labels), "follow_up_of": of,
+                               **tree}
                 follow_ups.append({"key": key, "title": title, "number": issue.number,
                                    "url": issue.url, "follow_up_of": of,
                                    "labels": list(ticket.labels)})
@@ -1235,6 +1255,42 @@ def emit(
             created.append({"key": key, "title": ticket.title, "number": issue.number,
                             "url": issue.url, "labels": list(ticket.labels)})
             tick("creating")
+
+        # -- lineage: each follow-up under its unit's root issue -------------------
+        # Any follow-up not yet attached, this press's or one a failed link left.
+        # Not held back by `frozen`: a link changes nothing a consumer reads, and
+        # skipping a closed follow-up would lose its place in the tree for good.
+        for key in order if lineage else ():
+            mine = issues.get(key) or {}
+            root = mine.get("root")
+            if not root or mine.get("linked"):
+                continue
+            parent = int(root.get("number") or 0)
+            try:
+                client.add_sub_issue(repo, parent, int(mine["id"]))
+            except (GitHubError, TypeError, ValueError, AttributeError) as exc:
+                if not (isinstance(exc, GitHubError) and exc.status == 422
+                        and _ALREADY_SUB.search(str(exc))):
+                    unlinked.append({"key": key, "number": mine.get("number"), "parent": parent,
+                                     "reason": f"not attached under #{parent}, retried next "
+                                               f"press: {exc}"})
+                    continue
+            else:
+                # TODO(M13): unverified whether attaching under a CLOSED parent
+                # reopens it. Read it back; if it is open, say so and close
+                # nothing -- a reopen this unit did not record is not its own.
+                try:
+                    after_attach = client.issue_state(repo, parent)
+                except (GitHubError, AttributeError):
+                    after_attach = {}
+                if after_attach.get("state") == "open":
+                    raced.append({"key": key, "number": parent, "reason":
+                                  f"open after #{mine.get('number')} was attached as its "
+                                  "sub-issue -- reopened by the attach or by someone "
+                                  "else; left as it is"})
+            issues[key] = {**mine, "linked": True}
+            marks["changed"] = True
+            linked.append({"key": key, "number": mine.get("number"), "parent": parent})
 
         # -- the order: declare what the cut has, remove what it dropped ---------
         wanted = {
@@ -1339,6 +1395,10 @@ def emit(
         # record left behind, follow-ups the contract no longer calls for.
         if ours is not None and pickup:
             owned = {int(v["number"]) for v in issues.values() if v.get("number") is not None}
+            # A root issue an attach reopened is ours and owned by no key, and
+            # its work is merged: sweeping it would overwrite `completed`.
+            owned |= {int(v["root"]["number"]) for v in issues.values()
+                      if (v.get("root") or {}).get("number")}
             gone_now = set(closed.values())
             for key, found in sorted(ours.items()):
                 for issue in found:
@@ -1371,7 +1431,7 @@ def emit(
                 or marks["changed"]):
             _append(log_path, Emission(
                 seq=batch, at=now_fn(), cut_seq=cut_seq, repo=repo,
-                issues=issues, wired=tuple(sorted(now_wired)),
+                issues=issues, wired=tuple(sorted(now_wired)), lineage=lineage,
             ))
         if closed:
             _append(log_path, Rollback(
@@ -1401,6 +1461,8 @@ def emit(
         "unwired": unwired,
         "removed": removed,
         "dead": dead,
+        "linked": linked,
+        "unlinked": unlinked,
         "counts": {
             "units": len(order),
             "created": len(created),
@@ -1419,5 +1481,7 @@ def emit(
             "unwired": len(unwired),
             "removed": len(removed),
             "dead": len(dead),
+            "linked": len(linked),
+            "unlinked": len(unlinked),
         },
     }

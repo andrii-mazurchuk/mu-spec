@@ -127,7 +127,7 @@ def test_the_result_names_every_issue_it_made(tmp_path):
         "units": 3, "created": 3, "skipped": 0, "failed": 0,
         "wired": 2, "unwired": 0, "edited": 0, "withdrawn": 0,
         "touched": 0, "settled": 0, "follow_ups": 0, "adopted": 0, "swept": 0,
-        "raced": 0, "held": 0, "removed": 0, "dead": 0,
+        "raced": 0, "held": 0, "removed": 0, "dead": 0, "linked": 0, "unlinked": 0,
     }
 
 
@@ -1024,19 +1024,10 @@ def test_a_rollback_reports_what_it_has_closed(tmp_path):
     assert all("closed" in s for s in seen) or not seen
 
 
-def test_a_superseded_anchor_keeps_its_issue_in_the_status_and_the_ship(tmp_path, monkeypatch):
-    """Superseding S-01 with S-02 renames its units, S-01 -> S-02 and S-01-T
-    -> S-02-T. Both are the same work, already out, so neither the pre-flight
-    count nor the press may treat them as new. DARK's S-107 -> S-127."""
-    from mu_spec import service
+def _supersede(store):
+    """S-02 supersedes S-01 and T-02 supersedes T-01, modules moved with them."""
     from mu_spec.graph import Entry
     from mu_spec.identifiers import parse
-
-    store = _project(tmp_path)
-    store.set_repo("p", "owner/name")
-    _cut(store)
-    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
-    service.emit_tickets(store, "p", client=FakeClient())
 
     store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
                              title="the contract, corrected", body="build it",
@@ -1046,36 +1037,63 @@ def test_a_superseded_anchor_keeps_its_issue_in_the_status_and_the_ship(tmp_path
                              supersedes=parse("T-01"))])
     store.set_module("p", "app/thing.py", ["S-02"])
     store.set_module("p", "tests/test_thing.py", ["T-02"])
+
+
+def _predates_lineage(store):
+    """An emission record from before lineage keys, as all of DARK's are."""
+    store.emissions_path("p").write_text(json.dumps(
+        {"seq": 1, "at": 1.0, "cut_seq": 1, "repo": "elsewhere/x", "issues": {}, "wired": []})
+        + "\n", encoding="utf-8")
+
+
+def test_a_superseded_anchor_keeps_its_lineage_key_in_the_status_and_the_ship(tmp_path, monkeypatch):
+    """Superseding S-01 with S-02 renames nothing: the units stay S-01 and
+    S-01-T, anchored to S-02, so neither the pre-flight count nor the press
+    treats them as new (M13, D1)."""
+    from mu_spec import service
+
+    store = _project(tmp_path)
+    store.set_repo("p", "owner/name")
     _cut(store)
+    monkeypatch.setenv("MU_SPEC_GITHUB_TOKEN", "tok")
+    service.emit_tickets(store, "p", client=FakeClient())
+    assert json.loads(store.emissions_path("p").read_text().splitlines()[-1])["keys"] == "lineage"
+
+    _supersede(store)
+    cut = _cut(store)
+    assert sorted(u["key"] for u in cut["units"]) == ["S-01", "S-01-T"]
+    assert {u["key"]: u["anchor"] for u in cut["units"]} == {"S-01": "S-02", "S-01-T": "S-02"}
 
     status = service.get_emission(store, "p")
-    assert {k: v["number"] for k, v in status["already"].items()} == {
-        "S-02-T": 1, "S-02": 2}
+    assert {k: v["number"] for k, v in status["already"].items()} == {"S-01-T": 1, "S-01": 2}
 
     client = FakeClient(start=2)
     result = service.emit_tickets(store, "p", client=client)
     assert result["emitted"] is True
     assert result["created"] == [] and client.created == []
     assert result["withdrawn"] == []
-    assert sorted(t["key"] for t in result["touched"]) == ["S-02", "S-02-T"]
+    assert sorted(t["key"] for t in result["touched"]) == ["S-01", "S-01-T"]
 
 
-def test_a_dependent_names_its_renamed_blockers_old_keys(tmp_path):
-    """S-02 supersedes S-01, so unit S-02 waits on S-02-T -- whose issue may
-    still carry S-01-T in its block if somebody had touched it."""
+def test_a_lineage_unit_names_its_live_entry_and_no_old_keys(tmp_path):
     from mu_spec import service
-    from mu_spec.graph import Entry
-    from mu_spec.identifiers import parse
 
     store = _project(tmp_path)
-    store.append("p", [Entry(id=parse("S-02"), derives_from=(parse("A-01"),),
-                             title="corrected", body="build it",
-                             supersedes=parse("S-01"))], slice_name="core")
-    store.append("p", [Entry(id=parse("T-02"), derives_from=(parse("S-02"),),
-                             title="the case", purpose="why",
-                             supersedes=parse("T-01"))])
-    store.set_module("p", "app/thing.py", ["S-02"])
-    store.set_module("p", "tests/test_thing.py", ["T-02"])
+    _supersede(store)
+    unit = service.get_work_unit(store, "p", "S-01")
+    assert unit["unit"]["anchor"] == "S-02" and unit["lineage"] == ["S-01", "S-02"]
+    assert unit["follows"] == ["S-01-T"] and unit["follows_was"] == {}
+
+
+def test_a_project_whose_record_predates_lineage_keeps_live_anchor_keys(tmp_path):
+    """DARK: S-02 supersedes S-01, so unit S-02 waits on S-02-T -- whose issue
+    may still carry S-01-T in its block if somebody had touched it. Its
+    tickets keep rendering exactly as they did."""
+    from mu_spec import service
+
+    store = _project(tmp_path)
+    _predates_lineage(store)
+    _supersede(store)
     unit = service.get_work_unit(store, "p", "S-02")
     assert unit["follows"] == ["S-02-T"]
     assert unit["follows_was"] == {"S-02-T": ["S-01-T"]}

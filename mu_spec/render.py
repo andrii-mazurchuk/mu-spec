@@ -35,7 +35,7 @@ import re
 
 from mu_spec import body as bodies
 from mu_spec.identifiers import LEGACY_SEPARATOR, SEPARATOR, parse as parse_id
-from mu_spec.units import TEST_SUFFIX, is_test_key
+from mu_spec.units import TEST_SUFFIX, anchor_of, is_test_key
 
 # GitHub allows 256. A title is a line in a list, not a manifest, and a unit
 # writing nine files does not earn nine paths in it.
@@ -298,6 +298,20 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
     out: list[str] = []
     cites: dict[tuple[str, str], None] = {}
 
+    # A unit keyed by its lineage root (M13) whose anchor has since been
+    # superseded is named by the live entry first, so searching the id finds
+    # its issue, then by the key it revises. Leading, not trailing: a long
+    # write set truncates the end of a title. A key that IS its anchor -- every
+    # unit of a project keyed by live anchor, DARK's -- renders as before.
+    key = unit["key"]
+    anchor = anchor_of(str(unit.get("anchor") or ""))
+    name = key
+    if anchor and anchor_of(key) != anchor:
+        name = f"{anchor}{key[len(anchor_of(key)):]} (rev of {key})"
+        chain = list(payload.get("lineage") or ()) or [anchor_of(key), anchor]
+        out.append(f"> Unit `{key}`, live entry `{anchor}`. Lineage: "
+                   + " → ".join(f"`{i}`" for i in chain) + ".")
+
     rewritten: dict[tuple[str, str, str], None] = {}
 
     def cite(entry: dict, text: str) -> str:
@@ -449,7 +463,7 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
         "A heading can be reworded; these field names are a contract."
     )
     machine = _machine(payload, unit, write_set, repo, cut_seq, batch, context_ids)
-    title = _title(unit["key"], write_set)
+    title = _title(name, write_set)
     labels = _labels(unit) + tuple(extra_labels)
     stable = {k: v for k, v in machine.items() if k not in ("cut_seq", "batch")}
     fingerprint = hashlib.sha256(json.dumps(

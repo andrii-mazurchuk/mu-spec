@@ -338,3 +338,38 @@ def test_the_unit_graph_cannot_cycle_however_the_files_are_grouped():
     }
     for key, targets in projection.edges.items():
         assert key not in targets, "a unit can never wait on itself"
+
+
+# -- identity is the lineage root (M13, D1) ------------------------------------
+
+
+def _chain_graph():
+    """S-107 -> S-127 -> S-140, S-140 tested by T-01, and S-02 waiting on it."""
+    return _graph(
+        Entry(id=parse("S-107"), derives_from=(ARCH,), title="v1"),
+        Entry(id=parse("S-127"), derives_from=(ARCH,), title="v2", supersedes=parse("S-107")),
+        Entry(id=parse("S-140"), derives_from=(ARCH,), title="v3", supersedes=parse("S-127")),
+        Entry(id=parse("S-02"), derives_from=(ARCH,), depends_on=(parse("S-140"),)),
+        Entry(id=parse("T-01"), derives_from=(parse("S-140"),)),
+    )
+
+
+def test_a_unit_is_keyed_by_the_first_id_of_its_supersession_chain():
+    """Superseding an anchor twice renames nothing: the unit stays S-107 and
+    its test unit S-107-T, anchored to the live S-140."""
+    manifest = _manifest({"a.py": "S-140", "b.py": "S-02", "t.py": "T-01"})
+    projection = project(manifest, _chain_graph())
+    by = projection.by_key()
+    assert sorted(by) == ["S-02", "S-107", "S-107-T"]
+    assert by["S-107"].anchor == parse("S-140") and by["S-107-T"].anchor == parse("S-140")
+    assert by["S-107"].entries == (parse("S-140"),)
+    assert projection.edges["S-107"] == ("S-107-T",)
+    assert projection.edges["S-02"] == ("S-107",)
+
+
+def test_without_lineage_a_unit_is_keyed_by_its_live_anchor():
+    """A project whose emission record predates lineage keys (DARK)."""
+    manifest = _manifest({"a.py": "S-140", "b.py": "S-02", "t.py": "T-01"})
+    projection = project(manifest, _chain_graph(), lineage=False)
+    assert sorted(projection.by_key()) == ["S-02", "S-140", "S-140-T"]
+    assert projection.edges["S-02"] == ("S-140",)

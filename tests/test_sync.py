@@ -48,6 +48,11 @@ class Tracker:
         # Labels to add to an issue the moment after it is read -- the
         # consumer admitting it inside the gap between read and write.
         self.admit_after_read: set[int] = set()
+        # Parent number -> the error the next attach under it raises, once.
+        self.fail_sub: dict[int, Exception] = {}
+        # Whether attaching under a closed parent reopens it. UNVERIFIED on
+        # GitHub, so both behaviours are tested.
+        self.reopen_on_attach = False
 
     # -- the client surface --
     def create_issue(self, repo, title, body, labels=()):
@@ -108,6 +113,15 @@ class Tracker:
         self.issues[number].update(state="closed", state_reason=reason)
         self.calls.append(("close", number))
 
+    def add_sub_issue(self, repo, parent_number, sub_issue_id):
+        self.calls.append(("sub", parent_number, sub_issue_id - 1000))
+        error = self.fail_sub.pop(parent_number, None)
+        if error is not None:
+            raise error
+        self.issues[sub_issue_id - 1000]["parent"] = parent_number
+        if self.reopen_on_attach:
+            self.issues[parent_number].update(state="open", state_reason="reopened")
+
     # -- what a test reads --
     def writes(self):
         return [c for c in self.calls if c[0] not in ("read", "list", "state")]
@@ -117,12 +131,12 @@ class Tracker:
 
 
 def ship(tmp_path, tracker, *, order=ORDER, edges=EDGES, waves=WAVES,
-         horizon=None, bodies=None, pickup=PICKUP, labels=(), renamed=None):
+         horizon=None, bodies=None, pickup=PICKUP, labels=(), lineage=False, fetch=None):
     bodies = bodies or {}
-    return emit(renamed=renamed,
+    return emit(lineage=lineage,
         log_path=tmp_path / "emissions.jsonl", repo=REPO, cut_seq=3,
         order=list(order), edges=edges, waves=waves, horizon=horizon,
-        fetch=lambda k: payload(k, edges.get(k, ()), bodies.get(k, "the contract")),
+        fetch=fetch or (lambda k: payload(k, edges.get(k, ()), bodies.get(k, "the contract"))),
         client=tracker, now_fn=lambda: 1.0, pickup=pickup, labels=labels, project="dark",
     )
 
@@ -739,61 +753,161 @@ RENAMED_WAVES = [["S-01-T"], ["S-01"], ["S-03"]]
 RENAMED = {"S-03": ("S-02",)}
 
 
-def ship_renamed(tmp_path, gh, **kw):
-    return ship(tmp_path, gh, order=RENAMED_ORDER, edges=RENAMED_EDGES,
-                waves=RENAMED_WAVES, renamed=RENAMED, **kw)
-
-
-def test_a_superseded_anchor_edits_its_predecessors_issue_instead_of_creating(tmp_path):
-    """Units are keyed by their spec anchor, so superseding S-02 turns unit
-    S-02 into a brand-new S-03. The sync used to withdraw #3 and open a fresh
-    issue for the same work -- or, if #3 was picked up, leave it live and open
-    a second copy beside it. DARK's S-107 -> S-127 was the first."""
+def test_a_later_record_holding_an_issue_under_a_new_key_retires_the_old_line(tmp_path):
+    """DARK's log moved #3 from S-02 to S-03 while units were keyed by their
+    live anchor. Read naively, a later press would see S-02 gone from the cut
+    and close the issue S-03 owns."""
+    import json
     gh = Tracker()
     ship(tmp_path, gh)
-    result = ship_renamed(tmp_path, gh)
-    assert result["created"] == [] and result["withdrawn"] == []
-    assert [e["key"] for e in result["edited"]] == ["S-03"]
-    assert gh.issues[3]["title"].startswith("S-03")
-    assert gh.n == 3
-    live, wired = standing(tmp_path / "emissions.jsonl", REPO, RENAMED)
-    assert live["S-03"]["number"] == 3 and "S-02" not in live
-    assert wired == {"S-01<-S-01-T", "S-03<-S-01"}
+    log = tmp_path / "emissions.jsonl"
+    line = json.loads(log.read_text().splitlines()[-1])
+    line["seq"] += 1
+    line["issues"]["S-03"] = line["issues"].pop("S-02")
+    log.write_text(log.read_text() + json.dumps(line) + "\n")
+    live, _ = standing(log, REPO)
+    assert sorted(live) == ["S-01", "S-01-T", "S-03"]
 
 
-def test_a_superseded_anchor_whose_issue_was_finished_is_reported_not_duplicated(tmp_path):
-    gh = Tracker()
-    ship(tmp_path, gh)
+# -- lineage keys (M13, D1): one tree of issues per unit ------------------------
+
+# S-02 is keyed by its lineage root while its anchor moves S-02 -> S-05 -> S-07.
+CHAIN = {"S-02": ["S-02"], "S-05": ["S-02", "S-05"], "S-07": ["S-02", "S-05", "S-07"]}
+
+
+def lineage_payload(key, anchor, body):
+    unit = payload(key, EDGES.get(key, ()), body)
+    unit["unit"] = {**unit["unit"], "anchor": anchor, "entries": [anchor]}
+    unit["entries"] = [{"id": anchor, "title": "S-02 title", "body": body,
+                        **({"was": CHAIN[anchor][-2::-1]} if anchor != "S-02" else {})}]
+    unit["lineage"] = CHAIN[anchor]
+    return unit
+
+
+def ship_lineage(tmp_path, gh, anchor="S-02", body="the contract"):
+    return ship(tmp_path, gh, lineage=True, fetch=lambda k: (
+        lineage_payload(k, anchor, body) if k == "S-02" else payload(k, EDGES.get(k, ()))))
+
+
+def _merged_then_grown(tmp_path, gh):
+    """Root #3 created, merged, and its contract grown under the live S-05."""
+    ship_lineage(tmp_path, gh)
     gh.issues[3].update(state="closed", state_reason="completed")
-    gh.calls.clear()
-    result = ship_renamed(tmp_path, gh)
-    assert result["created"] == []
-    assert [t["key"] for t in result["settled"]] == ["S-03"] and result["touched"] == []
-    assert [c for c in gh.writes() if c[0] in ("create", "edit", "close")] == []
+    return ship_lineage(tmp_path, gh, anchor="S-05", body="grown")
 
 
-def test_a_press_after_the_rename_neither_withdraws_nor_recreates(tmp_path):
-    """The log still holds S-02 -> #3 from the first press. Read naively, a
-    later press sees S-02 gone from the cut and closes #3 -- the issue S-03
-    now owns."""
+def test_a_lineage_press_creates_the_root_and_its_record_says_lineage(tmp_path):
+    import json
+    from mu_spec.emit import keyed_by_lineage
     gh = Tracker()
-    ship(tmp_path, gh)
-    ship_renamed(tmp_path, gh)
+    ship_lineage(tmp_path, gh)
+    log = tmp_path / "emissions.jsonl"
+    assert gh.issues[3]["title"] == "S-02 — S-02.py"
+    assert json.loads(log.read_text().splitlines()[-1])["keys"] == "lineage"
+    assert keyed_by_lineage(log) is True
+
+
+def test_a_record_without_the_lineage_marker_keeps_its_project_on_the_old_keys(tmp_path):
+    """DARK: every record predates lineage keys. Decided from the record, never
+    from a flag somebody sets -- and a project with no record yet starts on them."""
+    from mu_spec.emit import keyed_by_lineage
+    assert keyed_by_lineage(tmp_path / "emissions.jsonl") is True
+    ship(tmp_path, Tracker())
+    assert keyed_by_lineage(tmp_path / "emissions.jsonl") is False
+
+
+def test_an_open_root_follows_its_live_entry_in_place(tmp_path):
+    """Nobody built S-02 yet, so its issue is edited, not followed up: the live
+    id leads the title and the body names the chain."""
+    gh = Tracker()
+    ship_lineage(tmp_path, gh)
+    result = ship_lineage(tmp_path, gh, anchor="S-05", body="changed")
+    assert [e["key"] for e in result["edited"]] == ["S-02"] and gh.n == 3
+    assert gh.issues[3]["title"] == "S-05 (rev of S-02) — S-02.py"
+    assert "live entry `S-05`. Lineage: `S-02` → `S-05`." in gh.issues[3]["body"]
+    assert not [c for c in gh.calls if c[0] == "sub"]
+
+
+def test_a_contract_change_after_close_is_a_sub_issue_under_the_root(tmp_path):
+    gh = Tracker()
+    result = _merged_then_grown(tmp_path, gh)
+    [follow] = result["follow_ups"]
+    assert follow["number"] == 4
+    assert gh.issues[4]["title"] == "S-05 (rev of S-02) — S-02.py (follow-up to #3)"
+    assert "live entry `S-05`" in gh.issues[4]["body"]
+    assert ("sub", 3, 4) in gh.calls and gh.issues[4]["parent"] == 3
+    assert result["linked"] == [{"key": "S-02", "number": 4, "parent": 3}]
+    assert gh.issues[3]["state"] == "closed" and gh.issues[3]["state_reason"] == "completed"
+    assert ("edit", 3) not in gh.calls, "a closed issue is never written"
+    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
+    assert live["S-02"]["root"]["number"] == 3 and live["S-02"]["linked"] is True
+
+
+def test_an_unmoved_lineage_press_makes_no_new_calls(tmp_path):
+    gh = Tracker()
+    _merged_then_grown(tmp_path, gh)
     gh.calls.clear()
-    result = ship_renamed(tmp_path, gh)
+    result = ship_lineage(tmp_path, gh, anchor="S-05", body="grown")
+    # Only the reads every press makes: the open list, and the open issues'
+    # native blocked_by. Nothing re-attached, no closed issue re-read.
     assert gh.writes() == []
-    assert result["withdrawn"] == [] and result["created"] == []
+    assert {c[0] for c in gh.calls} == {"list", "read"}
+    assert result["linked"] == [] and result["follow_ups"] == []
+
+
+def test_every_later_follow_up_hangs_under_the_root(tmp_path):
+    gh = Tracker()
+    _merged_then_grown(tmp_path, gh)
+    gh.issues[4].update(state="closed", state_reason="completed")
+    result = ship_lineage(tmp_path, gh, anchor="S-07", body="grown again")
+    assert [f["number"] for f in result["follow_ups"]] == [5]
+    assert gh.issues[5]["title"] == "S-07 (rev of S-02) — S-02.py (follow-up to #4)"
+    assert ("sub", 3, 5) in gh.calls
+    assert gh.issues[3]["state"] == gh.issues[4]["state"] == "closed"
+
+
+def test_an_attach_github_already_holds_counts_as_linked(tmp_path):
+    gh = Tracker()
+    gh.fail_sub[3] = GitHubError("GitHub answered 422: Validation Failed | Issue may "
+                                 "not contain duplicate sub-issues", status=422)
+    result = _merged_then_grown(tmp_path, gh)
+    assert result["unlinked"] == [] and len(result["linked"]) == 1
+    gh.calls.clear()
+    ship_lineage(tmp_path, gh, anchor="S-05", body="grown")
+    assert not [c for c in gh.calls if c[0] == "sub"]
+
+
+def test_a_failed_attach_is_retried_next_press_and_never_duplicates_the_follow_up(tmp_path):
+    gh = Tracker()
+    gh.fail_sub[3] = GitHubError("GitHub answered 502: bad gateway", status=502)
+    result = _merged_then_grown(tmp_path, gh)
+    assert [u["number"] for u in result["unlinked"]] == [4] and gh.n == 4
+    assert "retried next press" in result["unlinked"][0]["reason"]
+    again = ship_lineage(tmp_path, gh, anchor="S-05", body="grown")
+    assert again["created"] == [] and again["follow_ups"] == [] and gh.n == 4
+    assert [l["number"] for l in again["linked"]] == [4] and gh.issues[4]["parent"] == 3
+
+
+def test_a_parent_found_open_after_the_attach_is_reported_and_never_closed(tmp_path):
+    """Unverified whether GitHub reopens a closed parent on attach. If it does,
+    the press says so and closes nothing: the root's `completed` is not ours."""
+    gh = Tracker()
+    gh.reopen_on_attach = True
+    result = _merged_then_grown(tmp_path, gh)
+    assert [r["number"] for r in result["raced"]] == [3]
+    again = ship_lineage(tmp_path, gh, anchor="S-05", body="grown")
+    assert again["swept"] == [] and ("close", 3) not in gh.calls
     assert gh.issues[3]["state"] == "open"
 
 
-def test_standing_without_the_rename_map_still_holds_one_key_per_issue(tmp_path):
-    """Once an emission records #3 under S-03, the older S-02 -> #3 line is
-    history, whether or not the caller knows about the supersession."""
+def test_a_follow_up_on_the_old_keys_is_never_attached(tmp_path):
     gh = Tracker()
     ship(tmp_path, gh)
-    ship_renamed(tmp_path, gh)
-    live, _ = standing(tmp_path / "emissions.jsonl", REPO)
-    assert sorted(live) == ["S-01", "S-01-T", "S-03"]
+    gh.issues[3].update(state="closed", state_reason="completed")
+    result = ship(tmp_path, gh, bodies={"S-02": "grown"})
+    assert [f["number"] for f in result["follow_ups"]] == [4]
+    assert gh.issues[4]["title"] == "S-02 — S-02.py (follow-up to #3)"
+    assert not [c for c in gh.calls if c[0] == "sub"] and result["linked"] == []
 
 
 # -- the order as GitHub holds it ----------------------------------------------
