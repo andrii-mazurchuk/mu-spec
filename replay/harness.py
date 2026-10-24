@@ -47,7 +47,9 @@ from mu_spec.body import legacy_imports
 from mu_spec.gates import (
     BAD_IMPORT,
     NO_IMPORTS_LINE,
+    RETIRED_MENTION,
     TWO_SUCCESSORS,
+    UNLINKED_MENTION,
     UNSERVED,
     UNTESTED,
     imports,
@@ -398,6 +400,7 @@ def successors(graph, manifest, prev_graph, prev_manifest) -> set[str]:
 NEWER_KINDS = (
     BAD_IMPORT, NO_IMPORTS_LINE, TWO_SUCCESSORS,
     BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
+    RETIRED_MENTION, UNLINKED_MENTION,
 )
 
 
