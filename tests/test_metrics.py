@@ -4,7 +4,7 @@ from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
 from mu_spec.inbox import Inbox
 from mu_spec.metrics import change_locality, corrections_by_layer, structural
-from mu_spec.storage import CROSS_CUTTING, Manifest, Slice
+from mu_spec.storage import Manifest, Slice
 
 
 def _clock():
@@ -25,9 +25,7 @@ def _manifest() -> Manifest:
             "payouts": Slice(
                 name="payouts", members={parse("B-02"), parse("S-02")}
             ),
-            "audit": Slice(
-                name="audit", members={parse("S-03")}, type=CROSS_CUTTING
-            ),
+            "audit": Slice(name="audit", members={parse("S-03")}),
         },
     )
 
@@ -124,7 +122,6 @@ def _graph() -> Graph:
                 id=parse("S-02"),
                 title="ledger",
                 depends_on=(parse("S-01"),),
-                emits_into=(parse("S-03"),),
             ),
             Entry(id=parse("S-03"), title="audit log"),
         ]
@@ -136,15 +133,6 @@ def test_cohesion_counts_only_edges_that_stay_inside():
     assert rows["payouts"]["outbound_edges"] == 1
     assert rows["payouts"]["cohesion"] == 0.0
     assert rows["discovery"]["inbound_edges"] == 1
-
-
-def test_emissions_are_not_counted_as_coupling():
-    """They impose no order and cross into a concern by design. Counting
-    them would penalise exactly what the edge exists to make cheap."""
-    rows = {r["slice"]: r for r in structural(_manifest(), _graph())["slices"]}
-    assert rows["payouts"]["emissions"] == 1
-    assert rows["payouts"]["depends_on"] == ["discovery"]
-    assert "audit" not in rows["payouts"]["depends_on"]
 
 
 def test_a_slice_with_no_edges_has_no_cohesion_rather_than_zero():

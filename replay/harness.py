@@ -23,8 +23,8 @@ What an export does not hold, and how it is recovered:
   version that existed when the child was born.
 - Slice membership is the derivation's slice, then any `slicing` move. A
   behaviour entry is never derived into a slice, so it takes the slice most
-  of its architecture children are in. A `classification` changes a slice's
-  type, so before its first one a slice had the other type.
+  of its architecture children are in. A `classification` event is read
+  past: the cross-cutting type it set was removed (D6), and no gate reads it.
 - There is no module history. Module ownership is read from each spec
   body's `Module:` line, plus the final `modules.json` for the entries live
   at the export, taken as declared at each entry's birth.
@@ -59,20 +59,19 @@ from mu_spec.graph import Entry, Graph
 from mu_spec.slice_gates import (
     BAD_MODULE_IMPORT,
     SPLIT_OWNERSHIP,
-    STALE_EMISSION,
     UNDECLARED_PATH,
     module_gates,
 )
 from mu_spec.identifiers import BEHAVIOUR, SPEC, TEST, UNSLICED, parse
-from mu_spec.storage import SLICE_TYPES, SLICE, Manifest, Slice
+from mu_spec.storage import Manifest, Slice
 
 # The lifecycle events that change the graph or the manifest. Every other kind
 # (requests, issues, cuts) leaves both as they were. A `correction` is not
 # one: an amendment logs its new entries and the ones they retire as two
 # events a millisecond apart, and the retirement is read off the successor's
 # birth -- so a step after the correction would repeat the step before it.
-STRUCTURAL = ("derivation", "slicing", "classification")
-EDGES = ("derives_from", "depends_on", "emits_into")
+STRUCTURAL = ("derivation", "slicing")
+EDGES = ("derives_from", "depends_on")
 
 
 class SnapshotError(ValueError):
@@ -96,7 +95,6 @@ class History:
     born: dict[str, float]
     slice_born: dict[str, str | None]
     moves: dict[str, list[tuple[float, str]]]  # id -> [(at, into)]
-    classifications: dict[str, list[tuple[float, str]]]  # slice -> [(at, type)]
     children: dict[str, list[str]]  # parent id -> child ids, edges as written
     events: list[dict]
     cuts: list[dict]
@@ -151,7 +149,6 @@ def load(root: Path | str) -> History:
     born: dict[str, float] = {}
     slice_born: dict[str, str | None] = {}
     moves: dict[str, list[tuple[float, str]]] = collections.defaultdict(list)
-    classifications: dict[str, list[tuple[float, str]]] = collections.defaultdict(list)
     for event in events:
         if event["kind"] == "derivation":
             for ref in event["refs"]:
@@ -160,9 +157,6 @@ def load(root: Path | str) -> History:
         elif event["kind"] == "slicing":
             for ref in event["refs"]:
                 moves[canon(ref)].append((event["at"], event["facts"]["into"]))
-        elif event["kind"] == "classification":
-            for name in event["refs"]:
-                classifications[name].append((event["at"], event["facts"]["type"]))
 
     unborn = sorted(set(raws) - set(born))
     if unborn:
@@ -213,7 +207,6 @@ def load(root: Path | str) -> History:
         born=born,
         slice_born=slice_born,
         moves=dict(moves),
-        classifications=dict(classifications),
         children=dict(children),
         events=events,
         cuts=sorted(cuts["cuts"] if isinstance(cuts, dict) else cuts, key=lambda c: c["at"]),
@@ -287,17 +280,6 @@ def _slice_at(history: History, ident: str, t: float) -> str | None:
     return owner
 
 
-def _type_at(history: History, name: str, t: float) -> str:
-    changes = history.classifications.get(name)
-    if not changes:
-        return SLICE
-    current = [kind for at, kind in changes if at <= t]
-    if current:
-        return current[-1]
-    # A classification changes a type, so before the first one it was the other.
-    return next(k for k in SLICE_TYPES if k != changes[0][1])
-
-
 def build(history: History, t: float) -> tuple[Graph, Manifest]:
     """The graph and manifest as they stood at time `t`."""
     count = bisect.bisect_right([history.born[k] for k in history.order], t)
@@ -320,8 +302,6 @@ def build(history: History, t: float) -> tuple[Graph, Manifest]:
             owner = max(sorted(set(votes)), key=votes.count) if votes else None
         if owner is not None:
             manifest.slices.setdefault(owner, Slice(name=owner)).members.add(parse(ident))
-    for name, sl in manifest.slices.items():
-        sl.type = _type_at(history, name, t)
 
     for entry in graph.entries():
         for path in history.modules.get(str(entry.id), ()):
@@ -421,7 +401,6 @@ REGISTRY: dict[str, Gate] = {
     "sound": sound,
     UNSERVED: reported(UNSERVED),
     UNTESTED: reported(UNTESTED),
-    STALE_EMISSION: reported(STALE_EMISSION),
     "M2": m2,
     "M3": m3,
     TWO_SUCCESSORS: successors,

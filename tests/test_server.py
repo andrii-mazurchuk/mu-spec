@@ -151,7 +151,6 @@ def test_tools_manifest_declares_the_operations(store, prompts):
         "resolve_request",
         "create_project",
         "submit_amendment",
-        "classify_slice",
         "get_waves",
         "raise_issue",
         "list_issues",
@@ -994,106 +993,53 @@ def test_no_slice_context_is_issued_while_a_dependency_is_stale(store, prompts):
     assert "bad_dependency" in kinds
 
 
-# -- cross-cutting slices ----------------------------------------------------
+# -- the removed cross-cutting type (D6, 10-24) -------------------------------
 
 
-def test_cross_cutting_entries_arrive_undeclared(store, prompts):
-    """Nothing in listings depends on audit. It lands in the work package
-    anyway -- that is the entire operational difference between a
-    cross-cutting slice and an ordinary one."""
+def test_an_amendment_carrying_emits_into_is_refused(store, prompts):
     mid = seed(store, prompts)
-    register_slice(store, "audit")
-    for layer, title, parent in (
-        ("B", "Every state change is recorded", "I-01"),
-        ("A", "An append-only event log", "B-02"),
-        ("S", "audit/log.py appends a record", "A-02"),
-    ):
-        call(
-            store,
-            prompts,
-            "POST",
-            "/projects/m/amendments",
-            {
-                "slice": "audit",
-                "in_response_to": mid,
-                "entries": [
-                    {"layer": layer, "title": title, "derives_from": [parent]}
-                ],
-            },
-        )
-    status, ruling = call(
-        store, prompts, "POST", "/projects/m/slices/audit/type",
-        {"type": "cross_cutting"},
-    )
-    assert (status, ruling["cross_cutting"]) == (200, ["audit"])
-
-    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
-    assert wp["read_set"] == []
-    assert [(e["id"], e["slice"]) for e in wp["cross_cutting"]] == [("S-02", "audit")]
-    assert "body" not in wp["cross_cutting"][0]
-
-
-def test_a_cross_cutting_slice_does_not_read_itself(store, prompts):
-    mid = seed(store, prompts)
-    register_slice(store, "audit")
-    call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/amendments",
-        {
-            "slice": "audit",
-            "in_response_to": mid,
-            "entries": [
-                {"layer": "B", "title": "Every state change is recorded",
-                 "derives_from": ["I-01"]},
-            ],
-        },
-    )
-    call(
-        store, prompts, "POST", "/projects/m/slices/audit/type",
-        {"type": "cross_cutting"},
-    )
-    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=audit")
-    assert wp["cross_cutting"] == []
-
-
-def test_several_slices_can_be_cross_cutting_at_once(store, prompts):
-    """A type, not a reserved name -- so audit and telemetry are two separate
-    columns, both ambient."""
-    mid = seed(store, prompts)
-    register_slice(store, "audit")
-    register_slice(store, "telemetry")
-    for name in ("audit", "telemetry"):
-        call(
-            store,
-            prompts,
-            "POST",
-            "/projects/m/amendments",
-            {
-                "slice": name,
-                "in_response_to": mid,
-                "entries": [
-                    {"layer": "B", "title": f"{name} everywhere",
-                     "derives_from": ["I-01"]}
-                ],
-            },
-        )
-        call(
-            store, prompts, "POST", f"/projects/m/slices/{name}/type",
-            {"type": "cross_cutting"},
-        )
-    assert store.load_manifest("m").cross_cutting() == ("audit", "telemetry")
-
-
-def test_an_unknown_slice_type_is_a_caller_error(store, prompts):
-    seed(store, prompts)
-    status, payload = call(
-        store, prompts, "POST", "/projects/m/slices/listings/type",
-        {"type": "sort-of-ambient"},
-    )
+    status, payload = call(store, prompts, "POST", "/projects/m/amendments", {
+        "slice": "listings", "in_response_to": mid,
+        "entries": [{"layer": "S", "title": "x", "derives_from": ["A-01"],
+                     "emits_into": ["S-01"]}],
+    })
     assert status == 400
-    assert "unknown slice type" in payload["error"]
+    assert "cross-cutting type was removed" in payload["error"]
+    assert "depends_on" in payload["error"]
+    assert store.load_manifest("m").allocation["S"] == 1
+
+
+def test_stored_emissions_and_a_cross_cutting_manifest_still_load(store, prompts):
+    """History is append-only: an entry written with emits_into and a slice
+    classified cross_cutting before D6 load, and neither moves a gate."""
+    from mu_spec.graph import Entry
+    from mu_spec.identifiers import parse as pid
+
+    mid = seed(store, prompts)
+    register_slice(store, "audit")
+    manifest = store.load_manifest("m")
+    manifest.slices["audit"].type = "cross_cutting"
+    store.save_manifest("m", manifest)
+    store.append("m", [Entry(id=pid("S-02"), derives_from=(pid("A-01"),),
+                             title="audit record")], slice_name="audit")
+    store.append("m", [Entry(id=pid("S-03"), derives_from=(pid("A-01"),),
+                             title="emits", emits_into=(pid("S-02"),))],
+                 slice_name="listings")
+    assert store.load_graph("m").get(pid("S-03")).emits_into == (pid("S-02"),)
+
+    _, gates = call(store, prompts, "GET", "/projects/m/gates")
+    assert gates["sound"] is True
+    assert not any("emission" in f["kind"] for f in gates["findings"])
+    _, waves = call(store, prompts, "GET", "/projects/m/waves")
+    assert waves["wave_of"] == {"audit": 0, "listings": 0}
+    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
+    assert "cross_cutting" not in wp
+    assert wp["read_set"] == []
+    status, _ = call(store, prompts, "POST", "/projects/m/slices/audit/type",
+                     {"type": "slice"})
+    assert status == 404
+    # Never rewritten: the stored classification survives a later write.
+    assert store.load_manifest("m").slices["audit"].type == "cross_cutting"
 
 
 # -- slice-level gates, end to end -------------------------------------------
@@ -1172,51 +1118,6 @@ def test_a_one_way_dependency_between_slices_is_admitted(store, prompts):
     assert payload["gates"]["slice_findings"] == []
 
 
-def test_a_cross_cutting_slice_reaching_into_a_feature_slice_is_refused(store, prompts):
-    mid = seed(store, prompts)
-    register_slice(store, "audit")
-    for layer, title, parent in (
-        ("B", "Every state change is recorded", "I-01"),
-        ("A", "An append-only event log", "B-02"),
-    ):
-        call(
-            store,
-            prompts,
-            "POST",
-            "/projects/m/amendments",
-            {
-                "slice": "audit",
-                "in_response_to": mid,
-                "entries": [
-                    {"layer": layer, "title": title, "derives_from": [parent]}
-                ],
-            },
-        )
-    call(store, prompts, "POST", "/projects/m/slices/audit/type",
-         {"type": "cross_cutting"})
-    status, payload = _spec_in(
-        store, prompts, mid, "audit", "audit/log.py reads the listing", "A-02",
-        depends_on=["S-01"],
-    )
-    assert (status, payload["admitted"]) == (409, False)
-    assert payload["slice_findings"][0]["kind"] == "cross_cutting_outbound"
-
-
-def test_classifying_a_slice_that_already_reaches_out_is_refused(store, prompts):
-    """The same rule, through the other door. payouts depends on listings, so
-    it cannot be declared cross-cutting after the fact."""
-    mid = _two_columns(store, prompts)
-    _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
-             depends_on=["S-01"])
-    status, payload = call(
-        store, prompts, "POST", "/projects/m/slices/payouts/type",
-        {"type": "cross_cutting"},
-    )
-    assert status == 409
-    assert payload["slice_findings"][0]["kind"] == "cross_cutting_outbound"
-    assert store.load_manifest("m").cross_cutting() == ()
-
-
 def test_no_slice_context_is_issued_while_slices_cycle(store, prompts):
     mid = _two_columns(store, prompts)
     _spec_in(store, prompts, mid, "payouts", "ledger reads the index", "A-02",
@@ -1237,145 +1138,6 @@ def test_no_slice_context_is_issued_while_slices_cycle(store, prompts):
 
 
 # -- emissions, end to end ---------------------------------------------------
-
-
-def _audit_column(store, prompts, mid):
-    """A cross-cutting slice with a full column, classified as one."""
-    register_slice(store, "audit")
-    for layer, title, parent in (
-        ("B", "Every state change is recorded", "I-01"),
-        ("A", "An append-only event log", "B-02"),
-        ("S", "audit/log.py appends a record", "A-02"),
-    ):
-        call(
-            store,
-            prompts,
-            "POST",
-            "/projects/m/amendments",
-            {
-                "slice": "audit",
-                "in_response_to": mid,
-                "entries": [
-                    {"layer": layer, "title": title, "derives_from": [parent]}
-                ],
-            },
-        )
-    call(store, prompts, "POST", "/projects/m/slices/audit/type",
-         {"type": "cross_cutting"})
-
-
-def test_a_slice_may_emit_into_a_cross_cutting_slice(store, prompts):
-    mid = seed(store, prompts)
-    _audit_column(store, prompts, mid)
-    status, payload = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/amendments",
-        {
-            "slice": "listings",
-            "in_response_to": mid,
-            "entries": [
-                {
-                    "layer": "S",
-                    "title": "search/index.py records every query",
-                    "derives_from": ["A-01"],
-                    "emits_into": ["S-02"],
-                }
-            ],
-        },
-    )
-    assert (status, payload["admitted"]) == (200, True)
-    _, spine = call(store, prompts, "GET", "/projects/m/spine?layer=S")
-    row = [r for r in spine["spine"] if r["id"] == "S-03"][0]
-    assert row["emits_into"] == ["S-02"]
-    assert row["depends_on"] == []
-
-
-def test_an_emission_imposes_no_order_on_the_concern(store, prompts):
-    """listings emits into audit, and audit does not become a dependency of
-    listings. That is what lets the concern be derived first."""
-    mid = seed(store, prompts)
-    _audit_column(store, prompts, mid)
-    call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/amendments",
-        {
-            "slice": "listings",
-            "in_response_to": mid,
-            "entries": [
-                {
-                    "layer": "S",
-                    "title": "search/index.py records every query",
-                    "derives_from": ["A-01"],
-                    "emits_into": ["S-02"],
-                }
-            ],
-        },
-    )
-    manifest = store.load_manifest("m")
-    assert manifest.dependency_graph(store.load_graph("m"))["listings"] == ()
-    _, wp = call(store, prompts, "GET", "/projects/m/slice-context?slice=listings")
-    assert wp["read_set"] == []
-    assert [e["id"] for e in wp["cross_cutting"]] == ["S-02"]
-
-
-def test_depending_on_a_cross_cutting_slice_is_refused_end_to_end(store, prompts):
-    mid = seed(store, prompts)
-    _audit_column(store, prompts, mid)
-    status, payload = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/amendments",
-        {
-            "slice": "listings",
-            "in_response_to": mid,
-            "entries": [
-                {
-                    "layer": "S",
-                    "title": "search/index.py asks the log",
-                    "derives_from": ["A-01"],
-                    "depends_on": ["S-02"],
-                }
-            ],
-        },
-    )
-    assert (status, payload["admitted"]) == (409, False)
-    assert payload["findings"][0]["kind"] == "bad_emission"
-    detail = payload["findings"][0]["detail"]
-    # The refusal must offer BOTH remedies, because it cannot know which of
-    # the two claims is the false one. Naming only the relabel sends a
-    # caller with a real dependency looking for an edge that does not exist,
-    # when what is wrong is the classification.
-    assert "emits_into" in detail
-    assert "foundational" in detail and "Split" in detail
-
-
-def test_emitting_into_an_ordinary_slice_is_refused_end_to_end(store, prompts):
-    mid = _two_columns(store, prompts)
-    status, payload = call(
-        store,
-        prompts,
-        "POST",
-        "/projects/m/amendments",
-        {
-            "slice": "listings",
-            "in_response_to": mid,
-            "entries": [
-                {
-                    "layer": "S",
-                    "title": "search/index.py publishes to payouts",
-                    "derives_from": ["A-01"],
-                    "emits_into": ["S-02"],
-                }
-            ],
-        },
-    )
-    assert (status, payload["admitted"]) == (409, False)
-    assert "not cross-cutting" in payload["findings"][0]["detail"]
 
 
 # -- waves -------------------------------------------------------------------
@@ -1402,13 +1164,6 @@ def test_independent_slices_share_a_wave(store, prompts):
         {"wave": 0, "slices": ["listings", "payouts"], "width": 2}
     ]
     assert payload["chain"] is False
-
-
-def test_a_cross_cutting_slice_is_in_wave_zero(store, prompts):
-    mid = seed(store, prompts)
-    _audit_column(store, prompts, mid)
-    _, payload = call(store, prompts, "GET", "/projects/m/waves")
-    assert payload["wave_of"]["audit"] == 0
 
 
 # -- issues and reconciliation, end to end -----------------------------------
@@ -2020,7 +1775,6 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "resolve": "resolve_request",
         "create_project": "create_project",
         "amendment": "submit_amendment",
-        "classify_slice": "classify_slice",
         "raise_issue": "raise_issue",
         "list_issues": "list_issues",
         "close_issue": "close_issue",
@@ -3161,13 +2915,11 @@ def test_every_closed_vocabulary_reaches_the_manifest(store, prompts):
     from mu_spec.inbox import TYPES
     from mu_spec.issues import KINDS, STATUSES
     from mu_spec.lifecycle import KINDS as EVENT_KINDS
-    from mu_spec.storage import SLICE_TYPES
 
     t = _tools(store, prompts)
     expected = {
         ("post_request", "type"): sorted(TYPES),
         ("list_requests", "type"): sorted(TYPES),
-        ("classify_slice", "type"): sorted(SLICE_TYPES),
         ("raise_issue", "kind"): sorted(KINDS),
         ("list_issues", "status"): sorted(STATUSES),
         ("list_events", "kind"): sorted(EVENT_KINDS),
@@ -3882,20 +3634,3 @@ def test_preserves_interface_without_supersedes_is_refused(store, prompts):
     assert status in (400, 409)
 
 
-def test_a_work_unit_never_hands_out_a_retired_cross_cutting_contract(store, prompts):
-    """A superseded concern entry stays in its slice's membership -- history
-    is kept -- but a builder handed it alongside its successor reads two
-    contracts as live and cannot tell which one binds."""
-    mid = seed(store, prompts)
-    _audit_column(store, prompts, mid)
-    status, payload = call(
-        store, prompts, "POST", "/projects/m/amendments",
-        {"slice": "audit", "in_response_to": mid,
-         "entries": [{"layer": "S", "title": "audit/log.py appends a signed record",
-                      "derives_from": ["A-02"], "supersedes": "S-02"}]},
-    )
-    assert (status, payload["created"]) == (200, ["S-03"])
-    call(store, prompts, "POST", "/projects/m/modules",
-         {"path": "search.py", "implements": ["S-01"]})
-    _, wp = call(store, prompts, "GET", "/projects/m/units/S-01")
-    assert [e["id"] for e in wp["cross_cutting"]] == ["S-03"]

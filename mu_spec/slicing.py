@@ -38,8 +38,8 @@ from mu_spec.identifiers import (
     sort_key,
 )
 from mu_spec.metrics import structural
-from mu_spec.slice_gates import STALE_EMISSION, edge_gates, slice_gates
-from mu_spec.storage import SLICE, Manifest, Slice
+from mu_spec.slice_gates import slice_gates
+from mu_spec.storage import Manifest, Slice
 from mu_spec.waves import schedule
 
 
@@ -53,8 +53,7 @@ def candidates(graph: Graph, layer: str = BEHAVIOUR) -> dict:
       usually about the same thing. The strongest ex-ante signal there is,
       and it is free because the edge is already in the graph.
     - **spread** -- a parent whose children scatter widely is either
-      constraint-shaped ("every action must be auditable", a cross-cutting
-      tell) or evidence a cut runs across the grain of intent. Two opposite
+      constraint-shaped ("every action must be auditable") or evidence a cut runs across the grain of intent. Two opposite
       readings from one number, which is exactly why it is reported for an
       agent to argue from rather than acted on.
     """
@@ -131,9 +130,7 @@ def _parse_proposal(proposal: dict, graph: Graph) -> dict[str, set[Identifier]]:
     return out
 
 
-def score(
-    manifest: Manifest, graph: Graph, proposal: dict, types: dict | None = None
-) -> dict:
+def score(manifest: Manifest, graph: Graph, proposal: dict) -> dict:
     """Run every check and every metric against a partition that does not
     exist yet.
 
@@ -144,28 +141,16 @@ def score(
     slicing requires.
     """
     members = _parse_proposal(proposal, graph)
-    types = types or {}
 
     prospective = Manifest(
         project=manifest.project,
         slices={
-            name: Slice(
-                name=name, members=ids, type=types.get(name, SLICE)
-            )
-            for name, ids in members.items()
+            name: Slice(name=name, members=ids) for name, ids in members.items()
         },
         allocation=dict(manifest.allocation),
     )
 
     findings = slice_gates(prospective, graph)
-    entry_findings = edge_gates(prospective, graph)
-    # Reported with everything else, but never counted against the proposal.
-    # A stale emission says a target was superseded; no partition creates
-    # that, removes it, or changes it. `bad_emission` is a different matter
-    # and stays: it is raised when an emission points somewhere the PROPOSED
-    # manifest does not classify as cross-cutting, so it is exactly a verdict
-    # on the cut.
-    disqualifying = [f for f in entry_findings if f.kind != STALE_EMISSION]
     sched = schedule(prospective, graph)
     metrics = structural(prospective, graph)
 
@@ -205,14 +190,10 @@ def score(
         )
 
     return {
-        "legal": not findings and not disqualifying,
+        "legal": not findings,
         "slice_findings": [
             {"kind": f.kind, "slice": f.slice, "detail": f.detail}
             for f in findings
-        ],
-        "findings": [
-            {"kind": f.kind, "id": str(f.id), "detail": f.detail}
-            for f in entry_findings
         ],
         **metrics,
         "waves": [

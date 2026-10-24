@@ -424,9 +424,7 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
         if run:
             out.append(_bullets(run))
 
-    context = list(payload.get("read_set") or ()) + list(
-        payload.get("cross_cutting") or ()
-    )
+    context = list(payload.get("read_set") or ())
     if context:
         out.append("## Read-only context")
         out.append(

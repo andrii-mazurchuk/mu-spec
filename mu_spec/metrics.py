@@ -133,15 +133,10 @@ def structural(manifest: Manifest, graph: Graph) -> dict:
     Cohesion is the share of a slice's dependency edges that stay inside it.
     A slice whose edges nearly all point outward is not a slice, it is a
     layer of indirection someone drew a box around.
-
-    Emissions are excluded from both. They impose no order and cross into a
-    concern by design, so counting them as coupling would penalise exactly
-    the thing the edge exists to make cheap.
     """
     rows = []
     for name, sl in sorted(manifest.slices.items()):
         internal = outbound = 0
-        emissions = 0
         for entry in graph.entries():
             if entry.id not in sl.members:
                 continue
@@ -151,7 +146,6 @@ def structural(manifest: Manifest, graph: Graph) -> dict:
                     internal += 1
                 elif owner is not None:
                     outbound += 1
-            emissions += len(entry.emits_into)
 
         edges = internal + outbound
         inbound = sum(
@@ -164,12 +158,10 @@ def structural(manifest: Manifest, graph: Graph) -> dict:
         rows.append(
             {
                 "slice": name,
-                "type": sl.type,
                 "size": len(sl.members),
                 "internal_edges": internal,
                 "outbound_edges": outbound,
                 "inbound_edges": inbound,
-                "emissions": emissions,
                 "cohesion": round(internal / edges, 2) if edges else None,
                 "depends_on": list(manifest.dependency_graph(graph).get(name, ())),
             }

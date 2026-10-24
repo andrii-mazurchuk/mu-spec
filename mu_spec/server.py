@@ -35,7 +35,6 @@ from mu_spec.issues import IssueError, IssueLog
 from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
 from mu_spec.shipping import ship
-from mu_spec.storage import SLICE_TYPES
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 from mu_spec.units import SUFFIX_PATTERN
 
@@ -243,16 +242,14 @@ def _tools() -> list[dict[str, Any]]:
             "entry needs a "
             "'layer' and a 'title', and may carry 'body', 'purpose', "
             "'supersedes', and "
-            "three kinds of edge: 'derives_from' (identifiers exactly one "
-            "layer up -- what it serves), 'depends_on' (same layer -- what it "
-            "needs, and what imposes order), and 'emits_into' (same layer, "
-            "and only into a cross-cutting slice -- what it publishes, "
-            "fire-and-forget, imposing no order). Reaching a cross-cutting "
-            "slice with depends_on from outside it is refused: if you branch "
-            "on what comes back, it is not cross-cutting. Inside one "
-            "cross-cutting slice, depends_on orders its own entries. Validated as one transaction: an "
+            "two kinds of edge: 'derives_from' (identifiers exactly one "
+            "layer up -- what it serves) and 'depends_on' (same layer -- what "
+            "it needs, and what imposes order). 'emits_into' is refused: the "
+            "cross-cutting type was removed, and an ambient concern is a "
+            "foundational slice reached with depends_on. Validated as one "
+            "transaction: an "
             "amendment introducing an orphan, a broken horizontal edge, a "
-            "slice cycle, an outbound edge from a cross-cutting slice, a "
+            "slice cycle, a "
             "spec whose `Imports:` line names an entry it does not "
             "depends_on, or a second successor to an id is "
             "refused whole, and the first entry created for a request must "
@@ -270,8 +267,8 @@ def _tools() -> list[dict[str, Any]]:
             "as '#0', '#1' -- a zero-based index into 'entries'. Identifiers "
             "are allocated on commit, so guessing one is how a horizontal "
             "edge ends up pointing at a real entry that is the wrong entry, "
-            "which every gate passes. Placeholders work in 'depends_on' and "
-            "'emits_into' only; 'derives_from' points one layer up and an "
+            "which every gate passes. Placeholders work in 'depends_on' "
+            "only; 'derives_from' points one layer up and an "
             "amendment writes one layer, so a sibling is never a parent. "
             "'slice' must name a slice that already exists -- one comes from "
             "ratifying a slicing or from split_slice, never from being "
@@ -279,8 +276,7 @@ def _tools() -> list[dict[str, Any]]:
             "created by a typo cannot be undone -- and a test entry takes no "
             "slice at all, because its column is the column of the spec entry "
             "it derives from. Layer 'T' is a test: one scenario, deriving "
-            "from exactly one spec entry and carrying no horizontal edge of "
-            "either kind. Its 'purpose' is free text for whoever writes the "
+            "from exactly one spec entry and carrying no horizontal edge. Its 'purpose' is free text for whoever writes the "
             "test; nothing branches on it.",
             "POST",
             "/projects/{project}/amendments",
@@ -291,22 +287,6 @@ def _tools() -> list[dict[str, Any]]:
                 "entries": {"type": "array", "items": {"type": "object"}},
             },
             ("project", "in_response_to", "entries"),
-        ),
-        tool(
-            "classify_slice",
-            "Record whether a slice is ordinary or cross-cutting. 'type' is "
-            "'slice' or 'cross_cutting'. A cross-cutting slice's spec spine "
-            "lands in every other slice's work package without anything "
-            "declaring a dependency on it, because its behaviour ranges over "
-            "the other slices rather than naming a subject of its own. The "
-            "unit records this ruling; it does not make it -- but it refuses "
-            "one that contradicts edges that already exist, so a slice "
-            "already reaching into a feature slice cannot be relabelled "
-            "cross-cutting after the fact.",
-            "POST",
-            "/projects/{project}/slices/{slice}/type",
-            {"project": s, "slice": s, "type": enum(SLICE_TYPES)},
-            ("project", "slice", "type"),
         ),
         tool(
             "split_slice",
@@ -410,8 +390,8 @@ def _tools() -> list[dict[str, Any]]:
             "dependency graph rather than chosen. Slices in one wave have no "
             "edge between them, so they can be worked in parallel with "
             "nothing to coordinate; every earlier wave is complete before the "
-            "next begins, so each reads its dependencies as frozen. A "
-            "cross-cutting slice lands in wave 0. `chain: true` means every "
+            "next begins, so each reads its dependencies as frozen. "
+            "`chain: true` means every "
             "wave is one slice wide -- nothing can be done in parallel, and "
             "the slices are probably too coupled. `unschedulable` is only "
             "non-empty when the gates have already refused the graph.",
@@ -425,7 +405,7 @@ def _tools() -> list[dict[str, Any]]:
             "The graph half of the grouping problem, before any slice "
             "exists: which behaviours share an intent parent, and how far "
             "each parent spreads. A parent whose children scatter widely is "
-            "either constraint-shaped (a cross-cutting tell) or evidence the "
+            "either constraint-shaped or evidence the "
             "cut runs across the grain of intent -- two opposite readings, "
             "which is why it is reported rather than acted on. Grouping by "
             "shared nouns is YOUR job: this unit never looks inside a body.",
@@ -437,8 +417,7 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "score_slicing",
             "Score a proposed partition WITHOUT creating it. `proposal` maps "
-            "slice name to a list of entry ids; `types` optionally marks one "
-            "cross_cutting. Runs every gate and every structural metric as "
+            "slice name to a list of entry ids. Runs every gate and every structural metric as "
             "though the cut were real, and commits nothing -- which is what "
             "makes trialling several slicings possible, since slices split "
             "and never merge. `legal` is computed; good is not. Nothing here "
@@ -448,7 +427,6 @@ def _tools() -> list[dict[str, Any]]:
             {
                 "project": s,
                 "proposal": {"type": "object"},
-                "types": {"type": "object"},
             },
             ("project", "proposal"),
         ),
@@ -488,8 +466,7 @@ def _tools() -> list[dict[str, Any]]:
             "One slice assembled for READING: its spec entries with full "
             "bodies, the justification chain for each, read-only context "
             "from the slices this one depends on (projected from the "
-            "entries' own edges, never declared beside them), and "
-            "cross-cutting entries. For reviewing or authoring a column, "
+            "entries' own edges, never declared beside them). For reviewing or authoring a column, "
             "not for building it -- a slice's files are not disjoint from "
             "other slices' files, so a slice is not a safe branch scope. "
             "Execution scope is a work unit: see get_work_unit. Also "
@@ -530,7 +507,7 @@ def _tools() -> list[dict[str, Any]]:
             "with full bodies, ONE justification chain for the whole unit -- every "
             "entry in a unit shares an anchor and so an ancestry -- a "
             "spine-only read set "
-            "of what it depends on elsewhere, cross-cutting entries, "
+            "of what it depends on elsewhere, "
             "`follows` -- the units this one waits on -- and `size`, for "
             "deciding how many units one session should take. A unit holding "
             "test "
@@ -739,7 +716,7 @@ def _tools() -> list[dict[str, Any]]:
             "branch and every contract can be caught failing; incomplete is "
             "the to-do list and blocks nothing. "
             "Blocking kinds: `orphan` (derives from something missing, "
-            "sideways, or nothing at all), `bad_dependency`, `bad_emission`, "
+            "sideways, or nothing at all), `bad_dependency`, "
             "`stranded`, `bad_import` (a spec's `Imports:` line names an "
             "entry it has no depends_on edge to), `two_successors` (two "
             "entries supersede one id), and two read against the module "
@@ -759,13 +736,8 @@ def _tools() -> list[dict[str, Any]]:
             "scenarios; re-pointing them is a follow-on `verification` "
             "request, because an amendment writes one layer. "
             "Reporting kinds, which never block: `unserved`, `untested`, "
-            "`no_imports_line` (a spec without the line, once the project "
-            "writes it elsewhere), and "
-            "`stale_emission` -- an emission whose target was retired. That "
-            "one does not block because an emission consumes nothing, so a "
-            "successor on the other end changes nothing the emitter relied "
-            "on; an emitter that needs its target's shape has declared a "
-            "dependency by mistake.",
+            "and `no_imports_line` (a spec without the line, once the "
+            "project writes it elsewhere).",
             "GET",
             "/projects/{project}/gates",
             {"project": s},
@@ -774,16 +746,14 @@ def _tools() -> list[dict[str, Any]]:
         tool(
             "submit_proposal",
             "Submit a proposed slicing for ratification: a mapping of slice "
-            "name to the entry identifiers it would own, optional per-slice "
-            "types, and a note carrying the rationale. Creates nothing -- a "
+            "name to the entry identifiers it would own, and a note carrying the rationale. Creates nothing -- a "
             "partition is not a partition until a human rules on it. While a "
             "proposal is pending no further slicing session is dispatched. "
             "An entry proposed for two slices is refused here rather than at "
             "the ratification gate.",
             "POST",
             "/projects/{project}/slicing/proposal",
-            {"project": s, "proposal": {"type": "object"},
-             "types": {"type": "object"}, "note": s},
+            {"project": s, "proposal": {"type": "object"}, "note": s},
             ("project", "proposal"),
         ),
         tool(
@@ -1207,11 +1177,6 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("POST", re.compile(rf"^/projects/{_P}/amendments$"), "amendment"),
     (
         "POST",
-        re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/type$"),
-        "classify_slice",
-    ),
-    (
-        "POST",
         re.compile(rf"^/projects/{_P}/slices/(?P<slice>[A-Za-z0-9_-]+)/split$"),
         "split_slice",
     ),
@@ -1609,12 +1574,6 @@ def _handle(
                 store, inbox, project, body, events, now_fn, issues
             )
             return (200 if result["admitted"] else 409), JSON, json.dumps(result)
-
-        if name == "classify_slice":
-            result = service.classify_slice(
-                store, project, params["slice"], body or {}, events, now_fn
-            )
-            return (200 if result["recorded"] else 409), JSON, json.dumps(result)
 
         if name == "split_slice":
             result = service.split_slice(

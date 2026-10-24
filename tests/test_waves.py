@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
-from mu_spec.storage import CROSS_CUTTING, Manifest, Slice
+from mu_spec.storage import Manifest, Slice
 from mu_spec.waves import schedule
 
 
@@ -10,21 +10,16 @@ def _manifest(**slices) -> Manifest:
     return Manifest(
         project="m",
         slices={
-            name: Slice(
-                name=name,
-                members={parse(i) for i in spec[0].split()},
-                type=spec[1] if len(spec) > 1 else "slice",
-            )
+            name: Slice(name=name, members={parse(i) for i in spec[0].split()})
             for name, spec in slices.items()
         },
     )
 
 
-def _entry(ident: str, depends_on: str = "", emits_into: str = "") -> Entry:
+def _entry(ident: str, depends_on: str = "") -> Entry:
     return Entry(
         id=parse(ident),
         depends_on=tuple(parse(d) for d in depends_on.split() if d),
-        emits_into=tuple(parse(d) for d in emits_into.split() if d),
         title=ident,
     )
 
@@ -100,25 +95,6 @@ def test_no_two_slices_in_one_wave_have_an_edge_between_them():
     for wave in schedule(manifest, graph).waves:
         for name in wave:
             assert not set(edges[name]) & set(wave)
-
-
-def test_a_cross_cutting_slice_lands_in_wave_zero_by_construction():
-    """Nothing arranges this. The edge rules leave a concern no outbound
-    dependency to have, so it has no path to anything and its longest path is
-    zero."""
-    manifest = _manifest(
-        a=("S-01",), b=("S-02",), audit=("S-03", CROSS_CUTTING)
-    )
-    graph = Graph(
-        [
-            _entry("S-01", depends_on="S-02", emits_into="S-03"),
-            _entry("S-02", emits_into="S-03"),
-            _entry("S-03"),
-        ]
-    )
-    sched = schedule(manifest, graph)
-    assert sched.wave_of()["audit"] == 0
-    assert sched.waves == (("audit", "b"), ("a",))
 
 
 def test_a_cycle_comes_back_unschedulable_instead_of_hanging():

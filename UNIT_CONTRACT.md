@@ -114,8 +114,8 @@ registered tool, reachable by an agent rather than by a scrape.
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.
 
-Everything beyond the four is declared in `/tools` — thirty-eight of them,
-covering the inbox, amendments, slice classification and splitting, waves,
+Everything beyond the four is declared in `/tools` — thirty-seven of them,
+covering the inbox, amendments, slice splitting, waves,
 the issue queue and its reconciliation, module backlinks, work units and
 their cuts, planning, the audit, the slice context, the slicing proposal
 awaiting ratification, and the measurement surface.
@@ -183,7 +183,7 @@ append-only, slices splitting but never merging.
 **It computes; it never reasons and never executes.** Mechanical operations —
 admission gates, spine generation, graph traversal, wave assignment,
 spec-diff resolution — belong here precisely so a session cannot skip them.
-Authoring entries, classifying corrections, ruling a slice cross-cutting, and
+Authoring entries, classifying corrections, and
 declaring what could not be derived belong to whoever calls this one.
 
 It also never runs git. The diff audit takes the touched paths as an

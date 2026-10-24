@@ -40,13 +40,9 @@ class Entry:
     # dependency guesswork. Slice-level dependency is projected from these
     # and is never authored, so the manifest cannot drift from the truth.
     depends_on: tuple[Identifier, ...] = ()
-    # Also horizontal, and deliberately NOT a dependency: what this entry
-    # publishes into a cross-cutting slice. Fire-and-forget -- nothing is
-    # consumed back, so it imposes no order, which is what keeps a
-    # cross-cutting slice derivable before everything that emits into it.
-    # It is also the escape from a cycle involving a concern: flip the
-    # concern's outbound dependency into an inbound emission and it has no
-    # outbound edges left.
+    # History only. The cross-cutting slice type was removed 10-24 (D6) and
+    # no new entry may carry this; one written before is loaded and stored
+    # back verbatim, and nothing -- gate, wave, context, render -- reads it.
     emits_into: tuple[Identifier, ...] = ()
     # The one-line title the spine carries. Stored explicitly rather than
     # inferred, because the spine is the thing agents read to decide what to
@@ -130,7 +126,7 @@ class Graph:
         for ident, entry in list(self._live.items()):
             edges = {
                 name: tuple(carried(t) for t in getattr(entry, name))
-                for name in ("derives_from", "depends_on", "emits_into")
+                for name in ("derives_from", "depends_on")
             }
             if any(edges[n] != getattr(entry, n) for n in edges):
                 entry = dataclasses.replace(entry, **edges)
@@ -253,15 +249,13 @@ class Graph:
         from. If the horizontal edges only appeared inside bodies, it would
         have to load bodies to work out which bodies it needs.
 
-        Rows are dicts rather than tuples: this is the third edge kind, and a
-        positional row means every reader counts fields correctly forever."""
+        Rows are dicts rather than tuples: a positional row means every reader counts fields correctly forever."""
         return [
             {
                 "id": str(e.id),
                 "title": e.display_title,
                 "derives_from": [str(d) for d in e.derives_from],
                 "depends_on": [str(d) for d in e.depends_on],
-                "emits_into": [str(d) for d in e.emits_into],
             }
             for e in self.entries()
         ]
