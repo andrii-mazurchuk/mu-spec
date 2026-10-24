@@ -32,6 +32,7 @@ import dataclasses
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 from mu_spec.graph import Entry, Graph
@@ -85,6 +86,11 @@ EMISSIONS_FILE = "emissions.jsonl"
 # seeding script it launches cannot open the live projects for writing.
 REFUSE_ROOTS_ENV = "MU_SPEC_REFUSE_ROOTS"
 MANIFEST_FILE = "manifest.json"
+# What the manifest becomes once an `append` lands, written before the entry
+# file and removed after the manifest. Present on a load only when a write
+# died between the two, and then the entries decide: all there, roll forward;
+# not, discard it. Either way the next reader sees one world, not half of two.
+PENDING_FILE = "manifest.pending.json"
 
 # Every slice is a plain slice. The cross-cutting type was removed 10-24 (D6);
 # a manifest still saying "cross_cutting" loads, and the value is carried
@@ -401,6 +407,13 @@ class ProjectStore:
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
+        # Held across a write that spans files (`append`), and by any reader
+        # that must see the project whole (a cut). Re-entrant, so a holder
+        # may go on calling the store. One process owns the store -- the
+        # server binds its port exclusively -- so a thread lock is enough.
+        # ponytail: one lock per store, not per project; split it if
+        # projects ever contend.
+        self.lock = threading.RLock()
         # A hard error, not a degrade: a seeding run aimed at the live store
         # writes entries nobody asked for and burns identifiers for good.
         resolved = self._root.resolve()
@@ -439,9 +452,24 @@ class ProjectStore:
     # -- manifest -----------------------------------------------------------
 
     def load_manifest(self, project: str) -> Manifest:
-        return Manifest.from_json(
-            (self._project_dir(project) / MANIFEST_FILE).read_text(encoding="utf-8")
-        )
+        path = self._project_dir(project)
+        if (path / PENDING_FILE).exists():
+            self._recover(project, path)
+        return Manifest.from_json((path / MANIFEST_FILE).read_text(encoding="utf-8"))
+
+    def _recover(self, project: str, path: Path) -> None:
+        """Finish or discard an `append` that died between its entry write
+        and its manifest write. Deterministic: the journal names the
+        identifiers it wrote, and whether they are on disk is a fact."""
+        with self.lock:
+            pending = path / PENDING_FILE
+            if not pending.exists():  # another thread finished it first
+                return
+            journal = json.loads(pending.read_text(encoding="utf-8"))
+            on_disk = {e.id for e in self.load_all(project)}
+            if all(parse(i) in on_disk for i in journal["ids"]):
+                (path / MANIFEST_FILE).write_text(journal["manifest"], encoding="utf-8")
+            pending.unlink()
 
     def _write_manifest(self, path: Path, manifest: Manifest) -> None:
         (path / MANIFEST_FILE).write_text(manifest.to_json(), encoding="utf-8")
@@ -558,12 +586,13 @@ class ProjectStore:
                 "being structural"
             )
 
-        manifest = self.load_manifest(project)
-        if parsed:
-            manifest.modules[path.strip()] = parsed
-        else:
-            manifest.modules.pop(path.strip(), None)
-        self.save_manifest(project, manifest)
+        with self.lock:  # or an append's re-pointing could overwrite this
+            manifest = self.load_manifest(project)
+            if parsed:
+                manifest.modules[path.strip()] = parsed
+            else:
+                manifest.modules.pop(path.strip(), None)
+            self.save_manifest(project, manifest)
 
     # -- entry files --------------------------------------------------------
 
@@ -593,34 +622,69 @@ class ProjectStore:
 
     def append(
         self, project: str, entries: list[Entry], slice_name: str | None = None
-    ) -> None:
+    ) -> list[dict]:
         """Append-only: existing entries in the target file are read, the new
-        ones added, and the whole file rewritten. Nothing is ever removed."""
+        ones added, and the whole file rewritten. Nothing is ever removed.
+
+        A module implementing an entry one of these supersedes is re-pointed
+        to the successor in the same write (M14). The manifest is this
+        unit's own, so that is mechanical -- unlike a test or a dependent
+        pointing at the retired entry, which stay as written. Returns each
+        re-pointed module as `{module, was, now}`.
+
+        Two files change, so the write is journalled: the manifest-to-be is
+        written first, then the entries, then the manifest, then the journal
+        is removed. A death anywhere in between is finished or discarded by
+        the next `load_manifest` (`_recover`), and the lock keeps a reader in
+        this process from seeing the middle.
+        """
         if not entries:
-            return
-        existing_ids = {e.id for e in self.load_all(project)}
-        for entry in entries:
-            if entry.id in existing_ids:
-                raise ValueError(f"identifier {entry.id} already exists in {project}")
+            return []
+        with self.lock:
+            existing_ids = {e.id for e in self.load_all(project)}
+            for entry in entries:
+                if entry.id in existing_ids:
+                    raise ValueError(
+                        f"identifier {entry.id} already exists in {project}"
+                    )
 
-        by_file: dict[Path, list[Entry]] = {}
-        for entry in entries:
-            path = self._file_for(project, entry.id.layer, slice_name)
-            by_file.setdefault(path, []).append(entry)
+            by_file: dict[Path, list[Entry]] = {}
+            for entry in entries:
+                path = self._file_for(project, entry.id.layer, slice_name)
+                by_file.setdefault(path, []).append(entry)
+            merged = {path: self._read_file(path) + new for path, new in by_file.items()}
 
-        for path, new in by_file.items():
-            merged = self._read_file(path) + new
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(render_entries(merged), encoding="utf-8")
-
-        if slice_name:
             manifest = self.load_manifest(project)
-            sl = manifest.slices.setdefault(slice_name, Slice(name=slice_name))
-            # A test entry never joins a slice. Its column is its parent
-            # spec entry's, derived on demand; a stored membership would be
-            # the second copy that goes stale.
-            sl.members.update(e.id for e in entries if e.id.layer != TEST)
-            self.save_manifest(project, manifest)
+            if slice_name:
+                sl = manifest.slices.setdefault(slice_name, Slice(name=slice_name))
+                # A test entry never joins a slice. Its column is its parent
+                # spec entry's, derived on demand; a stored membership would
+                # be the second copy that goes stale.
+                sl.members.update(e.id for e in entries if e.id.layer != TEST)
+            moved = {e.supersedes: e.id for e in entries if e.supersedes is not None}
+            repointed = []
+            for module, ids in sorted(manifest.modules.items()):
+                if ids & moved.keys():
+                    now = {moved.get(i, i) for i in ids}
+                    repointed.append({
+                        "module": module,
+                        "was": [str(i) for i in sorted(ids, key=sort_key)],
+                        "now": [str(i) for i in sorted(now, key=sort_key)],
+                    })
+                    manifest.modules[module] = now
+
+            project_dir = self._project_dir(project)
+            pending = project_dir / PENDING_FILE
+            pending.write_text(json.dumps({
+                "ids": [str(e.id) for e in entries],
+                "manifest": manifest.to_json(),
+            }), encoding="utf-8")
+            for path, rows in merged.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(render_entries(rows), encoding="utf-8")
+            self._write_manifest(project_dir, manifest)
+            pending.unlink()
+            return repointed
 
     def settle_holding(self, project: str) -> list[Identifier]:
         """Move behaviour out of the holding file into the slice that now owns it.

@@ -385,7 +385,15 @@ def _substitute(
     return out
 
 
-def submit_amendment(
+def submit_amendment(store: ProjectStore, *args, **kwargs) -> dict:
+    # Read, decide and write under the store lock, so a cut taken meanwhile
+    # sees the graph before this amendment or after it -- never the entries
+    # landed and the modules still on the retired ids (M14).
+    with store.lock:
+        return _submit_amendment(store, *args, **kwargs)
+
+
+def _submit_amendment(
     store: ProjectStore,
     inbox: Inbox,
     project: str,
@@ -700,9 +708,29 @@ def submit_amendment(
     except ValueError as exc:
         raise ServiceError(str(exc)) from exc
 
+    # Who still points at what this retires, read from the edges as WRITTEN
+    # (the graph carries a preserving supersession's edges on read, which
+    # would hide exactly these). Listed, never rewritten: whether a test
+    # still falsifies the successor, or a dependent still holds against it,
+    # is judgement (§4b.1b). Nothing is filed either -- the caller decides.
+    successors = {e.supersedes: e for e in staged if e.supersedes is not None}
+    still_live = sorted(
+        (e for e in existing if prospective.superseded_by(e.id) is None),
+        key=lambda e: sort_key(e.id),
+    )
+    restate_or_keep = [
+        str(e.id) for e in still_live
+        if e.id.layer == TEST and any(p in successors for p in e.derives_from)
+    ]
+    dependents_stranded = [
+        str(e.id) for e in still_live
+        if any(t in successors and not successors[t].preserves_interface
+               for t in e.depends_on)
+    ]
+
     for entry in staged:
         store.allocate(project, entry.id.layer)
-    store.append(project, staged, slice_name=slice_name)
+    repointed = store.append(project, staged, slice_name=slice_name)
     created = [str(e.id) for e in sorted(staged, key=lambda e: sort_key(e.id))]
     (issues if issue else inbox).record_produced(cite_id, created)
 
@@ -750,6 +778,11 @@ def submit_amendment(
                 [e.supersedes for e in staged if e.supersedes is not None]
             )
         ],
+        # M14. Modules moved onto the successor in the same write; the two
+        # lists below were left as written and are the caller's to judge.
+        "repointed_modules": repointed,
+        "restate_or_keep": restate_or_keep,
+        "dependents_stranded": dependents_stranded,
         "gates": _gate_report(after, store.load_manifest(project)),
     }
 
@@ -1137,8 +1170,9 @@ def cut_units(
     retired entries, units that span a slice, dependency targets in no unit
     -- all loud, none blocking. Re-cutting is free and expected.
     """
-    manifest = store.load_manifest(project)
-    graph = store.load_graph(project)
+    with store.lock:  # one world: never mid-way through an amendment (M14)
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
     gates = _gate_report(graph, manifest)
     if not gates["sound"]:
         return {
@@ -2750,6 +2784,17 @@ def prior_state(store: ProjectStore, route: str | None, project: str, body: dict
     """
     if route in ("propose", "reject_proposal"):
         return {"proposal": _read_proposal(store, project)}
+    if route == "amendment":
+        # A supersession re-points modules in place (M14), so the log keeps
+        # what they claimed before it. None when nothing is superseded.
+        retired = {str(e.get("supersedes")) for e in body.get("entries") or ()
+                   if isinstance(e, dict) and e.get("supersedes")}
+        claimed = {
+            p: [str(i) for i in sorted(ids, key=sort_key)]
+            for p, ids in sorted(store.load_manifest(project).modules.items())
+            if retired & {str(i) for i in ids}
+        }
+        return {"modules": claimed} if claimed else None
     if route not in ("set_repo", "set_labels", "declare_module", "ratify"):
         return None
     manifest = store.load_manifest(project)
