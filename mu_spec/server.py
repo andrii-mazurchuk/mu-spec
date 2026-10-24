@@ -285,7 +285,28 @@ def _tools() -> list[dict[str, Any]]:
             "slice at all, because its column is the column of the spec entry "
             "it derives from. Layer 'T' is a test: one scenario, deriving "
             "from exactly one spec entry and carrying no horizontal edge. Its 'purpose' is free text for whoever writes the "
-            "test; nothing branches on it.",
+            "test; nothing branches on it. `tests_of_dependents` lists the "
+            "tests of every entry depending, at any distance, on what a "
+            "supersession retires: their fixtures may assert what you "
+            "removed, so read them before the cut. "
+            "**Preview first**: send the same body with `dry_run: true` and "
+            "you get exactly what this call would answer -- created ids, "
+            "blast_radius, restate_or_keep, dependents_stranded, "
+            "tests_of_dependents, repointed_modules, gates, or the refusal "
+            "with its findings or `reason` -- always status 200 with "
+            "`admitted` saying what the commit would do, and nothing "
+            "written, no id allocated, no request or issue touched. A "
+            "preview also returns `would_ship`: the shipped units whose "
+            "contract this moves, each {key, number, ship: 'edit' (open "
+            "issue rewritten) or 'follow_up' (closed completed, so a new "
+            "issue)}, or null while the change leaves the graph unsound. "
+            "**Send an `idempotency_key`** (any unique string you choose, "
+            "e.g. a uuid) on every amendment you might retry: a write can "
+            "time out and still land, and a blind retry without a key "
+            "writes the entries twice. A repeat with the same key in this "
+            "project returns the original answer (same ids, `replayed: "
+            "true`) and writes nothing; the same key with a different body "
+            "is a 409. A refused amendment does not use up its key.",
             "POST",
             "/projects/{project}/amendments",
             {
@@ -293,6 +314,8 @@ def _tools() -> list[dict[str, Any]]:
                 "slice": s,
                 "in_response_to": s,
                 "entries": {"type": "array", "items": {"type": "object"}},
+                "dry_run": {"type": "boolean"},
+                "idempotency_key": s,
             },
             ("project", "in_response_to", "entries"),
         ),
@@ -338,7 +361,12 @@ def _tools() -> list[dict[str, Any]]:
             "claim on one line -- the router reads headers only -- and put "
             "what you assumed in `assumption`. `raised_by` names the slice "
             "or session raising it; `round` is the reconciliation round, "
-            "omitted unless you are re-raising inside one.",
+            "omitted unless you are re-raising inside one. **Send an "
+            "`idempotency_key`** (any unique string, e.g. a uuid) whenever "
+            "you might retry: a call can time out and still land, and a "
+            "retry without a key files the issue twice. The same key in "
+            "this project returns the original issue (same id, `replayed: "
+            "true`) and files nothing; with a different body it is a 409.",
             "POST",
             "/projects/{project}/issues",
             {
@@ -349,6 +377,7 @@ def _tools() -> list[dict[str, Any]]:
                 "assumption": s,
                 "raised_by": s,
                 "round": {"type": "integer"},
+                "idempotency_key": s,
             },
             ("project", "target", "kind", "claim"),
         ),
@@ -1664,7 +1693,10 @@ def _handle(
             result = service.submit_amendment(
                 store, inbox, project, body, events, now_fn, issues
             )
-            return (200 if result["admitted"] else 409), JSON, json.dumps(result)
+            # A preview succeeded whatever it found; `admitted` says what the
+            # commit would do.
+            ok = result["admitted"] or result.get("dry_run")
+            return (200 if ok else 409), JSON, json.dumps(result)
 
         if name == "split_slice":
             result = service.split_slice(
@@ -1820,7 +1852,7 @@ def _handle(
         return 400, JSON, json.dumps({"error": str(exc)})
     except UnknownProject:
         return 404, JSON, json.dumps({"error": f"unknown project {project!r}"})
-    except FileExistsError as exc:
+    except (FileExistsError, service.IdempotencyConflict) as exc:
         return 409, JSON, json.dumps({"error": str(exc)})
     except (ServiceError, MalformedEntryFile, ValueError) as exc:
         # A caller error, reported as one. Distinct from the degrade-quietly

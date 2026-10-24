@@ -191,6 +191,12 @@ class Graph:
         entry's meaning moved, exactly these consumed the old meaning."""
         return tuple(sorted(self._dependents.get(identifier, ()), key=sort_key))
 
+    def consumers(self, changed: Iterable[Identifier]) -> tuple[Identifier, ...]:
+        """Everything that depends on a change at any distance: `dependents`,
+        closed. Excludes the changed entries, as `blast_radius` does."""
+        changed = list(changed)
+        return self._walk(changed, self.dependents, exclude=set(changed))
+
     def ancestors(self, identifier: Identifier) -> tuple[Identifier, ...]:
         return self._walk([identifier], self.parents)
 

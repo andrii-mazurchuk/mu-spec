@@ -21,8 +21,10 @@ dict, so the whole surface is testable without a socket.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -388,12 +390,178 @@ def _substitute(
     return out
 
 
-def submit_amendment(store: ProjectStore, *args, **kwargs) -> dict:
+class IdempotencyConflict(ServiceError):
+    """An idempotency key already answered a different body. A 409: the key
+    is the caller's claim that this is the same write, and it is not."""
+
+
+def _idempotent(store: ProjectStore, project: str, kind: str, body: dict,
+                run: Callable[[], dict], keep: Callable[[dict], bool]) -> dict:
+    """Run a write once per `idempotency_key` (M18). A repeat of the key with
+    the same body answers what the first call answered and writes nothing;
+    with a different body it is refused. Only a result that wrote (`keep`) is
+    remembered, so a refused call leaves its key free for the retry.
+
+    Who sent it (`actor`) is not part of the body: a retry from a restarted
+    session is the same write.
+
+    ponytail: the result is remembered after the write, not in its journal --
+    a death between the two lets one retry repeat the write. Journal the key
+    with `append` if that window ever matters.
+    """
+    key = body.get("idempotency_key")
+    if key is None:
+        return run()
+    if not isinstance(key, str) or not key.strip():
+        raise ServiceError("'idempotency_key' must be a non-empty string")
+    content = {k: v for k, v in body.items() if k not in ("idempotency_key", "actor")}
+    digest = hashlib.sha256(json.dumps({"kind": kind, "body": content},
+                                       sort_keys=True, default=str).encode()).hexdigest()
+    with store.lock:
+        seen = store.recall(project, key)
+        if seen is not None:
+            if seen.get("digest") != digest:
+                raise IdempotencyConflict(
+                    f"idempotency_key {key!r} was already used in {project!r} for a "
+                    f"different {seen.get('kind', kind)} -- a key names one write. "
+                    "Send a new key for a new write"
+                )
+            return {**seen["result"], "replayed": True}
+        result = run()
+        if keep(result):
+            store.remember(project, key, {"kind": kind, "digest": digest, "result": result})
+        return result
+
+
+def submit_amendment(
+    store: ProjectStore,
+    inbox: Inbox,
+    project: str,
+    body: dict,
+    events: Lifecycle | None = None,
+    now_fn: Callable[[], float] = time.time,
+    issues: IssueLog | None = None,
+) -> dict:
+    if body.get("dry_run") is True:
+        return preview_amendment(store, inbox, project, body, issues, now_fn)
     # Read, decide and write under the store lock, so a cut taken meanwhile
     # sees the graph before this amendment or after it -- never the entries
     # landed and the modules still on the retired ids (M14).
     with store.lock:
-        return _submit_amendment(store, *args, **kwargs)
+        return _idempotent(
+            store, project, "amendment", body,
+            lambda: _submit_amendment(store, inbox, project, body, events, now_fn, issues),
+            keep=lambda r: bool(r.get("admitted")),
+        )
+
+
+class _ReadOnly:
+    """An inbox or issue log a dry run may read and never write: the one
+    write the amendment path makes to either is `record_produced`."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def get(self, ident: str):
+        return self._inner.get(ident) if self._inner is not None else None
+
+    def record_produced(self, *_args) -> None:
+        pass
+
+
+def preview_amendment(
+    store: ProjectStore,
+    inbox: Inbox,
+    project: str,
+    body: dict,
+    issues: IssueLog | None = None,
+    now_fn: Callable[[], float] = time.time,
+) -> dict:
+    """What `submit_amendment` WOULD answer, with nothing written (M11).
+
+    Not a second implementation: the real path runs, unchanged, against a
+    scratch copy of the project, so the preview cannot drift from the commit
+    -- same gates, same refusals, same identifiers it would allocate. The
+    inbox and issue log are read through and never written, and no lifecycle
+    event is recorded. A refusal the commit would raise as a 400 comes back
+    here as `admitted: false` with its `reason`.
+
+    One thing only a preview adds, `would_ship`: the shipped units whose
+    contract fingerprint the amendment moves, so the next Ship would edit
+    their open issue or, closed `completed`, open a follow-up. Null when the
+    graph would be unsound, because no unit is issued from one until the
+    stranded entries are re-derived.
+    """
+    body = {k: v for k, v in body.items() if k not in ("dry_run", "idempotency_key")}
+    with tempfile.TemporaryDirectory() as tmp:
+        scratch = store.scratch(project, Path(tmp))
+        shipped = _shipped(scratch, project)
+        before = _contracts(scratch, project, shipped) if shipped[0] else {}
+        try:
+            result = _submit_amendment(scratch, _ReadOnly(inbox), project, body,
+                                       None, now_fn, _ReadOnly(issues))
+        except ServiceError as exc:
+            return {"dry_run": True, "admitted": False, "reason": str(exc)}
+        if result["admitted"]:
+            after = _contracts(scratch, project, shipped) if shipped[0] else {}
+            live, done = shipped
+            result["would_ship"] = None if after is None or before is None else [
+                {"key": key, "number": live[key].get("number"),
+                 "ship": "follow_up" if key in done else "edit"}
+                for key in sorted(before)
+                # ponytail: compared by key; a pre-lineage project renames a
+                # superseded unit, and that unit is missed here.
+                if key in after and after[key] != before[key]
+            ]
+    return {"dry_run": True, **result}
+
+
+def _shipped(store: ProjectStore, project: str) -> tuple[dict, frozenset]:
+    """The units with an issue on the tracker, and those closed `completed`,
+    read from the emission record."""
+    try:
+        live, _ = emitting.standing(store.emissions_path(project),
+                                    store.load_manifest(project).repo or "")
+    except emitting.EmissionError:
+        return {}, frozenset()
+    return live, emitting.completed(live)
+
+
+def _contracts(store: ProjectStore, project: str, shipped) -> dict[str, str] | None:
+    """Each shipped unit's contract fingerprint as Ship would render it now,
+    or None when no unit can be issued at all."""
+    live, done = shipped
+    fetch = _work_units(store, project)
+    graph = store.load_graph(project)
+    retired = _retired_map(graph)
+    repo = store.load_manifest(project).repo
+    out: dict[str, str] = {}
+    for key in live:
+        try:
+            payload = fetch(key)
+        except ServiceError:
+            continue  # gone from the projection: Ship withdraws it, not edits
+        if not payload.get("issued"):
+            return None
+        try:
+            ticket = render_ticket(payload, repo=repo, existing=done, retired=retired)
+        except (ValueError, KeyError):
+            continue
+        out[key] = emitting.contract_of(ticket.body)
+    return out
+
+
+def tests_of_dependents(graph: Graph, changed) -> list[str]:
+    """Tests judging an entry that depends, at any distance, on one of
+    `changed`. Not the changed entries' own tests (`restate_or_keep`): the
+    tests of their consumers, whose fixtures may assert what the change
+    removes -- DARK's S-325 broke T-571 and T-554 that way, two hops out."""
+    changed = list(changed)
+    return sorted(
+        {str(c) for d in graph.consumers(changed) for c in graph.children(d)
+         if c.layer == TEST},
+        key=lambda i: sort_key(parse(i)),
+    )
 
 
 def _submit_amendment(
@@ -730,6 +898,10 @@ def _submit_amendment(
         if any(t in successors and not successors[t].preserves_interface
                for t in e.depends_on)
     ]
+    # M11. Consumers are reached through the retired id (a stranding edge)
+    # and through its successor (a carried one), so both are walked from.
+    consumer_tests = tests_of_dependents(
+        prospective, [*successors, *(e.id for e in successors.values())])
 
     for entry in staged:
         store.allocate(project, entry.id.layer)
@@ -786,6 +958,9 @@ def _submit_amendment(
         "repointed_modules": repointed,
         "restate_or_keep": restate_or_keep,
         "dependents_stranded": dependents_stranded,
+        # Tests of the entries depending on what this retires, at any
+        # distance: their fixtures may assert what the change removed.
+        "tests_of_dependents": consumer_tests,
         "gates": _gate_report(after, store.load_manifest(project)),
     }
 
@@ -847,6 +1022,21 @@ def raise_issue(
     The target's slice is resolved and stored here, at filing time, so
     grouping later does not depend on membership that may since have moved.
     """
+    return _idempotent(
+        store, project, "issue", body,
+        lambda: _raise_issue(store, issues, project, body, now_fn, events),
+        keep=lambda r: True,
+    )
+
+
+def _raise_issue(
+    store: ProjectStore,
+    issues: IssueLog,
+    project: str,
+    body: dict,
+    now_fn: Callable[[], float],
+    events: Lifecycle | None = None,
+) -> dict:
     manifest = store.load_manifest(project)
     target_slice = None
     raw_target = body.get("target")

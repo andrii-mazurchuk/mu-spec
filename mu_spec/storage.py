@@ -32,6 +32,7 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import threading
 from pathlib import Path
 
@@ -91,6 +92,9 @@ MANIFEST_FILE = "manifest.json"
 # died between the two, and then the entries decide: all there, roll forward;
 # not, discard it. Either way the next reader sees one world, not half of two.
 PENDING_FILE = "manifest.pending.json"
+# Idempotency key -> what the write it named answered (M18). Per project, so
+# a key is scoped to the project it was sent to.
+IDEMPOTENCY_FILE = "idempotency.jsonl"
 
 # Every slice is a plain slice. The cross-cutting type was removed 10-24 (D6);
 # a manifest still saying "cross_cutting" loads, and the value is carried
@@ -758,6 +762,37 @@ class ProjectStore:
 
     def load_graph(self, project: str) -> Graph:
         return Graph(self.load_all(project))
+
+    def scratch(self, project: str, root: Path) -> "ProjectStore":
+        """A copy of one project under `root`, as a store of its own: what a
+        dry run writes into so the real one is never touched (M11). Taken
+        under the lock, so the copy is one world."""
+        with self.lock:
+            source = self._project_dir(project)
+            shutil.copytree(source, Path(root) / project)
+        return ProjectStore(root)
+
+    # -- idempotency (M18) ---------------------------------------------------
+
+    def recall(self, project: str, key: str) -> dict | None:
+        """What the write sent under `key` answered, or None if none was."""
+        path = self._project_dir(project) / IDEMPOTENCY_FILE
+        if not path.exists():
+            return None
+        found = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if row.get("key") == key:
+                    found = row
+        return found
+
+    def remember(self, project: str, key: str, record: dict) -> None:
+        """Append-only, one line per key.
+        ponytail: a full scan per recall; index it if the file gets long."""
+        path = self._project_dir(project) / IDEMPOTENCY_FILE
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"key": key, **record}) + "\n")
 
     # -- inbox --------------------------------------------------------------
 
