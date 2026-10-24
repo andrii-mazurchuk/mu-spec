@@ -3393,7 +3393,6 @@ function shipBody(){
     : {waves: pf.mode === "shipped" ? "shipped" : Math.max(1, STATE.horizon || 1)};
   const build = STATE.emission && STATE.emission.build;
   if(build) out.build = build;
-  out.actor = "dashboard";
   return out;
 }
 
@@ -3405,7 +3404,7 @@ async function shipTickets(){
   try{
     const res = await fetch("projects/" + enc(STATE.project) + "/emit", {
       method:"POST", headers:{"content-type":"application/json"},
-      body: JSON.stringify(shipBody())
+      body: JSON.stringify({...shipBody(), actor:"dashboard"})
     });
     const text = await res.text();
     let payload = null;
