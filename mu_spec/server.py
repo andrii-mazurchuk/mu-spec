@@ -34,7 +34,6 @@ from mu_spec.issues import KINDS as ISSUE_KINDS, STATUSES as ISSUE_STATUSES
 from mu_spec.issues import IssueError, IssueLog
 from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
-from mu_spec.shipping import ship
 from mu_spec.storage import MalformedEntryFile, ProjectStore, UnknownProject
 from mu_spec.units import SUFFIX_PATTERN
 
@@ -1413,12 +1412,7 @@ def handle(
     the value it replaced. Here and nowhere else, so a new route cannot
     forget to log.
     """
-    # A copy of every recorded event goes to whichever unit holds the logs
-    # role, addressed by role and best-effort. The local log is the durable
-    # record; this is for whoever aggregates across units.
-    events = events or Lifecycle(
-        store.events_path(), sink=lambda e: ship(store.root(), e)
-    )
+    events = events or Lifecycle(store.events_path())
     body = body or {}
     claimed = body.get("actor")
     who = claimed.strip() if isinstance(claimed, str) and claimed.strip() else (

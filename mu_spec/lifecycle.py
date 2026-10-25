@@ -129,12 +129,8 @@ class Lifecycle:
     """Append-only. Never rewritten, never compacted -- an event that turned
     out to be embarrassing is exactly the one worth keeping."""
 
-    def __init__(self, path: Path, sink: Callable[[Any], Any] | None = None) -> None:
+    def __init__(self, path: Path) -> None:
         self._path = Path(path)
-        # Where a copy goes after the local write. Injected, optional, and
-        # called last on purpose: the local log is the durable record and
-        # must land whether or not anything downstream is listening.
-        self._sink = sink
 
     def _read(self) -> list[Event]:
         if not self._path.exists():

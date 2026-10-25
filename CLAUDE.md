@@ -233,7 +233,6 @@ Modules, and the one-line reason each exists:
 | `lifecycle` | What happened, in order — what the graph cannot recover |
 | `metrics` | Change locality, corrections by layer, cohesion. Never gates |
 | `slicing` | Candidates, and scoring a proposal that commits nothing |
-| `shipping` | A best-effort copy of each event to whoever holds the logs role |
 | `service` | The operations, as plain functions over a store. No HTTP |
 | `server` | Routing and the tool manifest. The only module that knows HTTP |
 
