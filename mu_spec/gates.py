@@ -95,6 +95,10 @@ UNKNOWN_MEMBER = "unknown_member"
 # M9 (every B/A observable produced by an S) was built and dropped 10-24: on
 # DARK it caught 0 of 2 cases and never fired -- B and A bodies there carry no
 # code names, and the real faults were semantic. That belongs to the audits.
+# M22 (a T building a type declared outside its anchor and `Exercises:`) was
+# built and dropped 10-24 (6d36784): 0 of 3 cases, 37 T flagged at cut 45, 1 in
+# 5 sampled real. DARK's broken fixtures lived in test helper code; no T body
+# named the cell it built, while "a metric" and "does not construct a plant" did.
 
 
 @dataclasses.dataclass(frozen=True)
