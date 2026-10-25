@@ -395,4 +395,8 @@ all hold it runs the person's `cut_units`, records an `auto_ship` event (actor,
 cut, base cut, every condition as evaluated), then the person's Ship press as a job
 -- with a horizon of zero: it edits, follows up and withdraws, and never opens an
 issue for a unit that has none. Its completion is the same `tickets_emitted` event.
+Every finished Ship run -- person's press, one-unit press or delegated -- writes
+exactly one lifecycle event with the run's `run_id`: `tickets_emitted` when it
+emitted, `ship_failed` (`error` or `reason`, `cut_seq`, counts reached) when it
+raised or refused (10-25). The in-memory run status dies with the process; these do not.
 Anything touching I, B or A keeps the person's press.

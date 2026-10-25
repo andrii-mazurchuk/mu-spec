@@ -455,8 +455,9 @@ def _build(
     named: set[Identifier] = set()
     for anchor in anchors:
         # Two live entries share a root only when both supersede one id --
-        # `two_successors`, which refuses the cut. The live view still has to
-        # name both, so the second keeps its own anchor.
+        # `two_successors`, a fork in history: reported, and since 10-25 it
+        # no longer refuses the cut. Both are named, so the second keeps its
+        # own anchor.
         base = lineage_root(graph, anchor) if lineage else anchor
         if base in named:
             base = anchor

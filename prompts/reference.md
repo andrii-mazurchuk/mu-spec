@@ -296,14 +296,18 @@ Identifiers are pure ASCII: a layer letter, a hyphen, a number — `S-31`. A uni
   behind: a parent was retired and the finding names its successor. The
   remedy is to re-derive, not to repair.
 
-  Five more blocking kinds read bodies and the module map. `bad_import`: a
+  Three more blocking kinds read bodies and the module map. `bad_import`: a
   spec's `Imports:` line names an entry it has no `depends_on` edge to --
-  add the edge (refused at the amendment). `two_successors`: two entries
-  supersede one id -- supersede the live end of the chain instead.
-  `bad_module_import`, `split_ownership` (one file, two slices' entries)
-  and `undeclared_path` (a spec names a file under a code root no module
+  add the edge (refused at the amendment). `bad_module_import` and
+  `undeclared_path` (a spec names a file under a code root no module
   declares) refuse the cut, not the amendment, because a module is declared
-  after its entry exists.
+  after its entry exists. `split_ownership` (one file, two slices' entries)
+  is reported only.
+
+  `two_successors`: two entries supersede one id. The amendment that would
+  add the second claim is refused -- supersede the live end of the chain
+  instead. A fork already in the history is **reported, not blocking**:
+  history is append-only, so nothing could ever repair it.
 
   Correcting a **tested** spec entry strands every scenario judging it,
   the moment the supersession lands. That is the blast radius working, not

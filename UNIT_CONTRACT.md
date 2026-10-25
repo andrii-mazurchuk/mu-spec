@@ -137,7 +137,9 @@ own judgement when every condition holds — `delegation`, `ready`, `gates`,
 `st_only`, `shipped` (docs/TICKETS.md §10) — else a 409 naming the ones that
 failed, with nothing written. It runs the person's cut and press code,
 creates no issue for a unit with none, and records an `auto_ship` event; the
-press's completion is the usual `tickets_emitted` event.
+press's completion is the usual `tickets_emitted` event. Every finished Ship
+run writes one event with its `run_id`: `tickets_emitted`, or `ship_failed`
+when it raised or refused.
 
 Tool names are action-style rather than path echoes, so one route served
 under two methods is declared twice under two names.
