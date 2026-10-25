@@ -37,6 +37,7 @@ from mu_spec.gates import (
     TWO_SUCCESSORS,
     admission_gates,
     live_successor,
+    two_successors,
 )
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import (
@@ -83,16 +84,21 @@ COMMENTS_FILE = "comments.jsonl"
 #
 # Deliberately absent: `unserved` and `untested`, which are the to-do list.
 #
-# The last four are read from bodies and the module map (M2, M3) or are the
-# one-successor rule. `module_gates` kinds block the cut through `sound` but
-# are not checked on the amendment path -- see its docstring.
+# The last three are read from bodies and the module map (M2, M3).
+# `module_gates` kinds block the cut through `sound` but are not checked on
+# the amendment path -- see its docstring.
+#
+# `two_successors` is absent too: the amendment that would fork a history is
+# refused on its own check in `submit_amendment`, but a fork already in the
+# history is reported, never blocking (Andrey, 10-25). Append-only makes it
+# unrepairable, so blocking on it froze DARK forever (T-640, T-643).
 #
 # `split_ownership` is deliberately absent: reported, never refused (Andrey,
 # 10-24). DESIGN 4a expects one file written from several slices, and the
 # slice audit catches it before ratify. A questionable call -- revisit after
 # the audit pilot; promoting it is adding it back here.
 _BLOCKING = (
-    ORPHAN, BAD_DEPENDENCY, STRANDED, BAD_IMPORT, TWO_SUCCESSORS,
+    ORPHAN, BAD_DEPENDENCY, STRANDED, BAD_IMPORT,
     BAD_MODULE_IMPORT, UNDECLARED_PATH,
 )
 
@@ -820,6 +826,14 @@ def _submit_amendment(
             stale.append(finding)
         else:
             blocking.append(finding)
+
+    # The one-successor rule, checked on the write itself rather than through
+    # `_BLOCKING`: any id this amendment supersedes must end up with exactly
+    # one successor. Keyed on the staged claims, not on "new finding", so a
+    # third claim on an id an old fork already holds is refused too, and an
+    # old fork this amendment does not touch refuses nothing.
+    claimed = {e.supersedes for e in staged if e.supersedes is not None}
+    blocking += [f for f in two_successors(prospective) if f.id in claimed]
 
     if blocking:
         if events is not None:

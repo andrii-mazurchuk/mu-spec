@@ -248,8 +248,55 @@ def test_a_second_successor_is_refused(store, prompts):
     first = {"layer": "S", "title": "s2", "derives_from": ["A-01"], "supersedes": "S-01"}
     assert _amend(store, prompts, mid, first)[1]["admitted"] is True
     status, payload = _amend(store, prompts, mid, {**first, "title": "s3"})
-    assert status == 409
+    assert status == 409 and payload["admitted"] is False
     assert [f["kind"] for f in payload["findings"]] == [TWO_SUCCESSORS]
+    assert "S-02" in payload["findings"][0]["detail"]
+    assert "S-03" in payload["findings"][0]["detail"]
+
+
+def _fork(store, prompts):
+    """S-01 superseded twice, the way DARK's T-640 was: a retried write that
+    landed both times. Admission refuses the second claim, so it is written
+    straight to storage -- a history that predates the refusal."""
+    mid = seed(store, prompts)
+    first = {"layer": "S", "title": "s2", "derives_from": ["A-01"], "supersedes": "S-01"}
+    assert _amend(store, prompts, mid, first)[1]["admitted"] is True
+    second = store.allocate("m", "S")
+    store.append("m", [Entry(id=second, derives_from=(parse("A-01"),),
+                             title="s3", supersedes=parse("S-01"))], "listings")
+    return mid
+
+
+def test_an_old_fork_is_reported_and_leaves_the_graph_sound(store, prompts):
+    """Andrey, 10-25: append-only makes a fork unrepairable, so blocking on
+    it at project level would freeze the project forever."""
+    _fork(store, prompts)
+    _, gates = call(store, prompts, "GET", "/projects/m/gates")
+    assert [f["id"] for f in gates["findings"] if f["kind"] == TWO_SUCCESSORS] == ["S-01"]
+    assert gates["sound"] is True and TWO_SUCCESSORS not in service._BLOCKING
+
+
+def test_an_old_fork_does_not_refuse_an_unrelated_amendment(store, prompts):
+    mid = _fork(store, prompts)
+    status, payload = _amend(store, prompts, mid, {
+        "layer": "S", "title": "s4", "derives_from": ["A-01"]})
+    assert status == 200 and payload["admitted"] is True
+
+
+def test_a_further_claim_on_an_old_fork_is_still_refused(store, prompts):
+    mid = _fork(store, prompts)
+    status, payload = _amend(store, prompts, mid, {
+        "layer": "S", "title": "s4", "derives_from": ["A-01"], "supersedes": "S-01"})
+    assert status == 409 and payload["admitted"] is False
+    assert [f["kind"] for f in payload["findings"]] == [TWO_SUCCESSORS]
+
+
+def test_an_old_fork_does_not_refuse_the_cut(store, prompts):
+    _fork(store, prompts)
+    call(store, prompts, "POST", "/projects/m/modules",
+         {"path": "search/index.py", "implements": ["S-02", "S-03"]})
+    status, payload = call(store, prompts, "POST", "/projects/m/units/cut", {})
+    assert payload["cut"] is True, payload
 
 
 def test_a_project_with_no_imports_lines_and_no_modules_is_unaffected(store, prompts):

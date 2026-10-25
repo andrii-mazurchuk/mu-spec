@@ -565,7 +565,9 @@ package is issued:*
 - Does any entry belong to more than one slice? (overlapping ownership)
 - Does every entry a spec's `Imports:` line names have a `depends_on` edge from it?
   (bad import)
-- Is every id superseded at most once? (two successors)
+- Is every id superseded at most once? (two successors) — refused at the amendment
+  that would add the second claim; a fork already in the history is *reported*, not
+  blocking (10-25), because append-only makes it unrepairable.
 - Read against the module map, and so refusing the cut rather than the amendment — a
   module is declared after its entry exists: does every imported module under a code
   root resolve to a declared module whose implementer is depended on (bad module

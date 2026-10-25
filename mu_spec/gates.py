@@ -28,7 +28,8 @@ Three live here, because all three are answerable from the graph alone:
 - bad imports -- does every entry a spec's `Imports:` line names have a
   depends_on edge from it? SOUNDNESS: an import with no edge is a
   dependency the scheduler cannot see. (A missing line is reported only.)
-- two successors -- is every id superseded at most once? SOUNDNESS.
+- two successors -- is every id superseded at most once? Refused at the
+  amendment that would add the second claim; an existing fork is reported.
 
 Keeping those apart matters, because they have different consequences.
 Unsound blocks: an amendment that would introduce an orphan is refused, and
@@ -81,7 +82,7 @@ BAD_IMPORT = "bad_import"
 # Reported, never refused: a spec with no `Imports:` line, in a project that
 # writes the line elsewhere.
 NO_IMPORTS_LINE = "no_imports_line"
-# Two entries supersede the same id.
+# Two entries supersede the same id. Refused at write time, reported after.
 TWO_SUCCESSORS = "two_successors"
 # A spec id in an entry's body that no edge of the entry reaches. Reported.
 UNLINKED_MENTION = "unlinked_mention"
@@ -392,9 +393,12 @@ def two_successors(graph: Graph) -> list[Finding]:
     """An entry is retired once, by one entry. Two entries superseding the
     same id fork its history: the live graph keeps one of them as the
     successor and the other silently stops being one, so which meaning
-    replaced the old one depends on file order. Blocking, and append-only
-    makes it unrepairable after the fact, so the amendment that would create
-    the second claim is the one refused."""
+    replaced the old one depends on file order. Append-only makes it
+    unrepairable after the fact, so the amendment that would create the
+    second claim is the one refused (`service.submit_amendment`, on its own
+    check). A fork already in the history is reported and does not make the
+    graph unsound (Andrey, 10-25): blocking on something no write can repair
+    would freeze the project for good, as it froze DARK."""
     return [
         Finding(
             TWO_SUCCESSORS,
