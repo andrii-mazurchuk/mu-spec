@@ -368,8 +368,18 @@ class Runs:
         # shutdown. What it managed to create is already in the log.
         threading.Thread(target=work, daemon=True).start()
 
-    def start(self, project: str, work: Callable[[Callable[[dict], None]], dict]) -> Run:
+    def start(
+        self,
+        project: str,
+        work: Callable[[Callable[[dict], None]], dict],
+        on_finish: Callable[[dict], None] | None = None,
+    ) -> Run:
         """Begin an emission. `work` is handed a `report` callback.
+
+        `on_finish` gets the run's final snapshot once, whichever way the work
+        ended -- the boundary where a durable record of the run is written,
+        since this registry itself is forgotten on restart. Its own failure is
+        swallowed: the run has already finished.
 
         Raises `RunBusy` if one is already in flight for this project.
         """
@@ -391,8 +401,13 @@ class Runs:
                 # and the dashboard showing a spinner nobody can clear. Every
                 # exception becomes a terminal state with its reason.
                 run.finish(None, f"{type(exc).__name__}: {exc}", self._now())
-                return
-            run.finish(result, None, self._now())
+            else:
+                run.finish(result, None, self._now())
+            if on_finish is not None:
+                try:
+                    on_finish(run.snapshot())
+                except Exception:  # noqa: BLE001 -- degrade, never raise
+                    pass
 
         self._spawn(body)
         return run

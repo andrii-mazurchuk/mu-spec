@@ -55,6 +55,11 @@ WORK_UNITS = "work_units"
 # in this unit's state says when it happened or what it touched.
 TICKETS_EMITTED = "tickets_emitted"
 TICKETS_ROLLED_BACK = "tickets_rolled_back"
+# A Ship run that finished without emitting: it raised, or it refused (no
+# repo, drift, ...). With `tickets_emitted` it makes every finished run leave
+# one durable trace keyed by `run_id`; the run status itself dies with the
+# process, and "failed" must not read as "never ran" after a restart.
+SHIP_FAILED = "ship_failed"
 # Any write request at all, as it arrived: who sent it, what it carried, what
 # came back. Recorded once, in the HTTP layer, so no route can forget.
 MUTATION = "mutation"
@@ -78,6 +83,7 @@ KINDS = (
     WORK_UNITS,
     TICKETS_EMITTED,
     TICKETS_ROLLED_BACK,
+    SHIP_FAILED,
     MUTATION,
     DELEGATION,
     AUTO_SHIP,

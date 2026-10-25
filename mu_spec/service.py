@@ -1965,7 +1965,6 @@ def emit_tickets(
     store: ProjectStore,
     project: str,
     client=None,
-    events: Lifecycle | None = None,
     now_fn: Callable[[], float] = time.time,
     on_progress: Callable[[dict], None] | None = None,
     body: dict | None = None,
@@ -2143,16 +2142,47 @@ def emit_tickets(
         only=only,
     )
     result["project"] = project
-    if events is not None and result.get("emitted"):
-        events.record(
-            lc.TICKETS_EMITTED,
-            project,
-            now_fn,
-            repo=manifest.repo,
-            cut_seq=cut.seq,
-            **result["counts"],
-        )
     return result
+
+
+# The run's counters, as `emit.Run` holds them -- how far a run got before it
+# raised, when there is no result to read counts from.
+_RUN_COUNTS = ("total", "processed", "created", "skipped", "failed", "wired",
+               "unwired", "edited", "withdrawn", "touched")
+
+
+def record_ship_finish(
+    events: Lifecycle | None,
+    project: str,
+    now_fn: Callable[[], float],
+    *,
+    run_id: str | None,
+    cut_seq: int | None,
+    result: dict | None,
+    error: str | None = None,
+    progress: dict | None = None,
+) -> None:
+    """The one durable event a finished Ship press leaves (Andrey, 10-25).
+
+    `tickets_emitted` when it emitted; `ship_failed` when it raised (`error`)
+    or refused (`reason`). Both carry `run_id`, the id the 202 answered with,
+    so a caller can join the two -- the run's own status is in memory and a
+    restart erases it, and without this a refused press left no trace at all.
+    `cut_seq` is the result's when it names one, else the cut the press read.
+    """
+    if events is None:
+        return
+    result = result or {}
+    cut_seq = result.get("cut_seq", cut_seq)
+    if not error and result.get("emitted"):
+        events.record(lc.TICKETS_EMITTED, project, now_fn, repo=result.get("repo"),
+                      cut_seq=cut_seq, run_id=run_id, **result.get("counts", {}))
+        return
+    counts = result.get("counts") or {
+        k: progress[k] for k in _RUN_COUNTS if (progress or {}).get(k) is not None}
+    outcome = {"error": error} if error else {"reason": result.get("reason")}
+    events.record(lc.SHIP_FAILED, project, now_fn, run_id=run_id, cut_seq=cut_seq,
+                  **counts, **outcome)
 
 
 def emission_identity(token: str, client=None) -> dict | None:

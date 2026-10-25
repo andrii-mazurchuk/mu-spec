@@ -25,7 +25,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from mu_spec import (
-    dashboard, docs, emit as emitting, github, lifecycle as lc, service,
+    dashboard, docs, emit as emitting, github, lifecycle as lc, service, units,
 )
 from mu_spec.service import AUDIT_LAYERS, AUDIT_OUTCOMES, ServiceError
 from mu_spec.identifiers import ALL_LAYERS, LAYER_NAMES, SEPARATOR_CLASS
@@ -831,9 +831,14 @@ def _tools() -> list[dict[str, Any]]:
             "How far an emission of this project's work units into its issue "
             "tracker has got, and what previous runs created. `running` says "
             "whether one is in flight; when it is, `processed` of `total` is "
-            "the progress and `phase` is `creating` or `wiring`. `emissions` "
-            "lists completed runs from the durable log, which survives a "
-            "restart when an in-flight run does not. `already` maps the units "
+            "the progress and `phase` is `creating` or `wiring`. That run "
+            "status is in memory and a restart erases it. The durable answer "
+            "for a run id is its lifecycle event: done = a `tickets_emitted` "
+            "event with that `run_id`, failed = a `ship_failed` event with "
+            "that `run_id` (`error` or `reason`), both read with list_events "
+            "(`GET /projects/{project}/events?kind=...`) and both surviving a "
+            "restart. `emissions` lists completed runs from the durable "
+            "emission log. `already` maps the units "
             "of the CURRENT cut that have issues to those issues -- so the "
             "number a run would newly create is the cut's units minus these, "
             "which is not the same as the unit count and is the number worth "
@@ -880,10 +885,15 @@ def _tools() -> list[dict[str, Any]]:
             "condition failed, never work around it. When all hold it takes "
             "a cut and presses Ship exactly as the person's buttons do, "
             "except that it never creates an issue for a unit with none: "
-            "it edits, follows up and withdraws. Answers 202 with a run id "
-            "(progress via get_emission) and `cut_seq`; completion is the "
-            "`tickets_emitted` event. `note` is kept on the cut and the "
-            "`auto_ship` event.",
+            "it edits, follows up and withdraws. Answers 202 with a `run_id` "
+            "(progress via get_emission) and `cut_seq`. Every finished run "
+            "writes exactly one lifecycle event carrying that `run_id`: done "
+            "= a `tickets_emitted` event, failed (it raised, `error`, or "
+            "refused, `reason`) = a `ship_failed` event. Read them with "
+            "list_events (`GET /projects/{project}/events?kind=tickets_emitted` "
+            "or `?kind=ship_failed`); both survive a restart, while the "
+            "in-flight run status in get_emission does not. `note` is kept "
+            "on the cut and the `auto_ship` event.",
             "POST",
             "/projects/{project}/auto_ship",
             {"project": s, "note": s},
@@ -1203,7 +1213,11 @@ def _actions() -> list[dict[str, Any]]:
                 "(409). Refused too, before any write, when the token has no push "
                 "access and so every label would be dropped. Answers "
                 "immediately with a run id; progress is read back from GET "
-                "on the same path."
+                "on the same path. When the run finishes it writes one "
+                "lifecycle event with that `run_id`: `tickets_emitted` when "
+                "done, `ship_failed` (`error` or `reason`) when it raised or "
+                "refused -- `GET /projects/{project}/events?kind=...`; both "
+                "survive a restart, the in-flight status does not."
             ),
             "method": "POST",
             "path": "projects/{project}/emit",
@@ -1460,17 +1474,30 @@ def handle(
 
 def _press(store, project, body, runs, emit_client, events, now_fn, create=True):
     """One Ship press: inline without a registry (the suite), else a job.
-    Shared by the person's route and the delegated one, so they cannot drift."""
+    Shared by the person's route and the delegated one, so they cannot drift.
+
+    Every finished press records one event here -- `tickets_emitted` or
+    `ship_failed` -- and only here, so no press path can forget it."""
+    cut = units.current_cut(store.units_path(project))
+    cut_seq = cut.seq if cut else None
+
     def go(report=None):
-        return service.emit_tickets(store, project, client=emit_client, events=events,
+        return service.emit_tickets(store, project, client=emit_client,
                                     now_fn=now_fn, on_progress=report, body=body,
                                     create=create)
+
+    def finished(state):
+        service.record_ship_finish(events, project, now_fn, run_id=state["run_id"],
+                                   cut_seq=cut_seq, result=state["result"],
+                                   error=state["error"], progress=state)
     if runs is None:
         result = go()
+        service.record_ship_finish(events, project, now_fn, run_id=None,
+                                   cut_seq=cut_seq, result=result)
         status = 200 if result.get("emitted") else 400 if result.get("refused") else 409
         return status, JSON, json.dumps(result)
     try:
-        run = runs.start(project, go)
+        run = runs.start(project, go, on_finish=finished)
     except emitting.RunBusy as exc:
         return 409, JSON, json.dumps({"error": str(exc)})
     return 202, JSON, json.dumps({"project": project, "run_id": run.id, "started": True})
