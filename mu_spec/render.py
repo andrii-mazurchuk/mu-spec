@@ -282,7 +282,8 @@ def render(
     The other contracts a file serves go in full when the ticket still fits,
     and as titles plus `context_ids` when it would not. Measured on `dark`:
     140 of 144 fit, median 17 KB -> 25 KB. The four that do not keep the
-    titles, because a ticket GitHub refuses helps nobody.
+    titles, because a ticket GitHub refuses helps nobody; past that it
+    degrades further, as `_DROP_ORDER` says.
 
     `payload` is what `get_work_unit` returns. An unissued payload is refused
     rather than rendered: it carries `reason` where a contract should be, and a
@@ -295,14 +296,39 @@ def render(
     this a pure function of its arguments, which is what lets a ticket be read
     and argued about before any issue exists.
     """
-    ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, retired, inline=True)
-    if len(ticket.body) > BODY_LIMIT - FOLLOW_UP_ROOM:
-        ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, retired, inline=False)
-    return ticket
+    level = 0
+    while True:
+        ticket = _render(payload, repo, cut_seq, extra_labels, batch, existing, retired,
+                         level=level)
+        if len(ticket.body) <= BODY_LIMIT - FOLLOW_UP_ROOM or level == _LAST_LEVEL:
+            return ticket
+        level += 1
+
+
+# How a body too large for the tracker degrades, one level per pass, stopping
+# at the first that fits (DARK S-351-T: 85,756 characters, eleven shared test
+# files). Level 0 inlines the other contracts a file serves; 1 lists them as
+# titles under each file; 2 lists each once, id + title + its file; from 3 the
+# sections below go, in this order. The contract, the write set, blockers,
+# overlap, lineage and the machine block never do -- so `contract_of` cannot
+# move -- and a contract too large alone is still refused by whoever emits.
+_DROP_ORDER = (
+    ("tests_pending", "Specified but not yet implemented"),
+    ("read_set", "Read-only context"),
+    ("justification", "Why this exists"),
+    ("tests", "Scenarios that judge this"),
+    ("file_scope", "Other contracts these files must also serve"),
+)
+_LAST_LEVEL = 2 + len(_DROP_ORDER)
 
 
 def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), retired=None, *,
-            inline: bool) -> Ticket:
+            level: int) -> Ticket:
+    inline = level == 0
+    dropped = {field for field, _ in _DROP_ORDER[:max(0, level - 2)]}
+    omitted = [heading for field, heading in _DROP_ORDER
+               if field in dropped and payload.get(field)]
+    payload = {k: v for k, v in payload.items() if k not in dropped or k == "file_scope"}
     if not payload.get("issued"):
         raise ValueError(
             "this work unit was not issued, so there is nothing to render: "
@@ -401,7 +427,32 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
         if others
     }
     context_ids: list[str] = []
-    if scope:
+    if scope and level >= 2:
+        # One line per entry, not per file: a scenario a dozen shared test
+        # files serve is named once, at the first of them.
+        where: dict[str, list[str]] = {}
+        entry: dict[str, dict] = {}
+        on_main: dict[str, bool] = {}
+        for path, others in scope.items():
+            exists = any(o.get("unit") in existing for o in others)
+            for other in others:
+                where.setdefault(other.get("id"), []).append(path)
+                entry.setdefault(other.get("id"), other)
+                on_main[other.get("id")] = on_main.get(other.get("id"), True) and exists
+        context_ids = [i for i in where if not on_main[i]]
+        if "file_scope" not in dropped:
+            out.append("## Other contracts these files must also serve")
+            out.append(
+                "A unit is one contract; a file is not. Whichever unit reaches a "
+                "file while it is still empty decides its shape for all of them, "
+                "so design for these too. Listed by title only to fit the "
+                "tracker: read each in full with mu-spec `get_entry`."
+            )
+            out.append(_bullets(
+                line(entry[i]) + f" — `{paths[0]}`"
+                + (f" (+{len(paths) - 1} more)" if len(paths) > 1 else "")
+                for i, paths in where.items()))
+    elif scope:
         out.append("## Other contracts these files must also serve")
         out.append(
             "A unit is one contract; a file is not. Whichever unit reaches a "
@@ -471,6 +522,10 @@ def _render(payload, repo, cut_seq, extra_labels, batch, existing=frozenset(), r
         )
         for identifier in payload["tests_pending"]:
             cite({"id": identifier}, "")
+
+    if omitted:
+        out.append("*Omitted to fit the tracker:* " + ", ".join(omitted)
+                   + ". Read them with mu-spec `get_work_unit`.")
 
     # Last, deliberately. The first screen belongs to the contract and the
     # write set -- an agent that reads only that far must still know its
