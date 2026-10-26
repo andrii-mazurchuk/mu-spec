@@ -69,6 +69,7 @@ from mu_spec.slice_gates import (
     sweep_collisions,
 )
 from mu_spec.slicing import candidates, score
+from mu_spec import body as bodies
 from mu_spec import emit as emitting
 from mu_spec import github
 from mu_spec.render import render as render_ticket
@@ -504,16 +505,25 @@ def preview_amendment(
     """
     body = {k: v for k, v in body.items() if k not in ("dry_run", "idempotency_key")}
     with tempfile.TemporaryDirectory() as tmp:
-        scratch = store.scratch(project, Path(tmp))
+        scratch = store.scratch(project, Path(tmp) / "after")
         shipped = _shipped(scratch, project)
-        before = _contracts(scratch, project, shipped) if shipped[0] else {}
+        # The world before, kept whole so only the units the amendment can
+        # move are rendered, after it is known which those are.
+        pristine = scratch.scratch(project, Path(tmp) / "before") if shipped[0] else None
         try:
             result = _submit_amendment(scratch, _ReadOnly(inbox), project, body,
                                        None, now_fn, _ReadOnly(issues))
         except ServiceError as exc:
             return {"dry_run": True, "admitted": False, "reason": str(exc)}
         if result["admitted"]:
-            after = _contracts(scratch, project, shipped) if shipped[0] else {}
+            before = after = {}
+            if shipped[0]:
+                was, now = _contract_inputs(pristine, project), _contract_inputs(scratch, project)
+                if was is None or now is None:
+                    before = after = None
+                elif (keys := _movable(was, now)) != set():
+                    before = _contracts(pristine, project, shipped, keys=keys, gated=True)
+                    after = _contracts(scratch, project, shipped, keys=keys, gated=True)
             live, done = shipped
             result["would_ship"] = None if after is None or before is None else [
                 {"key": key, "number": live[key].get("number"),
@@ -537,16 +547,55 @@ def _shipped(store: ProjectStore, project: str) -> tuple[dict, frozenset]:
     return live, emitting.completed(live)
 
 
-def _contracts(store: ProjectStore, project: str, shipped) -> dict[str, str] | None:
+def _contract_inputs(store: ProjectStore, project: str) -> dict[str, tuple] | None:
+    """Per unit key, everything its contract fingerprint is a function of
+    (`emit.contract_of` over the `## Contract` section and the write set):
+    its entries as they stand, its modules, and where each id their text
+    cites resolves through a supersession -- the renderer rewrites a retired
+    citation `S-317 (was S-128)`. None when the graph is unsound.
+
+    Cheap where rendering is not: no payload, no ticket. A unit whose inputs
+    are equal on both sides of an amendment renders the same fingerprint."""
+    graph = store.load_graph(project)
+    manifest = store.load_manifest(project)
+    if not _gate_report(graph, manifest)["sound"]:
+        return None
+    retired = _retired_map(graph)
+    out: dict[str, tuple] = {}
+    for unit in units.project(manifest, graph, _lineage(store, project)).units:
+        members = tuple(graph.get(i) for i in unit.entries)
+        text = " ".join(f"{e.title} {e.purpose} {e.body}" for e in members if e is not None)
+        cited = {m.group(0) for m in bodies.ID_RE.finditer(text)}
+        out[unit.key] = (unit.entries, unit.modules, members,
+                         tuple(sorted((c, retired.get(_canonical(c))) for c in cited)))
+    return out
+
+
+def _canonical(cited: str) -> str:
+    try:
+        return str(parse(cited))
+    except InvalidIdentifier:
+        return cited
+
+
+def _movable(before: dict[str, tuple], after: dict[str, tuple]) -> set[str]:
+    """The unit keys an amendment can move: present on both sides (a key on
+    one side only is withdrawn or new, never edited) with inputs that differ."""
+    return {key for key in before.keys() & after.keys() if before[key] != after[key]}
+
+
+def _contracts(store: ProjectStore, project: str, shipped, keys=None,
+               gated: bool = False) -> dict[str, str] | None:
     """Each shipped unit's contract fingerprint as Ship would render it now,
-    or None when no unit can be issued at all."""
+    or None when no unit can be issued at all. `keys` limits which units
+    render; None renders every shipped one. `gated` as `_work_units`."""
     live, done = shipped
-    fetch = _work_units(store, project)
+    fetch = _work_units(store, project, gated)
     graph = store.load_graph(project)
     retired = _retired_map(graph)
     repo = store.load_manifest(project).repo
     out: dict[str, str] = {}
-    for key in live:
+    for key in live if keys is None else [k for k in live if k in keys]:
         try:
             payload = fetch(key)
         except ServiceError:
@@ -1557,13 +1606,14 @@ def get_work_unit(store: ProjectStore, project: str, entry: str) -> dict:
     return _work_units(store, project)(entry)
 
 
-def _work_units(store: ProjectStore, project: str) -> Callable[[str], dict]:
+def _work_units(store: ProjectStore, project: str, gated: bool = False) -> Callable[[str], dict]:
     """`get_work_unit` over one load of the graph. A press asks for every
     unit, and loading, gating and projecting per unit was ~160 ms each on
-    DARK -- 25 s of a press spent recomputing one answer."""
+    DARK -- 25 s of a press spent recomputing one answer. `gated`: the caller
+    has already found the graph sound, so it is not gated a second time."""
     graph = store.load_graph(project)
     manifest = store.load_manifest(project)
-    gates = _gate_report(graph, manifest)
+    gates = {"sound": True} if gated else _gate_report(graph, manifest)
     if not gates["sound"]:
         return lambda entry: {
             "project": project,
