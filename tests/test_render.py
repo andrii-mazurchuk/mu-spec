@@ -267,9 +267,9 @@ def test_a_ticket_just_under_the_limit_leaves_room_for_a_follow_up():
         return {**IMPL, "file_scope": {"dark/config/declare.py": [
             {"id": "S-02", "title": "neighbour", "body": body}]}}
 
-    base = len(_render(scoped("y"), None, None, (), None, inline=True).body)
+    base = len(_render(scoped("y"), None, None, (), None, level=0).body)
     near = scoped("y" * (BODY_LIMIT - base - 20))
-    assert len(_render(near, None, None, (), None, inline=True).body) < BODY_LIMIT
+    assert len(_render(near, None, None, (), None, level=0).body) < BODY_LIMIT
     ticket = render(near)
     assert "y" * 100 not in ticket.body, "the neighbour went as a title"
     assert len(_follow_up(ticket, 385)[1]) <= BODY_LIMIT
@@ -572,3 +572,70 @@ def test_the_rewrite_does_not_move_the_contract_fingerprint():
     from mu_spec.emit import contract_of
 
     assert contract_of(render(_citing(), retired=RETIRED).body) == contract_of(render(_citing()).body)
+
+
+# -- degrading past titles (DARK S-351-T, 85,756 characters) -----------------
+
+
+def _shared_test_files(files: int = 11, entries: int = 140) -> dict:
+    """A test unit writing big shared test files: every file serves the same
+    scenarios. Even as titles, listed under each file, that overflows."""
+    others = [{"id": f"T-{900 + i}", "title": f"scenario {i} " + "t" * 100,
+               "body": "B" * 400, "unit": f"S-{i}-T"} for i in range(entries)]
+    paths = [f"tests/test_{n}.py" for n in range(files)]
+    return {**_test_unit(), "write_set": paths,
+            "file_scope": {path: others for path in paths},
+            "read_set": [{"id": "S-77", "title": "a dependency"}]}
+
+
+def test_co_served_contracts_that_overflow_even_as_titles_go_one_line_each():
+    from mu_spec.emit import contract_of
+    from mu_spec.render import BODY_LIMIT, FOLLOW_UP_ROOM, _render
+
+    payload = _shared_test_files()
+    titled = _render(payload, None, None, (), None, level=1).body
+    assert len(titled) > BODY_LIMIT, "the old fallback is what overflowed"
+
+    ticket = render(payload, repo="o/n", cut_seq=1)
+    assert len(ticket.body) <= BODY_LIMIT - FOLLOW_UP_ROOM
+    assert "## Other contracts these files must also serve" in ticket.body
+    assert "get_entry" in ticket.body
+    # Each co-served entry once, with the file it lives in.
+    assert ticket.body.count("`T-905` — scenario 5 ") == 1
+    assert "`tests/test_0.py` (+10 more)" in ticket.body
+    assert "B" * 400 not in ticket.body
+    # The unit's own contract, scenarios and write set are intact, and so is
+    # everything optional: compacting the one section was enough.
+    assert "Declare a setting." in ticket.body and "Declare with spaces." in ticket.body
+    assert "*Why this case:* the whitespace case" in ticket.body
+    assert "- `tests/test_10.py`" in ticket.body
+    assert "## Read-only context" in ticket.body and "Omitted" not in ticket.body
+    assert contract_of(ticket.body) == contract_of(
+        _render(payload, None, None, (), None, level=0).body)
+    assert _block(ticket.body)["context_ids"][:2] == ["T-900", "T-901"]
+
+
+def test_past_the_compact_section_optional_sections_drop_in_order():
+    """Still too large: the read set, justification and scenario lists go
+    before the contract ever would, and the ticket says what it left out."""
+    from mu_spec.emit import contract_of
+    from mu_spec.render import BODY_LIMIT, FOLLOW_UP_ROOM, _render
+
+    payload = _shared_test_files(entries=320)
+    ticket = render(payload)
+    assert len(ticket.body) <= BODY_LIMIT - FOLLOW_UP_ROOM
+    assert "## Contract" in ticket.body and "Declare with spaces." in ticket.body
+    assert "## Files you may write" in ticket.body
+    assert "## Read-only context" not in ticket.body
+    assert "Omitted to fit the tracker" in ticket.body
+    assert contract_of(ticket.body) == contract_of(
+        _render(payload, None, None, (), None, level=0).body)
+
+
+def test_a_small_unit_renders_exactly_as_before():
+    from mu_spec.render import _render
+
+    for payload in (IMPL, _test_unit(), _with_scope_body()):
+        body = render(payload).body
+        assert body == _render(payload, None, None, (), None, level=0).body
+        assert "get_entry" not in body and "Omitted" not in body
