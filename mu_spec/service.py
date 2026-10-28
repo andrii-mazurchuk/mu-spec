@@ -67,6 +67,8 @@ from mu_spec.slice_gates import (
     no_module,
     slice_gates,
     sweep_collisions,
+    t_path_gaps,
+    undeclared_test_paths,
 )
 from mu_spec.slicing import candidates, score
 from mu_spec import body as bodies
@@ -165,7 +167,8 @@ def _gate_report(graph: Graph, manifest: Manifest) -> dict[str, Any]:
         admission_gates(graph)
         + module_gates(manifest, graph)
         + no_module(manifest, graph)
-        + sweep_collisions(manifest, graph),
+        + sweep_collisions(manifest, graph)
+        + undeclared_test_paths(manifest, graph),
         key=lambda f: (sort_key(f.id), f.kind),
     )
     slice_findings = slice_gates(manifest, graph)
@@ -2192,7 +2195,27 @@ def emit_tickets(
         only=only,
     )
     result["project"] = project
+    if result.get("emitted"):
+        result.update(ship_test_gaps(manifest, graph, live))
     return result
+
+
+def ship_test_gaps(manifest: Manifest, graph: Graph, live: units.Projection | None = None) -> dict:
+    """What a Ship would leave without a test unit to write it (10-28):
+    `unassigned_tests`, live T entries no test module declares (so in no -T
+    unit's contract), and `undeclared_test_paths`, files a T names that no
+    module declares (so no write set can create them). Reported on a
+    person's press, refused on a delegated one (`tests_assigned`)."""
+    live = live or units.project(manifest, graph)
+    return {
+        "unassigned_tests": [str(i) for i in live.unimplemented_tests],
+        "undeclared_test_paths": [
+            {"t": str(i), "path": path}
+            for i, paths in sorted(t_path_gaps(manifest, graph).items(),
+                                   key=lambda kv: sort_key(kv[0]))
+            for path in paths
+        ],
+    }
 
 
 # The run's counters, as `emit.Run` holds them -- how far a run got before it
@@ -2463,6 +2486,12 @@ def auto_ship_conditions(store: ProjectStore, project: str, busy: bool = False) 
     conditions["shipped"] = {"ok": base is not None and not unshipped,
                              "touched": sorted(touched), "unshipped": unshipped}
 
+    # (4) every live T has a test unit to carry it, and every file a T names
+    # is one a write set can create (10-28). A guard on this press only.
+    gaps = ship_test_gaps(manifest, graph, live)
+    conditions["tests_assigned"] = {
+        "ok": not gaps["unassigned_tests"] and not gaps["undeclared_test_paths"], **gaps}
+
     failed = [name for name, c in conditions.items() if not c["ok"]]
     out = {"project": project, "allowed": not failed, "failed": failed,
            "base_cut": base.seq if base else None, "conditions": conditions}
@@ -2545,6 +2574,7 @@ def get_emission(
         shipped = {"create": sorted(create),
                    "held": sum(1 for k in keys if k not in already and k not in create)}
 
+    manifest = store.load_manifest(project)
     return {
         "project": project,
         "running": bool(snapshot and snapshot.get("phase") == "running"),
@@ -2552,6 +2582,9 @@ def get_emission(
         "cut_seq": cut.seq if cut is not None else None,
         "already": already,
         "shipped": shipped,
+        # What this press would leave without a test unit to write it. Shown,
+        # never refused: a person may ship ahead of the tests.
+        **ship_test_gaps(manifest, store.load_graph(project), None),
         # Whether a token exists. Never what it is, and there is no route that
         # returns one -- a secret on a page that is read, screenshotted and
         # rendered in somebody's browser has leaked whatever it protected.

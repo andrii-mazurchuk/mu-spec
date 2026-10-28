@@ -65,6 +65,7 @@ from mu_spec.slice_gates import (
     SPLIT_OWNERSHIP,
     SWEEP_COLLISION,
     UNDECLARED_PATH,
+    UNDECLARED_TEST_PATH,
     module_gates,
 )
 from mu_spec.waves import same_wave_edges
@@ -398,6 +399,7 @@ NEWER_KINDS = (
     BAD_MODULE_IMPORT, SPLIT_OWNERSHIP, UNDECLARED_PATH,
     RETIRED_MENTION, UNLINKED_MENTION,
     UNDEFINED_NAME, UNKNOWN_MEMBER, NO_MODULE, SWEEP_COLLISION,
+    UNDECLARED_TEST_PATH,
 )
 
 
@@ -426,6 +428,7 @@ REGISTRY: dict[str, Gate] = {
     "M6": reported(UNKNOWN_MEMBER),
     "M7": reported(SWEEP_COLLISION),
     "M10": reported(NO_MODULE),
+    UNDECLARED_TEST_PATH: reported(UNDECLARED_TEST_PATH),
 }
 
 
