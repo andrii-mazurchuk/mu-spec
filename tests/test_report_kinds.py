@@ -14,7 +14,14 @@ from mu_spec.gates import (
 )
 from mu_spec.graph import Entry, Graph
 from mu_spec.identifiers import parse
-from mu_spec.slice_gates import NO_MODULE, SWEEP_COLLISION, no_module, sweep_collisions
+from mu_spec.slice_gates import (
+    NO_MODULE,
+    SWEEP_COLLISION,
+    UNDECLARED_TEST_PATH,
+    no_module,
+    sweep_collisions,
+    undeclared_test_paths,
+)
 from mu_spec.storage import Manifest, Slice
 from mu_spec.waves import SAME_WAVE_EDGE, same_wave_edges
 
@@ -48,7 +55,47 @@ def _code(text):
     return f"```python\n{text}\n```"
 
 
-NEW_KINDS = (UNDEFINED_NAME, UNKNOWN_MEMBER, NO_MODULE, SWEEP_COLLISION, SAME_WAVE_EDGE)
+NEW_KINDS = (UNDEFINED_NAME, UNKNOWN_MEMBER, NO_MODULE, SWEEP_COLLISION, SAME_WAVE_EDGE,
+             UNDECLARED_TEST_PATH)
+
+
+# -- undeclared_test_path (10-28) --------------------------------------------
+
+
+def _t(ident, body):
+    return _e(ident, body, derives="S-01")
+
+
+_TEST_MODULES = {"pkg/a.py": "S-01", "tests/test_a.py": "T-01"}
+
+
+def test_a_t_naming_an_undeclared_file_is_reported():
+    g = Graph([_e("S-01"), _t("T-01", "Reads `tests/fixtures/run.toml` and `pkg/b.py`.")])
+    found = undeclared_test_paths(_manifest(_TEST_MODULES), g)
+    assert _ids(found, UNDECLARED_TEST_PATH) == ["T-01"]
+    assert "tests/fixtures/run.toml" in found[0].detail and "pkg/b.py" in found[0].detail
+
+
+def test_a_declared_file_or_a_declared_file_under_a_named_directory_is_not():
+    g = Graph([_e("S-01"), _t("T-01", "Loads `tests/fixtures/study/*.toml` and "
+                                      "`tests/test_a.py`; never `tests/gone.py`.")])
+    m = _manifest({**_TEST_MODULES, "tests/fixtures/study/a.toml": "T-01"})
+    assert undeclared_test_paths(m, g) == []
+
+
+def test_an_undeclared_directory_is_reported_and_outside_the_roots_is_not():
+    g = Graph([_e("S-01"), _t("T-01", "Loads `tests/fixtures/study/*.toml`, "
+                                      "`docs/x.md` and `/tmp/out.json`.")])
+    found = undeclared_test_paths(_manifest(_TEST_MODULES), g)
+    assert [f.detail.split(",")[0] for f in found] == ["names tests/fixtures/study/"]
+
+
+def test_an_undeclared_test_path_reports_through_check_gates_and_stays_sound():
+    g = Graph([_e("I-01", derives=""), _e("B-01", derives="I-01"), _e("A-01", derives="B-01"),
+               _e("S-01"), _t("T-01", "`tests/fx/a.json`")])
+    report = service._gate_report(g, _manifest(_TEST_MODULES))
+    assert [f["kind"] for f in report["findings"]] == [UNDECLARED_TEST_PATH]
+    assert report["sound"] is True
 
 
 def test_no_new_kind_ever_blocks():

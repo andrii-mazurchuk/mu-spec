@@ -517,6 +517,11 @@ nav button.view .dot{display:inline-block;width:6px;height:6px;border-radius:50%
 .shipgo:hover:not(:disabled){filter:brightness(1.08)}
 .shipgo:disabled{background:var(--panel-alt);color:var(--dim);box-shadow:none;cursor:not-allowed}
 .gonote{color:var(--dim);font-size:11px;max-width:24ch;text-align:center}
+.testwarn{max-width:34ch;font-size:11.5px;color:var(--ink);border:1px solid var(--warn);
+  border-radius:var(--radius);padding:5px 8px}
+.testwarn summary{color:var(--warn);font-weight:600;cursor:pointer}
+.testwarn p{margin:6px 0 3px}
+.testwarn code{word-break:break-all}
 
 /* Each condition either met or not, before anything is pressable. A refusal
    arriving after the press is one the reader could have been told about
@@ -3115,6 +3120,26 @@ function shipCreated(r){
       </tr>`).join("") + `</table></div>`;
 }
 
+/* Tests this press would ship without (10-28): a T in no test module, or a
+   file a T names that no module declares. A warning, never a refusal -- a
+   person may ship ahead of the tests; only a delegated press is refused. */
+function shipTestWarn(e){
+  const ts = e.unassigned_tests || [], ps = e.undeclared_test_paths || [];
+  if(!ts.length && !ps.length) return "";
+  const n = ts.length + ps.length;
+  return `<details class="testwarn" id="ship-testwarn">
+    <summary>⚠ ${n} test gap${n===1?"":"s"}: ships without ${n===1?"its":"their"} tests</summary>
+    ${ts.length ? `<p>${ts.length} T in no test module — no test unit carries
+      ${ts.length===1?"it":"them"}:</p><div>${ts.map(i =>
+        `<button class="pill" data-goto="${esc(i)}">${esc(i)}</button>`).join("")}</div>` : ""}
+    ${ps.length ? `<p>${ps.length} file${ps.length===1?"":"s"} a T names that no module
+      declares:</p><div>${ps.map(x =>
+        `<button class="pill" data-goto="${esc(x.t)}">${esc(x.t)}</button> <code>${esc(x.path)}</code>`
+      ).join("<br>")}</div>` : ""}
+    <p class="muted">Declare them (declare_module) before Ship, or ship ahead of the tests.</p>
+  </details>`;
+}
+
 function drawShip(){
   if(!STATE.project){ $("ship").innerHTML = `<p class="muted">No project.</p>`; return; }
   const e = STATE.emission || {running:false, emissions:[]};
@@ -3232,6 +3257,7 @@ function drawShip(){
                ? `that work already out needs`
                : `across ${pf.waves} wave${pf.waves===1?"":"s"}`},
              and edits or withdraws whatever changed`}</span>
+        ${shipTestWarn(e)}
       </div>
     </div>`;
 

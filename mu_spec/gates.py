@@ -288,6 +288,7 @@ def bad_dependencies(graph: Graph) -> list[Finding]:
 # Bodies are append-only, so a body's facts never change. Every gate report
 # reads every spec body, and a replay reads them 500 times over.
 spec_facts = functools.lru_cache(maxsize=8192)(lambda text: body.parse(text, SPEC))
+test_facts = functools.lru_cache(maxsize=8192)(lambda text: body.parse(text, TEST))
 
 
 def strict_imports(entry: Entry) -> tuple[Import, ...] | None:

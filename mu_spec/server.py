@@ -790,7 +790,12 @@ def _tools() -> list[dict[str, Any]]:
             "tokens a sibling's code there must use; both are named), "
             "and `no_module` (a spec no "
             "module implements, once the project declares modules -- it is "
-            "in no work unit, so no ticket carries it).",
+            "in no work unit, so no ticket carries it). Plus "
+            "`undeclared_test_path` (a test body names a file under a "
+            "declared module's top directory that no module declares, so "
+            "the test unit cannot create it; a directory counts as declared "
+            "when a declared module lives under it) -- reported here, and "
+            "only refused by auto_ship's `tests_assigned`.",
             "GET",
             "/projects/{project}/gates",
             {"project": s},
@@ -847,7 +852,12 @@ def _tools() -> list[dict[str, Any]]:
             "precondition nothing in the project can answer. `build` is the "
             "commit this process serves (null if unknown). `shipped` is what a "
             "`shipped` press would create (`create`, keys) and how many units it "
-            "would hold (`held`), null while a run is in flight. Starting an "
+            "would hold (`held`), null while a run is in flight. "
+            "`unassigned_tests` (T ids no test module declares, so no test "
+            "unit carries them) and `undeclared_test_paths` (`[{t, path}]`, "
+            "files a T names that no module declares, so no write set can "
+            "create them) are what this press would ship without tests; "
+            "always present, empty when clean, never a refusal. Starting an "
             "emission is a person's decision and is not offered here -- "
             "except under a delegation, through auto_ship.",
             "GET",
@@ -879,8 +889,11 @@ def _tools() -> list[dict[str, Any]]:
             "citation, no loop in the units' own edges, no shipped unit "
             "waiting on a blocker with no live issue), `st_only` (since the "
             "cut the last press shipped, no I, B or A entry was added or "
-            "superseded) and `shipped` (every unit the change touches -- "
-            "entries or edges -- already has an issue). A refusal is final "
+            "superseded), `shipped` (every unit the change touches -- "
+            "entries or edges -- already has an issue) and `tests_assigned` "
+            "(no live T is in no test module -- `unassigned_tests` -- and no "
+            "T names a file no module declares -- `undeclared_test_paths`, "
+            "`[{t, path}]`; declare_module them first). A refusal is final "
             "for you: it is the person's press, so stop and say which "
             "condition failed, never work around it. When all hold it takes "
             "a cut and presses Ship exactly as the person's buttons do, "
@@ -1217,7 +1230,12 @@ def _actions() -> list[dict[str, Any]]:
                 "lifecycle event with that `run_id`: `tickets_emitted` when "
                 "done, `ship_failed` (`error` or `reason`) when it raised or "
                 "refused -- `GET /projects/{project}/events?kind=...`; both "
-                "survive a restart, the in-flight status does not."
+                "survive a restart, the in-flight status does not. Never "
+                "refused for missing tests: the result carries "
+                "`unassigned_tests` (T ids in no test module) and "
+                "`undeclared_test_paths` (`[{t, path}]`, files a T names that "
+                "no module declares), empty when clean -- a person may ship "
+                "ahead of the tests."
             ),
             "method": "POST",
             "path": "projects/{project}/emit",

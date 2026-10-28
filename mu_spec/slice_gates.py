@@ -23,8 +23,8 @@ before anything derives from a slice costs nothing.
   overlapping ownership is no ownership: two work packages would hand the
   same entry out as editable, and the audit would pass for both.
 
-Two read against the module map only report (D3): `no_module` (M10) and
-`sweep_collision` (M7). `service._gate_report` adds them; `module_gates`
+Three read against the module map only report (D3): `no_module` (M10),
+`sweep_collision` (M7) and `undeclared_test_path`. `service._gate_report` adds them; `module_gates`
 holds the ones the cut can refuse on.
 
 There is no judgement here, and never will be.
@@ -43,6 +43,7 @@ from mu_spec.gates import (
     live_successor,
     spec_facts,
     strict_imports,
+    test_facts,
 )
 from mu_spec.graph import Graph
 from mu_spec.identifiers import SPEC, TEST, Identifier, InvalidIdentifier, parse, sort_key
@@ -59,6 +60,9 @@ UNDECLARED_PATH = "undeclared_path"
 # code, in a file the sweep covers, has to contain.
 NO_MODULE = "no_module"
 SWEEP_COLLISION = "sweep_collision"
+# A test body naming a file no module declares (10-28). Reported only: a
+# person may ship ahead of the tests; the delegated press is what it guards.
+UNDECLARED_TEST_PATH = "undeclared_test_path"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -264,6 +268,45 @@ def module_gates(
             findings.append(Finding(BAD_MODULE_IMPORT, entry.id, "; ".join(problems)))
 
     return sorted(findings, key=lambda f: (sort_key(f.id), f.kind))
+
+
+def t_path_gaps(manifest: Manifest, graph: Graph) -> dict[Identifier, list[str]]:
+    """Per live test entry, the repository paths its body names that no
+    module declares -- DARK's T naming `tests/fixtures/study/*.toml`, which
+    no write set could create.
+
+    `undeclared_path`'s rules, with two differences: the roots are every
+    declared module's top directory (a test names fixtures and test files,
+    which `code_roots` leaves out), and a directory (`.../`, a glob's stem)
+    counts as declared when any declared module lives under it."""
+    roots = {p.split("/")[0] for p in manifest.modules if "/" in p}
+    out: dict[Identifier, list[str]] = {}
+    for entry in graph.entries():
+        if entry.id.layer != TEST:
+            continue
+        text = entry.body if isinstance(entry.body, str) else ""
+        missing = [
+            p for p in test_facts(text).path_mentions
+            if "/" in p and p.split("/")[0] in roots and _asserted(text, p)
+            and not (any(m.startswith(p) for m in manifest.modules) if p.endswith("/")
+                     else p in manifest.modules)
+        ]
+        if missing:
+            out[entry.id] = missing
+    return out
+
+
+def undeclared_test_paths(manifest: Manifest, graph: Graph) -> list[Finding]:
+    """`t_path_gaps` as report findings. Never blocking (D3)."""
+    return [
+        Finding(
+            UNDECLARED_TEST_PATH, i,
+            f"names {', '.join(paths)}, which no module declares -- the test "
+            "unit's write set cannot create it. Declare it with the test entry "
+            "that needs it, or drop the path",
+        )
+        for i, paths in t_path_gaps(manifest, graph).items()
+    ]
 
 
 def no_module(manifest: Manifest, graph: Graph) -> list[Finding]:

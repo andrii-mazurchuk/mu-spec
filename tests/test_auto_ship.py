@@ -121,7 +121,8 @@ def test_all_conditions_hold_cut_and_press_happen_and_are_recorded(env):
     facts = auto[0].facts
     assert facts["actor"] == "lain"
     assert facts["cut_seq"] == 2 and facts["base_cut"] == 1
-    assert set(facts["conditions"]) == {"delegation", "ready", "gates", "st_only", "shipped"}
+    assert set(facts["conditions"]) == {"delegation", "ready", "gates", "st_only", "shipped",
+                                        "tests_assigned"}
     assert all(c["ok"] for c in facts["conditions"].values())
     assert facts["conditions"]["shipped"]["touched"] == ["S-01", "S-01-T"]
     # The Ship completion event forge waits on, the same as a person's press.
@@ -246,3 +247,81 @@ def test_a_grant_must_say_enabled_true_or_false(env):
     store, gh, events, call = env
     status, payload = call("POST", f"/projects/{P}/delegation", {"enabled": "yes"})
     assert status == 400 and "enabled" in payload["error"]
+
+
+# -- tests_assigned: a T with no test unit to carry it (Andrey, 10-28) -------
+#
+# A GUARD on the delegated press, never a gate on a person's: a person may
+# ship ahead of the tests, and is told.
+
+
+def _unassigned_t(store, judges="S-02"):
+    """T-03 judges the live contract and no test module declares it."""
+    store.append(P, [Entry(id=parse("T-03"), derives_from=(parse(judges),),
+                           title="a stray case", purpose="why")])
+
+
+def _fixture_t(store):
+    """T-03 is declared, but names fixture files no module declares."""
+    store.append(P, [Entry(id=parse("T-03"), derives_from=(parse("S-02"),),
+                           title="a fixture case", purpose="why",
+                           body="Load every `tests/fixtures/study/*.toml` and "
+                           "`tests/fixtures/one.json`.")])
+    held = store.load_manifest(P).modules["tests/test_thing.py"]
+    store.set_module(P, "tests/test_thing.py", sorted(map(str, held)) + ["T-03"])
+
+
+def test_a_t_in_no_test_module_refuses_on_tests_assigned(env):
+    store, gh, events, call = env
+    _grant(call)
+    _s_repair(store)
+    _unassigned_t(store)
+    payload = _refused(env, ["tests_assigned"])
+    c = payload["conditions"]["tests_assigned"]
+    assert c["unassigned_tests"] == ["T-03"] and c["undeclared_test_paths"] == []
+
+
+def test_a_t_naming_an_undeclared_file_refuses_on_tests_assigned(env):
+    store, gh, events, call = env
+    _grant(call)
+    _s_repair(store)
+    _fixture_t(store)
+    payload = _refused(env, ["tests_assigned"])
+    assert payload["conditions"]["tests_assigned"]["undeclared_test_paths"] == [
+        {"t": "T-03", "path": "tests/fixtures/study/"},
+        {"t": "T-03", "path": "tests/fixtures/one.json"}]
+
+
+def test_tests_assigned_holds_once_the_fixtures_are_declared(env):
+    store, gh, events, call = env
+    _grant(call)
+    _s_repair(store)
+    _fixture_t(store)
+    store.set_module(P, "tests/fixtures/study/a.toml", ["T-03"])
+    store.set_module(P, "tests/fixtures/one.json", ["T-03"])
+    status, payload = call("POST", f"/projects/{P}/auto_ship", {"actor": "lain"})
+    assert status == 200, payload
+
+
+def test_a_persons_press_ships_ahead_of_its_tests_and_is_told(env):
+    store, gh, events, call = env
+    _unassigned_t(store, judges="S-01")
+    store.append(P, [Entry(id=parse("T-04"), derives_from=(parse("S-01"),),
+                           title="fixture", purpose="why",
+                           body="reads `tests/fixtures/x.toml`")])
+    store.set_module(P, "tests/test_other.py", ["T-04"])
+    assert call("POST", f"/projects/{P}/units/cut", {"actor": "andrey"})[0] == 200
+    status, payload = call("POST", f"/projects/{P}/emit", {"actor": "andrey"})
+    assert status == 200 and payload["emitted"] is True, payload
+    assert payload["unassigned_tests"] == ["T-03"]
+    assert payload["undeclared_test_paths"] == [
+        {"t": "T-04", "path": "tests/fixtures/x.toml"}]
+    _, preview = call("GET", f"/projects/{P}/emit")
+    assert preview["unassigned_tests"] == ["T-03"]
+    assert preview["undeclared_test_paths"] == payload["undeclared_test_paths"]
+
+
+def test_a_clean_preview_carries_empty_lists(env):
+    store, gh, events, call = env
+    _, preview = call("GET", f"/projects/{P}/emit")
+    assert preview["unassigned_tests"] == [] and preview["undeclared_test_paths"] == []
