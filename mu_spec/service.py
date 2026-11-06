@@ -52,7 +52,7 @@ from mu_spec.identifiers import (
     parse,
     sort_key,
 )
-from mu_spec.inbox import ACCEPTED, TYPES, Inbox, InboxError
+from mu_spec.inbox import ACCEPTED, PENDING, TYPES, Inbox, InboxError
 from mu_spec.issues import LIVE as LIVE_ISSUE, OPEN, RESOLVED, IssueError, IssueLog
 from mu_spec import lifecycle as lc
 from mu_spec.lifecycle import Lifecycle
@@ -293,6 +293,43 @@ def create_project(store: ProjectStore, inbox: Inbox, body: dict) -> dict:
         "project": project,
         "in_response_to": message.id,
         "next": "submit intent entries as an amendment citing the same message",
+    }
+
+
+def fork_project(
+    store: ProjectStore,
+    inbox: Inbox,
+    issues: IssueLog,
+    project: str,
+    body: dict,
+    events: Lifecycle,
+    now_fn: Callable[[], float],
+) -> dict:
+    """Copy a project to a new name, so a run works on a corpus of its own.
+
+    Nothing rolls back afterwards: each fork keeps what its run did, and the
+    source stays frozen. Requests and issues are keyed by project, so a fork
+    starts with none. That is what makes every run start the same, and
+    `left_behind` reports what stayed on the source. The shared logs are
+    never copied.
+    """
+    message = _require_message(inbox, body, expected_types=("initiate",))
+    name = body.get("name")
+    store.fork_project(project, name)
+    inbox.record_produced(message.id, [f"project:{name}"])
+    entries = len(store.load_all(name))
+    events.record(lc.FORKED, name, now_fn, refs=[project],
+                  source=project, entries=entries)
+    return {
+        "project": name,
+        "source": project,
+        "entries": entries,
+        "in_response_to": message.id,
+        "left_behind": {
+            "open_issues": len(issues.list(project=project, status=OPEN)),
+            "pending_requests": len(inbox.list(status=PENDING, project=project)),
+        },
+        "next": "a fork has no repo: set one before a Ship, and take a cut of its own",
     }
 
 

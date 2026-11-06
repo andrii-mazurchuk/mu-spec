@@ -95,6 +95,13 @@ PENDING_FILE = "manifest.pending.json"
 # Idempotency key -> what the write it named answered (M18). Per project, so
 # a key is scoped to the project it was sent to.
 IDEMPOTENCY_FILE = "idempotency.jsonl"
+# Not copied by a fork. The first three are delivery state: what the source
+# was cut into and which issues it became. A fork carrying them would treat
+# the source's tickets as its own and edit them. The manifest is written last
+# and rewritten, and a pending one was settled by the load just before.
+NOT_FORKED = (UNITS_FILE, EMISSIONS_FILE, IDEMPOTENCY_FILE, MANIFEST_FILE, PENDING_FILE)
+# Exactly what a route's project segment accepts, so a fork is always reachable.
+_PROJECT_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # Every slice is a plain slice. The cross-cutting type was removed 10-24 (D6);
 # a manifest still saying "cross_cutting" loads, and the value is carried
@@ -458,6 +465,30 @@ class ProjectStore:
         (path / INTENT_FILE).write_text("", encoding="utf-8")
         (path / TESTS_FILE).write_text("", encoding="utf-8")
         self._write_manifest(path, Manifest(project=project))
+
+    def fork_project(self, source: str, name: str) -> None:
+        """Copy a project's corpus to a new name. Numbering carries over, so
+        an id means the same thing on both sides.
+
+        `repo` and `delegation` are cleared: a fork that kept them could ship
+        into the source's tracker, or use a person's grant nobody gave it.
+        The manifest goes last because a manifest is what makes a directory a
+        project, so a copy that dies half way was never one.
+        """
+        if not isinstance(name, str) or not _PROJECT_NAME.match(name):
+            raise ValueError(f"'name' must match {_PROJECT_NAME.pattern}, got {name!r}")
+        path = self._root / name
+        with self.lock:
+            manifest = self.load_manifest(source)
+            if (path / MANIFEST_FILE).exists():
+                raise FileExistsError(f"project {name!r} already exists")
+            shutil.copytree(
+                self._project_dir(source), path, dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(*NOT_FORKED),
+            )
+            self._write_manifest(path, dataclasses.replace(
+                manifest, project=name, repo=None, delegation=None,
+            ))
 
     # -- manifest -----------------------------------------------------------
 

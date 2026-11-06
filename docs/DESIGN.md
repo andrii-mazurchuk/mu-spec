@@ -546,6 +546,19 @@ because `B-22` derives from it" is auditable. "The retriever ranked it 0.83" is 
 **History files are never loaded by default.** They exist for reconciliation and audit.
 If history lives alongside live entries, every read pays for every past mistake.
 
+### Forks
+
+`fork_project` copies a project's corpus to a new name, so a benchmark run works on its
+own copy and every run starts from the same state. Nothing rolls back: the source stays
+frozen, and each fork keeps what its run did and can be inspected afterwards.
+
+A fork takes the corpus and leaves the record. Entries, slices, modules, labels and
+numbering carry over. Requests, issues and events are keyed by project in shared logs, so
+a fork starts with none; a request or issue id is unique per unit, and copying a line
+would either collide or rewrite the id. Cuts and emissions stay too, because a fork
+holding them would edit the source's tickets. `repo` and `delegation` are cleared: where
+issues land and an agent's leave to ship are a person's, given per project.
+
 ---
 
 ## 6. Gates
