@@ -1776,6 +1776,7 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "get_message": "get_request",
         "resolve": "resolve_request",
         "create_project": "create_project",
+        "fork_project": "fork_project",
         "amendment": "submit_amendment",
         "raise_issue": "raise_issue",
         "list_issues": "list_issues",

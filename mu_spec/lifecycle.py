@@ -68,6 +68,9 @@ MUTATION = "mutation"
 DELEGATION = "delegation"
 # An agent used that leave: the cut it took, the conditions as evaluated.
 AUTO_SHIP = "auto_ship"
+# A project was copied from another. Recorded on the fork: the copy holds no
+# other trace of where it came from.
+FORKED = "forked"
 
 KINDS = (
     REQUEST,
@@ -87,6 +90,7 @@ KINDS = (
     MUTATION,
     DELEGATION,
     AUTO_SHIP,
+    FORKED,
 )
 
 

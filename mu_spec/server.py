@@ -230,6 +230,24 @@ def _tools() -> list[dict[str, Any]]:
             ("project", "in_response_to"),
         ),
         tool(
+            "fork_project",
+            "Copy a project's live corpus to a new project `name`, so a run "
+            "works on its own copy and the source stays frozen. Cite an "
+            "`initiate` request in `in_response_to`. Entries, slices, modules, "
+            "labels and identifier numbering carry over. Requests, issues, "
+            "lifecycle events, cuts and emissions do not: a fork starts with "
+            "none of them, and `left_behind` reports what stayed on the "
+            "source. `repo` and any delegation are cleared, so a fork cannot "
+            "ship into the source's tracker until a person points it at one. "
+            "`name` takes letters, digits, '-' and '_'. An existing name is "
+            "refused with 409, so a retry after a timeout is safe: check "
+            "`list_projects`, and a fork that is listed landed.",
+            "POST",
+            "/projects/{project}/fork",
+            {"project": s, "name": s, "in_response_to": s},
+            ("project", "name", "in_response_to"),
+        ),
+        tool(
             "submit_amendment",
             "Record a batch of derived entries -- the pipeline's own write "
             "path. Cite the request it serves in `in_response_to`: an inbox "
@@ -1334,6 +1352,7 @@ _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("POST", re.compile(r"^/inbox/(?P<mid>[A-Za-z0-9_-]+)/resolve$"), "resolve"),
     # The pipeline's own write path.
     ("POST", re.compile(r"^/projects$"), "create_project"),
+    ("POST", re.compile(rf"^/projects/{_P}/fork$"), "fork_project"),
     ("POST", re.compile(rf"^/projects/{_P}/amendments$"), "amendment"),
     (
         "POST",
@@ -1674,6 +1693,10 @@ def _handle(
 
         if name == "create_project":
             return 201, JSON, json.dumps(service.create_project(store, inbox, body))
+
+        if name == "fork_project":
+            return 201, JSON, json.dumps(service.fork_project(
+                store, inbox, issues, project, body, events, now_fn))
 
         if name == "spine":
             return (
