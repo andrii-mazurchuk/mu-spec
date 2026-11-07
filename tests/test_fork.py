@@ -137,3 +137,14 @@ def test_a_fork_name_must_be_a_routable_project_name(store, prompts, name):
     status, _ = fork(store, prompts, name=name, mid=mid)
     assert status == 400
     assert store.list_projects() == ["m"]
+
+
+def test_a_review_shows_only_its_own_projects_comments(store, prompts):
+    seed(store, prompts)
+    fork(store, prompts)
+    post(store, prompts, "comment", "said on the source", project="m", targets=["A-01"])
+    post(store, prompts, "comment", "said on the fork", project="m-run1", targets=["A-01"])
+    _, on_fork = call(store, prompts, "GET", "/projects/m-run1/review?layer=A")
+    _, on_source = call(store, prompts, "GET", "/projects/m/review?layer=A")
+    assert [c["title"] for c in on_fork["entries"][0]["comments"]] == ["said on the fork"]
+    assert [c["title"] for c in on_source["entries"][0]["comments"]] == ["said on the source"]
