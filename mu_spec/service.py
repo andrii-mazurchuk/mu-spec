@@ -3178,7 +3178,9 @@ def review_layer(
                 # to look for "what did someone say about this".
                 "comments": [
                     m.to_json()
-                    for m in inbox.list(kind="comment", target=str(entry.id))
+                    for m in inbox.list(
+                        project=project, kind="comment", target=str(entry.id)
+                    )
                 ],
             }
         )
