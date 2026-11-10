@@ -1334,6 +1334,7 @@ def read_prompt(prompts_dir: Path, tier: str) -> str | None:
 _ROUTES: list[tuple[str, "re.Pattern[str]", str]] = [
     ("GET", re.compile(r"^/health$"), "health"),
     ("GET", re.compile(r"^/stats$"), "stats"),
+    ("GET", re.compile(r"^/stats/structure$"), "structure"),
     ("GET", re.compile(r"^/tools$"), "tools"),
     # The second manifest: what a person may press. Never discovered,
     # never an MCP tool -- see _actions().
@@ -1639,6 +1640,11 @@ def _handle(
                     }
                 ),
             )
+
+        if name == "structure":
+            return 200, JSON, json.dumps({
+                "unit": UNIT_NAME, "computed_at": now_fn(),
+                "metrics": service.unit_structure(store)})
 
         if name == "tools":
             return 200, JSON, json.dumps({"unit": UNIT_NAME, "tools": _tools()})

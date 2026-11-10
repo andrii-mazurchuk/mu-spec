@@ -2935,12 +2935,14 @@ def unit_metrics(
     an aggregate across projects, and the two that matter most are computed
     rather than left for the reader to derive: mean change locality, and
     where corrections entered.
+
+    Counts only, because the node polls this and its proxy gives up at 5s:
+    the gate run and the wave schedule live at `unit_structure` (11-10).
     """
     projects = store.list_projects()
+    inbox = inbox.snapshot()
     by_layer: dict[str, int] = {}
-    slices = sound = complete = unimplemented = modules = 0
-    depths: list[int] = []
-    chains = 0
+    slices = unimplemented = modules = 0
     locality: list[float] = []
     corrections: dict[str, int] = {}
 
@@ -2951,18 +2953,12 @@ def unit_metrics(
             by_layer[entry.id.layer_name] = by_layer.get(entry.id.layer_name, 0) + 1
         slices += len(manifest.slices)
         modules += len(manifest.modules)
+        implemented = {i for ids in manifest.modules.values() for i in ids}
         unimplemented += sum(
             1
             for e in graph.entries()
-            if e.id.layer == SPEC and not manifest.implementers(e.id)
+            if e.id.layer == SPEC and e.id not in implemented
         )
-        report = _gate_report(graph, manifest)
-        sound += 1 if report["sound"] else 0
-        complete += 1 if report["complete"] else 0
-
-        sched = schedule(manifest, graph)
-        depths.append(len(sched.waves))
-        chains += 1 if sched.chain else 0
 
         mean = change_locality(manifest, inbox, project)["mean"]
         if mean is not None:
@@ -2980,10 +2976,6 @@ def unit_metrics(
         "slices": slices,
         "modules": modules,
         "unimplemented_spec": unimplemented,
-        "projects_sound": sound,
-        "projects_complete": complete,
-        "max_wave_depth": max(depths, default=0),
-        "chain_projects": chains,
         "open_issues": sum(1 for i in all_issues if i.status == OPEN),
         "semantic_issues": sum(1 for i in all_issues if i.kind == "semantic"),
         # The primary score, precomputed. One is perfect.
@@ -2992,6 +2984,30 @@ def unit_metrics(
         ),
         # DESIGN.md §9's debug signal for the pipeline itself.
         "corrections_by_layer": dict(sorted(corrections.items())),
+    }
+
+
+def unit_structure(store: ProjectStore) -> dict[str, Any]:
+    """What left `/stats` on 11-10: every gate and a wave schedule on every
+    project. Seconds on a large store, so it is not on the polled path."""
+    projects = store.list_projects()
+    sound = complete = chains = 0
+    depths: list[int] = []
+    for project in projects:
+        manifest = store.load_manifest(project)
+        graph = store.load_graph(project)
+        report = _gate_report(graph, manifest)
+        sound += 1 if report["sound"] else 0
+        complete += 1 if report["complete"] else 0
+        sched = schedule(manifest, graph)
+        depths.append(len(sched.waves))
+        chains += 1 if sched.chain else 0
+    return {
+        "projects": len(projects),
+        "projects_sound": sound,
+        "projects_complete": complete,
+        "max_wave_depth": max(depths, default=0),
+        "chain_projects": chains,
     }
 
 

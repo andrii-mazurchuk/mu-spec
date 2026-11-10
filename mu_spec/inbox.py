@@ -232,6 +232,14 @@ class Inbox:
         self._append(message)
         return message
 
+    def snapshot(self) -> "Inbox":
+        """This inbox read once, for a caller about to ask it many questions
+        in one pass (/stats asks two per project). Sees no later append."""
+        messages = self._read()
+        frozen = Inbox(self._path)
+        frozen._read = lambda: list(messages)
+        return frozen
+
     def get(self, message_id: str) -> Message | None:
         return next((m for m in self._read() if m.id == message_id), None)
 
