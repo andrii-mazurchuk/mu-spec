@@ -1,4 +1,7 @@
 /* Generated from design.json by tools/design.ts. Do not edit; edit design.json. */
+/* Changed on the way into mu-spec: the muted SURFACE is named --surface-muted, not --muted. tests/test_dashboard.py
+   forbids var(--muted) on this page (in the node's console --muted is a shadcn surface, and the rule keeps it from ever
+   painting text). Only the name changed; the values and the Tailwind classes (bg-muted) are as approved. */
 :root {
   --background: var(--ground, #e4e7ec);
   --foreground: var(--ink, #10141c);
@@ -10,7 +13,7 @@
   --primary-foreground: var(--brand-ink, #fafbfc);
   --secondary: var(--panel-alt, #eff1f5);
   --secondary-foreground: var(--ink, #10141c);
-  --muted: var(--panel-alt, #eff1f5);
+  --surface-muted: var(--panel-alt, #eff1f5);
   --muted-foreground: var(--ink-soft, #3d4654);
   --accent: var(--panel-alt, #eff1f5);
   --accent-foreground: var(--ink, #10141c);
@@ -52,7 +55,7 @@
   --primary-foreground: var(--brand-ink, #0c1016);
   --secondary: var(--panel-alt, #1a212b);
   --secondary-foreground: var(--ink, #e8ecf2);
-  --muted: var(--panel-alt, #1a212b);
+  --surface-muted: var(--panel-alt, #1a212b);
   --muted-foreground: var(--ink-soft, #b6c0ce);
   --accent: var(--panel-alt, #1a212b);
   --accent-foreground: var(--ink, #e8ecf2);
@@ -97,7 +100,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
+  --color-muted: var(--surface-muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);

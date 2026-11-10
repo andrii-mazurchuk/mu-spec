@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { pages } from "./pages"
 
-// The product: hash routes to the pages and nothing else. This file, main.tsx, index.html, pages/, components/, lib/
-// and the tokens are what ships (HANDOFF.md "What ships"); review.tsx, review.html and gallery/ never do.
+// The product: hash routes to the pages and nothing else. Hash routes stay inside the page, so it never navigates
+// the frame the node puts it in.
 export function useRoute() {
   // The whole hash, not just the route: #/task?id=a → #/task?id=b is the same route and must still re-render.
   const [hash, setHash] = useState(() => location.hash)

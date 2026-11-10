@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge"
 // Modules as the developer's file tree (Andrey, round 2-3): folders are visible groups, subfolders nest inside and are
 // marked, every folder really folds (Radix Collapsible: height on --duration-fast, J05), rows keep spec and test counts and flags, and a clicked file
 // opens in the right panel.
-export type FileRow = { name: string; spec: number; test: number; slices: number }
+/** `path` is what selection compares when given: two folders may each hold an `__init__.py`. */
+export type FileRow = { name: string; spec: number; test: number; slices: number; path?: string }
 export type Folder = { name: string; files: FileRow[]; folders: Folder[] }
 
 const isTest = (f: string) => /^test_/.test(f)
@@ -38,9 +39,9 @@ function Group({ folder, depth, selected, onPick, closed }: { folder: Folder; de
       {folder.folders.map(d => <Group key={d.name} folder={d} depth={depth + 1} selected={selected} onPick={onPick} closed={closed} />)}
       <ul className="m-0 list-none p-0">
         {folder.files.map(f => (
-          <li key={f.name} className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-1 ps-2 text-sm last:border-b-0", selected === f.name && "rounded-sm border-l-[3px] border-l-primary bg-primary/15")}>
-            <button type="button" aria-pressed={selected === f.name} onClick={() => onPick?.(f.name)}
-              className={cn("min-w-0 rounded-sm text-left break-all text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50", selected === f.name && "font-semibold underline")}>{f.name}</button>
+          <li key={f.name} className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-1 ps-2 text-sm last:border-b-0", selected === (f.path ?? f.name) && "rounded-sm border-l-[3px] border-l-primary bg-primary/15")}>
+            <button type="button" aria-pressed={selected === (f.path ?? f.name)} onClick={() => onPick?.(f.path ?? f.name)}
+              className={cn("min-w-0 rounded-sm text-left break-all text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50", selected === (f.path ?? f.name) && "font-semibold underline")}>{f.name}</button>
             <span className="text-muted-foreground tabular-nums whitespace-nowrap">{f.spec} spec · {f.test} {f.test === 1 ? "test" : "tests"}</span>
             {/* "serves N slices" is the rare flag: a filled grey pill; the common gaps stay quiet outlines (J04: all grey). */}
             {flags(f).map(x => /^serves/.test(x)

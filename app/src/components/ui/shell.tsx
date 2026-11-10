@@ -22,6 +22,7 @@ function ProjectPicker({ projects, project, forks, fork, disabledReason, error, 
           aria-describedby={msg ? `${id}-msg` : undefined} onChange={e => onProject?.(e.target.value)}>
           {projects.map(p => <NativeSelectOption key={p} value={p}>{p}</NativeSelectOption>)}
         </NativeSelect>
+        {forks.length > 1 && <>
         <span className="text-muted-foreground">fork:</span>
         <DropdownMenu>
           <DropdownMenuTrigger disabled={!!disabledReason} className={cn(link, "disabled:no-underline")} aria-label={`Fork: ${fork}`}>{fork} ▾</DropdownMenuTrigger>
@@ -31,6 +32,7 @@ function ProjectPicker({ projects, project, forks, fork, disabledReason, error, 
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        </>}
       </div>
       {msg && <p id={`${id}-msg`} role={error ? "alert" : undefined} className="m-0 text-xs text-muted-foreground">{msg}</p>}
     </div>
@@ -42,7 +44,7 @@ function SearchBox({ defaultValue = "", disabledReason, error, onSearch }: { def
   const id = useId(), [q, setQ] = useState(defaultValue), msg = error ?? disabledReason
   return (
     <form role="search" className="flex w-full flex-col gap-1" onSubmit={e => { e.preventDefault(); if (q.trim()) onSearch?.(q.trim()) }}>
-      <Input id={id} type="search" value={q} onChange={e => setQ(e.target.value)} aria-label="Search entries" placeholder="Search S·04, A·04 or a word"
+      <Input id={id} type="search" value={q} onChange={e => setQ(e.target.value)} aria-label="Search entries" placeholder="Search S-04, A-04 or a word"
         enterKeyHint="search" autoCapitalize="none" autoCorrect="off" disabled={!!disabledReason}
         aria-invalid={error ? true : undefined} aria-describedby={msg ? `${id}-msg` : undefined} />
       {msg && <p id={`${id}-msg`} role={error ? "alert" : undefined} className="m-0 text-xs text-muted-foreground">{msg}</p>}
@@ -52,7 +54,7 @@ function SearchBox({ defaultValue = "", disabledReason, error, onSearch }: { def
 
 const FRESH = {
   default: (t: string) => `updated ${t}`,
-  stale: (t: string) => `updated ${t} · 3 min ago`,
+  stale: (t: string) => `updated ${t} · the last refresh failed`,
   offline: (t: string) => `offline · last data ${t}, not current`,
 }
 /** Freshness stamp and refresh, on every view. */

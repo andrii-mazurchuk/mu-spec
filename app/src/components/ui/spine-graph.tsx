@@ -8,7 +8,9 @@ import { cn } from "@/lib/utils"
 // the row, top-left. Tests are never drawn. Level of detail follows the zoom: far, each slice row shows its entry count
 // per layer; mid, node ids; close, ids and titles. Only what is in view is drawn (culling), so a 924-entry project
 // pans as smoothly as a small one. Focus turns the entry's chain brand, dims the rest in place, and fits the chain.
-export type EdgeKind = "derives" | "parent" | "depends" | "contradicts"
+// The two edge kinds mu-spec stores: derives-from (vertical) and depends-on (horizontal). The design also drew "parent of"
+// and "contradicts"; the unit has neither edge, so they are not drawn rather than faked (Andrey, 2026-11-10).
+export type EdgeKind = "derives" | "depends"
 export type SpineData = {
   layers: [string, string][]               // [key, name]: I, B, A, S, M
   nodes: [string, string, string?][]       // [id, title, slice]; intent has no slice; all the graph needs on load
@@ -33,9 +35,10 @@ const SLICE = [
 ]
 const SLICE_NONE = { row: "fill-slice-none/20 stroke-slice-none", text: "fill-slice-none", node: "stroke-slice-none" }
 const R_ROW = 8, R_NODE = 6                                // px on screen: --radius-lg (slices), --radius-md (nodes)
-const layerOf = (id: string) => (id.includes("·") ? id.split("·")[0] : "M")
+// An entry id is a layer letter, a separator (- or the legacy ·) and a number; anything else is a module path.
+export const layerOf = (id: string) => /^[A-Z][-·]\d/.test(id) ? id[0] : "M"
 const clip = (s: string, n: number) => (n < 2 ? "" : s.length > n ? `${s.slice(0, n - 1)}…` : s)
-const DASH: Record<EdgeKind, string | undefined> = { derives: undefined, parent: "2 4", depends: "7 5", contradicts: undefined }
+const DASH: Record<EdgeKind, string | undefined> = { derives: undefined, depends: "7 5" }
 
 /** Word-wrap a node title into at most `lines` lines of `n` characters; what does not fit ends in an ellipsis, never a
  *  mid-word cut. */
@@ -332,7 +335,7 @@ function SpineGraph({ data, zoom = "mid", focus, edges = ["derives"], hrefFor, s
       const on = kind === "derives" && !!chain && chain.has(a) && chain.has(b)
       const d = same ? `M ${x1} ${y1} C ${gx} ${y1}, ${gx} ${y2}, ${x2} ${y2}` : `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`
       edgeEls.push(<path key={`e${a}>${b}>${kind}`} d={d} fill="none" vectorEffect="non-scaling-stroke" strokeDasharray={DASH[kind]} strokeWidth={on ? 2 : kind === "derives" ? 1 : 1.25}
-        className={cn(on ? "stroke-primary" : kind === "contradicts" ? "stroke-status-down" : "stroke-subtle", chain && !on && "[stroke-opacity:0.3]")} />)
+        className={cn(on ? "stroke-primary" : "stroke-subtle", chain && !on && "[stroke-opacity:0.3]")} />)
     }
   }
   for (const [id, p] of L.pos) {
