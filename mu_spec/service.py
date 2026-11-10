@@ -484,6 +484,14 @@ def _idempotent(store: ProjectStore, project: str, kind: str, body: dict,
         return result
 
 
+ENTRY_FIELDS = frozenset({
+    "layer", "title", "body", "purpose", "derives_from", "depends_on",
+    "supersedes", "preserves_interface",
+    # Still read, so that a caller using it hears why it is refused.
+    "emits_into",
+})
+
+
 def submit_amendment(
     store: ProjectStore,
     inbox: Inbox,
@@ -749,7 +757,19 @@ def _submit_amendment(
     # and the counter only ever moves up, so a position maps to exactly one
     # identifier and it is the one the entry will be committed under.
     allocated: list[Identifier] = []
-    for item in items:
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ServiceError(f"entries[{position}] must be an object")
+        # Refused rather than dropped: a per-entry `slice` was ignored, and
+        # the entries landed unassigned with nothing said.
+        unknown = sorted(set(item) - ENTRY_FIELDS)
+        if unknown:
+            raise ServiceError(
+                f"entries[{position}]: unknown field(s) {unknown}. An entry "
+                f"takes {sorted(ENTRY_FIELDS - {'emits_into'})}"
+                + ("; a slice is named once, on the amendment, as 'slice'"
+                   if "slice" in unknown else "")
+            )
         layer = item.get("layer")
         if layer not in ALL_LAYERS:
             raise ServiceError(f"entry layer must be one of {ALL_LAYERS}")
@@ -814,6 +834,19 @@ def _submit_amendment(
             "reads it. Submit the upper layer and let the next session derive "
             "from what is actually written"
         )
+
+    # A replacement for a sliced entry with no slice named would land
+    # unassigned. Refused with the slice to name, never inherited: where an
+    # entry goes is the author's to say.
+    if not slice_name:
+        for entry in staged:
+            owner = manifest.slice_of(entry.supersedes) if entry.supersedes else None
+            if owner and entry.id.layer != TEST:
+                raise ServiceError(
+                    f"{entry.supersedes} is in slice {owner!r}, and this "
+                    "amendment names no slice, so its replacement would land "
+                    f"unassigned. Name the slice: \"slice\": \"{owner}\""
+                )
 
     if slice_name and TEST in layers:
         raise ServiceError(
@@ -3092,8 +3125,20 @@ def record_audit(
     if outcome not in AUDIT_OUTCOMES:
         raise ServiceError(f"'outcome' must be one of {AUDIT_OUTCOMES}")
     cited = _strings(body, "issues")
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise ServiceError("'note' must be a string")
+    note = (note or "").strip()
+    # A slice audit's findings go to a person, not onto an entry, so there is
+    # no issue to cite (an issue always targets an entry). The note is what
+    # stops that flag from saying nothing.
     if outcome == "flagged" and not cited:
-        raise ServiceError("'issues' is required when flagged: raise them first")
+        if layer != "slice":
+            raise ServiceError("'issues' is required when flagged: raise them first")
+        if not note:
+            raise ServiceError(
+                "'note' is required when a slice audit flags without issues: "
+                "say what was flagged")
     if outcome == "pass" and cited:
         raise ServiceError("'issues' must be empty on a pass")
     for iid in cited:
@@ -3109,7 +3154,7 @@ def record_audit(
     event = events.record(
         lc.AUDIT, project, now_fn, refs=scope + cited,
         layer=layer, questions=questions, outcome=outcome, issues=cited,
-        **free, by=actor,
+        **free, **({"note": note} if note else {}), by=actor,
     )
     if event is None:
         raise ServiceError("the audit could not be recorded")

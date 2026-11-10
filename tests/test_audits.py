@@ -103,6 +103,36 @@ def test_refusals_are_400_and_name_the_problem(store, prompts, patch, needle):
     assert audits(store, prompts) == []
 
 
+SLICE_FLAG = {**PASS, "scope": ["slice:s"], "layer": "slice", "outcome": "flagged",
+              "issues": [], "note": "two units straddle the slice boundary"}
+
+
+def test_a_slice_audit_flags_with_a_note_and_no_issues(store, prompts):
+    """A slice audit's findings go to a person, not onto entries, so it has
+    nothing to cite; the note is what makes the flag say something."""
+    seed(store, prompts)
+    status, _ = call(store, prompts, "POST", "/projects/m/audits", SLICE_FLAG)
+    assert status == 201
+    event = audits(store, prompts)[0]
+    assert event["facts"]["note"] == "two units straddle the slice boundary"
+    assert event["facts"]["issues"] == []
+
+
+@pytest.mark.parametrize("patch,needle", [
+    ({"note": ""}, "note"),
+    ({"note": None}, "note"),
+    ({"layer": "S"}, "issues"),
+    ({"note": 3}, "note"),
+])
+def test_a_flag_without_issues_needs_a_slice_audit_and_a_note(store, prompts, patch, needle):
+    seed(store, prompts)
+    status, payload = call(store, prompts, "POST", "/projects/m/audits",
+                           {**SLICE_FLAG, **patch})
+    assert status == 400
+    assert needle in payload["error"]
+    assert audits(store, prompts) == []
+
+
 def test_an_issue_from_another_project_does_not_count(store, prompts):
     seed(store, prompts)
     _, msg = call(store, prompts, "POST", "/inbox",

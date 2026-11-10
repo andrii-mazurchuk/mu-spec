@@ -263,7 +263,11 @@ def _tools() -> list[dict[str, Any]]:
             "layer up -- what it serves) and 'depends_on' (same layer -- what "
             "it needs, and what imposes order). 'emits_into' is refused: the "
             "cross-cutting type was removed, and an ambient concern is a "
-            "foundational slice reached with depends_on. Validated as one "
+            "foundational slice reached with depends_on. Any other entry "
+            "field is refused, 'slice' included: the slice is named once, on "
+            "the amendment. Replacing an entry that sits in a slice needs "
+            "that amendment-level 'slice', or the replacement would land "
+            "unassigned. Validated as one "
             "transaction: an "
             "amendment introducing an orphan, a broken horizontal edge, a "
             "slice cycle, a "
@@ -712,6 +716,10 @@ def _tools() -> list[dict[str, Any]]:
             "audit questions you asked (e.g. S1, T4). `outcome` is `pass` or "
             "`flagged`; when flagged, raise each problem with raise_issue "
             "FIRST and list the iss-NNNN ids in `issues` (empty on a pass). "
+            "The one exception is a `slice` audit, whose findings go to a "
+            "person rather than onto entries: it may flag with no issues if "
+            "`note` says what was flagged. `note` is optional free text "
+            "otherwise. "
             "`auditor` and `run_id` are free text naming you and the run. "
             "This stores references only: it never judges, scores or gates "
             "anything, and refuses only a name that does not exist. Read "
@@ -725,6 +733,7 @@ def _tools() -> list[dict[str, Any]]:
                 "questions": strings,
                 "outcome": enum(AUDIT_OUTCOMES),
                 "issues": strings,
+                "note": s,
                 "auditor": s,
                 "run_id": s,
             },
