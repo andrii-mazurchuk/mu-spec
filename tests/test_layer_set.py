@@ -83,12 +83,13 @@ def test_no_module_spells_a_layer_out_by_hand():
 
 
 def test_the_dashboard_columns_are_the_layer_set_plus_modules():
-    """The page is JavaScript and cannot import the constant, so it is pinned
-    to it instead: a new layer fails here until the page draws it."""
-    from mu_spec import dashboard
+    """The page is TypeScript and cannot import the constant, so it is pinned
+    to it instead: a new layer fails here until the page knows it. Read from
+    the source (app/src/lib/model.ts), where the minifier has not renamed it."""
+    from pathlib import Path
 
-    page = dashboard.read_page()
-    layers = re.search(r"const LAYERS=\[(.*?)\];", page, re.S).group(1)
+    model = (Path(__file__).resolve().parent.parent / "app/src/lib/model.ts").read_text(encoding="utf-8")
+    layers = re.search(r"export const LAYERS\b[^=]*=\s*(\[.*\])\n", model).group(1)
     assert re.findall(r'\["([A-Z])"', layers) == [*ALL_LAYERS, "M"]
 
 

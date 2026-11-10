@@ -243,7 +243,11 @@ pytest tests/test_server.py::test_health_returns_ok   # single test
 python -m mu_spec.main                                # defaults to :9006
 ```
 
-CI runs exactly `pip install -e ".[dev]"` then `pytest`. No linter or
+CI runs `pip install -e ".[dev]"` then `pytest`, and a second job that
+rebuilds the dashboard from `app/` with bun and fails if the committed
+`mu_spec/dashboard.html` differs. After any change under `app/`:
+`cd app && bun install && bun run build`, and commit the rebuilt page with it.
+The page is the only non-Python part of the repo; Python stays stdlib-only. No linter or
 formatter is configured — don't add one unprompted.
 
 ## Working style here

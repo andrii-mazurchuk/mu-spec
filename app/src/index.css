@@ -1,0 +1,28 @@
+/* Tokens come only from the approved step-4 file. Do not add colours, sizes or durations here. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource/archivo/400.css";
+@import "@fontsource/archivo/500.css";
+@import "@fontsource/archivo/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "./tokens.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Reduced motion (motion-recipes §0): nothing moves; Radix keyframes collapse to the reduced duration, which tokens.css
+   zeroes. Components also opt out themselves (motion-reduce:animate-none / transition-none). */
+@media (prefers-reduced-motion: reduce) {
+  [data-state] {
+    --tw-enter-scale: 1; --tw-exit-scale: 1;
+    --tw-enter-translate-x: 0; --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0; --tw-exit-translate-y: 0;
+    animation-duration: var(--duration-reduced); animation-timing-function: var(--ease-standard);
+  }
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  html { font-family: var(--font-sans); }
+  body { margin: 0; background: var(--background); color: var(--foreground); }
+  option { background: var(--popover); color: var(--popover-foreground); }
+}
