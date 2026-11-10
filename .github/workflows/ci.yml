@@ -14,3 +14,23 @@ jobs:
           python-version: "3.11"
       - run: pip install -e ".[dev]"
       - run: pytest
+
+  # The dashboard ships as one committed file built from app/ (UNIT_CONTRACT.md,
+  # "The dashboard"). Rebuild it and fail if the committed file differs: a source
+  # change without a rebuild, or a hand edit of the built file, both land here.
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - name: The committed page matches a fresh build
+        run: git diff --exit-code -- ../mu_spec/dashboard.html

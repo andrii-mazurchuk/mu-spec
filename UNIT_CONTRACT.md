@@ -47,8 +47,9 @@ unit does.
 
 **That decision is made and does not need remaking.** What it obliges a
 future session here is narrower, and easier to lose: the standard's
-page-tier requirements apply to **every change to `dashboard.html`**, not
-just to the first one.
+page-tier requirements apply to **every change to `dashboard.html`** --
+which means every change under `app/`, its source -- not just to the first
+one.
 
 Below is not that list — the canonical requirements live in the gateway's
 `UNIT_STANDARDS.md` and restating them here would be a second copy that
@@ -58,7 +59,12 @@ requirements, plus one trap that is not one of them.
 - Zero absolute fetches. Every path relative, none starting with `/` — an
   absolute one reaches the *node*, which answers with plausible JSON of the
   wrong shape rather than an error.
-- No external resources. One file, inline CSS and JS, no build step.
+- No external resources. The page ships as one committed, self-contained
+  file -- `mu_spec/dashboard.html`, with its JS, CSS, fonts and icons inline
+  -- built from the source in `app/` (`cd app && bun install && bun run
+  build`). CI rebuilds it and fails if the committed file differs from a
+  fresh build, so edit `app/`, rebuild, and commit both; never hand-edit the
+  built file.
 - The `holonic-tokens` opt-in and contract token names, so the node's
   injected palette wins when framed and the page still works standalone.
 - `aria-pressed` and every selected state derived from **current** state,
