@@ -1815,6 +1815,9 @@ def test_every_route_an_agent_could_call_is_declared(store, prompts):
         "ratify": None,
         "reject_proposal": None,
         "stats": None,
+        # /stats' heavy half (11-10): structural aggregates for whoever reviews
+        # the unit, like /stats itself. No agent needs it to do work.
+        "structure": None,
         "get_repo": "get_repo",
         "get_labels": "get_labels",
         # Project-wide config, like set_repo: the read is offered so an agent

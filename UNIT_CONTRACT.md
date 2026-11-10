@@ -108,14 +108,19 @@ unit's problem.
 The page is deliberately absent from `/tools`: a model offered it would
 fetch HTML in place of the data behind it.
 
-`/stats` carries **already-processed** aggregates — counts per layer, how
-many projects are sound, mean change locality, where corrections entered —
+`/stats` carries **already-processed** aggregates — counts per layer, mean
+change locality, where corrections entered —
 with no text and no per-item detail. An analytical unit reads it without
 knowing anything about how this unit works. The two exceptions identify the
 process rather than describe the graph: `store_root`, the directory it
 serves, and `git_sha`, the build it runs (`HOLONIC_GIT_SHA`, the pin the node
 injects into every unit, else read from the checkout, else `null`). Everything richer is a
 registered tool, reachable by an agent rather than by a scrape.
+
+`/stats` is counts only, because the node polls it and its proxy gives up
+at 5s. How many projects are sound and complete, the deepest wave and which
+projects hold a chain run every gate and a wave schedule on every project,
+so they are at `GET /stats/structure`, in the same envelope (11-10).
 
 There is no `/metrics` endpoint: the standard defines `/stats` with a
 `metrics` field inside it, and that is what this implements.

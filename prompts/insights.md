@@ -45,6 +45,11 @@ the specification keeps being rewritten because the underlying question was
 never settled. Name the layer specifically; "corrections are up" without
 saying *where* is not a usable finding.
 
+**These four are not in `/stats`.** `projects_sound`, `projects_complete`,
+`max_wave_depth` and `chain_projects` take every gate and a wave schedule on
+every project, which is too slow for a polled endpoint. Read them from
+`GET /stats/structure`, which has the same envelope.
+
 **`projects_sound` and `projects_complete`** against `projects` — the ratio
 tells you whether projects are reaching a finished state or accumulating in
 a partial one. Several projects, none sound, across multiple cycles, is a
