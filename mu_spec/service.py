@@ -3092,8 +3092,20 @@ def record_audit(
     if outcome not in AUDIT_OUTCOMES:
         raise ServiceError(f"'outcome' must be one of {AUDIT_OUTCOMES}")
     cited = _strings(body, "issues")
+    note = body.get("note")
+    if note is not None and not isinstance(note, str):
+        raise ServiceError("'note' must be a string")
+    note = (note or "").strip()
+    # A slice audit's findings go to a person, not onto an entry, so there is
+    # no issue to cite (an issue always targets an entry). The note is what
+    # stops that flag from saying nothing.
     if outcome == "flagged" and not cited:
-        raise ServiceError("'issues' is required when flagged: raise them first")
+        if layer != "slice":
+            raise ServiceError("'issues' is required when flagged: raise them first")
+        if not note:
+            raise ServiceError(
+                "'note' is required when a slice audit flags without issues: "
+                "say what was flagged")
     if outcome == "pass" and cited:
         raise ServiceError("'issues' must be empty on a pass")
     for iid in cited:
@@ -3109,7 +3121,7 @@ def record_audit(
     event = events.record(
         lc.AUDIT, project, now_fn, refs=scope + cited,
         layer=layer, questions=questions, outcome=outcome, issues=cited,
-        **free, by=actor,
+        **free, **({"note": note} if note else {}), by=actor,
     )
     if event is None:
         raise ServiceError("the audit could not be recorded")

@@ -712,6 +712,10 @@ def _tools() -> list[dict[str, Any]]:
             "audit questions you asked (e.g. S1, T4). `outcome` is `pass` or "
             "`flagged`; when flagged, raise each problem with raise_issue "
             "FIRST and list the iss-NNNN ids in `issues` (empty on a pass). "
+            "The one exception is a `slice` audit, whose findings go to a "
+            "person rather than onto entries: it may flag with no issues if "
+            "`note` says what was flagged. `note` is optional free text "
+            "otherwise. "
             "`auditor` and `run_id` are free text naming you and the run. "
             "This stores references only: it never judges, scores or gates "
             "anything, and refuses only a name that does not exist. Read "
@@ -725,6 +729,7 @@ def _tools() -> list[dict[str, Any]]:
                 "questions": strings,
                 "outcome": enum(AUDIT_OUTCOMES),
                 "issues": strings,
+                "note": s,
                 "auditor": s,
                 "run_id": s,
             },
