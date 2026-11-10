@@ -1,11 +1,24 @@
 """The dashboard page, and the rules the standard puts on a page-tier unit.
 
-The rule worth the most here is the last one: the page must be present
+The rule worth the most here is the first one: the page must be present
 *as installed*, not merely present in the checkout. A test that opens
 `mu_spec/dashboard.html` by path passes whether or not the packaging
 ships the file, so it proves nothing about the thing that actually
 breaks -- a wheel without the asset, a 404, and a node that reports the
 unit as having no dashboard at all.
+
+The page is built from `app/` into one self-contained file (UNIT_CONTRACT.md,
+"The dashboard"); CI checks the committed file matches a fresh build. Two
+kinds of check follow, and each says which it is:
+
+- BUILT: reads the installed page through `importlib.resources`. Anything a
+  browser would act on -- tags, URLs, fetch paths, tokens, visible strings --
+  survives minification, so it is checked where it ships.
+- SOURCE: reads `app/src`. Used only where minification makes the built file
+  unreadable for the question: which identifiers the page writes into the DOM
+  (React's own runtime names `innerHTML` and `dangerouslySetInnerHTML`, so the
+  built file always contains them), which paths it POSTs to, and how a control
+  derives its state.
 """
 
 from __future__ import annotations
@@ -19,6 +32,9 @@ import pytest
 from mu_spec import dashboard
 from mu_spec.server import handle
 from mu_spec.storage import ProjectStore
+
+APP = Path(__file__).resolve().parent.parent / "app"
+SRC = APP / "src"
 
 
 @pytest.fixture()
@@ -34,12 +50,26 @@ def prompts(tmp_path):
     return d
 
 
+def page() -> str:
+    """BUILT: the page as installed."""
+    text = dashboard.read_page()
+    assert text is not None
+    return text
+
+
+def source() -> str:
+    """SOURCE: every shipped TypeScript file, tests excluded."""
+    files = sorted(p for p in SRC.rglob("*.ts*") if not p.name.endswith(".test.ts"))
+    assert files, "app/src is missing"
+    return "\n".join(p.read_text(encoding="utf-8") for p in files)
+
+
 def test_page_is_readable_as_installed():
     """Resolved through importlib.resources -- the installed location,
     whatever it turns out to be -- never through a checkout path."""
-    page = dashboard.read_page()
-    assert page is not None, "dashboard.html did not survive packaging"
-    assert page.lstrip().lower().startswith("<!doctype html>")
+    text = dashboard.read_page()
+    assert text is not None, "dashboard.html did not survive packaging"
+    assert text.lstrip().lower().startswith("<!doctype html>")
 
 
 def test_dashboard_is_served_as_html(store, prompts):
@@ -65,30 +95,33 @@ def test_dashboard_is_not_declared_as_a_tool(store, prompts):
 # -- the standard's rules for a page-tier unit ---------------------------
 
 
-def page() -> str:
-    text = dashboard.read_page()
-    assert text is not None
-    return text
-
-
 def test_page_is_self_contained():
-    """One file, inline CSS and JS. No CDN, no external stylesheet, no
-    build step -- so nothing has to be reachable for it to render."""
+    """BUILT. One file, CSS, JS and fonts inline. No CDN, no external
+    stylesheet, no favicon link -- nothing has to be reachable for it to
+    render. The build step is allowed; the committed output is what ships."""
     text = page()
     assert "<link" not in text.lower()
     assert not re.search(r'<script[^>]+\bsrc=', text, re.I)
     assert not re.search(r'https?://(?!www\.w3\.org)', text)
+    # url() may only carry inlined data, never a file next to the page.
+    assert not re.search(r'url\((?!["\']?data:)', text)
 
 
 def test_every_fetch_is_relative():
     """Served at /dashboard here and at /dashboard/mu-spec/ through the
     node's proxy. A relative path lands correctly in both; an absolute
     one reaches the NODE, which answers with plausible JSON of the wrong
-    shape rather than an error."""
+    shape rather than an error.
+
+    BUILT for the fetch calls themselves; SOURCE for the paths, which the
+    minifier moves away from the call."""
     text = page()
-    bad = re.findall(r'fetch\(\s*["\'`]\s*/', text)
-    assert not bad, "an absolute fetch path escapes the proxied prefix"
+    assert not re.findall(r'fetch\(\s*["\'`]\s*/', text), "an absolute fetch path escapes the proxied prefix"
     assert re.search(r'fetch\(\s*\w', text), "the page fetches nothing at all"
+    src = source()
+    paths = re.findall(r'\b(?:get|post|get<[^>]*>)\(\s*[`"\']([^`"\']*)', src)
+    assert paths, "no read or write paths found in app/src"
+    assert not [p for p in paths if p.startswith("/")], "a path in app/src starts with a slash"
 
 
 def test_page_opts_into_the_node_theme():
@@ -98,9 +131,11 @@ def test_page_opts_into_the_node_theme():
 
 
 def test_page_colours_come_from_contract_tokens():
+    """BUILT. Each surface reads a contract token, with the page's own value
+    as the standalone fallback, so the node's palette wins when framed."""
     text = page()
     for token in ("--ground", "--panel", "--ink", "--rule", "--brand", "--dim"):
-        assert token in text, f"{token} is not defined as a standalone default"
+        assert f"var({token}," in text, f"{token} is not read with a standalone default"
     # --muted is a shadcn *surface* in the console; using it for text
     # paints text the same colour as the panel behind it.
     assert "var(--muted)" not in text
@@ -108,10 +143,42 @@ def test_page_colours_come_from_contract_tokens():
 
 def test_page_draws_no_navigation_of_its_own():
     """The topbar and the unit switcher belong to the node and never
-    unmount. What this page has is in-page scope, not navigation."""
+    unmount. What this page has is in-page scope, not navigation: its links
+    are hash routes inside the page."""
     text = page()
     assert "<header" not in text.lower()
     assert not re.search(r'<a\s[^>]*href="https?://', text, re.I)
+    src = source()
+    # SOURCE: every href the page renders is a hash route.
+    hrefs = re.findall(r'href=\{?[`"]([^`"]*)', src)
+    assert hrefs and all(h.startswith("#/") for h in hrefs), [h for h in hrefs if not h.startswith("#/")]
+    assert "location.href" not in src and "window.open" not in src and "location.assign" not in src
+
+
+# -- requirement 8: stored text never becomes markup -----------------------
+
+
+def test_stored_text_never_becomes_markup():
+    """SOURCE. Entry bodies, titles, issue claims and tracker reasons arrive
+    through doors open by design. React renders them as text; the only way to
+    turn one into markup is one of these sinks, and the page uses none. The
+    built file cannot answer this: React's runtime names innerHTML itself."""
+    src = source()
+    for sink in ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML",
+                 "document.write", "eval(", "new Function", "srcdoc", "javascript:"):
+        assert sink not in src, f"app/src uses {sink}"
+    # BUILT: no inline handler interpolated from data either.
+    assert not re.search(r'onclick="', page(), re.I)
+
+
+def test_selected_state_is_derived_from_current_state():
+    """SOURCE. aria-pressed, aria-current and the selected row are computed
+    from what is selected now on every render, never written once at mount --
+    a control written at build time announces the mount-time selection
+    forever. So no such attribute is ever a literal."""
+    src = source()
+    assert not re.search(r'aria-(?:pressed|current|selected)=(?:"|\{\s*(?:true|false)\s*\})', src)
+    assert re.search(r'aria-pressed=\{[^}]*===', src), "no control derives aria-pressed from a comparison"
 
 
 # -- requirement 5: degrades on empty ----------------------------------
@@ -137,13 +204,25 @@ def _fresh_project(store, prompts, name="fresh"):
 def test_every_endpoint_the_page_reads_answers_on_an_empty_project(store, prompts):
     """The page degrades only if the API does. A 500 or a missing key on a
     project with nothing in it renders as a broken dashboard, not an empty
-    one -- so this is tested at the source rather than in the markup."""
+    one -- so this is tested at the source rather than in the markup. The
+    list is every read in app/src/lib/api.ts."""
     name = _fresh_project(store, prompts)
     for path, key, empty in [
         (f"/projects/{name}/spine", "spine", []),
         (f"/projects/{name}/waves", "waves", []),
         (f"/projects/{name}/issues", "issues", []),
         (f"/projects/{name}/modules", "modules", []),
+        (f"/projects/{name}/units/cuts", "cuts", []),
+        (f"/projects/{name}/labels", "labels", []),
+        (f"/projects/{name}/repo", "repo", None),
+        (f"/projects/{name}/units", "cut", None),
+        (f"/projects/{name}/emit", "running", None),
+        (f"/projects/{name}/delegation", "delegation", None),
+        (f"/projects/{name}/slicing/proposal", "status", None),
+        (f"/projects/{name}/insights", "slices", None),
+        (f"/projects/{name}/events?kind=tickets_emitted", "events", []),
+        (f"/projects/{name}/events?kind=ship_failed", "events", []),
+        (f"/projects/{name}/review?layer=B", "entries", []),
         (f"/inbox?project={name}", "messages", None),
     ]:
         status, _, raw = handle("GET", path, store, prompts)
@@ -151,16 +230,10 @@ def test_every_endpoint_the_page_reads_answers_on_an_empty_project(store, prompt
         payload = json.loads(raw)
         assert key in payload, f"{path} omitted {key!r} rather than returning it empty"
         if empty is not None:
-            assert payload[key] == empty
+            assert payload[key] == empty, path
 
     status, _, raw = handle("GET", f"/projects/{name}/gates", store, prompts)
     assert status == 200 and json.loads(raw)["sound"] is True
-
-    status, _, raw = handle("GET", f"/projects/{name}/insights", store, prompts)
-    assert status == 200
-    # No changes yet means no mean, not a zero. A zero would read as a
-    # measured score of nought on a page that shows it as one.
-    assert json.loads(raw)["change_locality"]["mean"] is None
 
 
 def test_no_projects_at_all_is_an_empty_list_not_an_error(store, prompts):
@@ -170,552 +243,70 @@ def test_no_projects_at_all_is_an_empty_list_not_an_error(store, prompts):
 
 
 def test_page_has_an_empty_branch_for_each_region_it_draws():
-    """Weaker than the API test above and deliberately kept beside it: this
-    one only catches an empty-state branch being deleted, which is the way
-    this requirement is actually lost."""
+    """BUILT. Weaker than the API test above and deliberately kept beside it:
+    this one only catches an empty-state branch being deleted, which is the
+    way this requirement is actually lost. Visible strings survive minifying."""
     text = page()
-    assert 'id="empty"' in text, "no empty-state element for the graph"
-    for marker in ("No projects yet", "No entries in", "No slices yet",
-                   "Nothing in the queue", "No issues raised"):
+    for marker in ("No projects yet", "The spec has no entries yet", "No slices yet",
+                   "No work units yet", "No entries in the", "No files declared yet",
+                   "No pending requests", "No open issues", "No cut yet", "No ships yet"):
         assert marker in text, f"no empty state for {marker!r}"
-    # A null mean must not be printed as a number.
-    assert "locality==null" in text.replace(" ", "")
+
+
+def test_view_state_comes_from_the_reads_not_the_url():
+    """SOURCE. The design harness rendered states from ?state=; the product
+    takes them from what the unit answered, or a broken unit would render as
+    whatever the URL said."""
+    src = (SRC / "lib" / "screen-state.ts").read_text(encoding="utf-8")
+    assert "?state" not in src and "URLSearchParams" not in src
+    assert "useStore" in src
+
+
+# -- the writes ------------------------------------------------------------
+
+
+def test_every_write_goes_through_the_one_helper():
+    """SOURCE. One POST in the page, in lib/api.ts, and it names the
+    dashboard as the actor -- so the actor and the declared-path checks in
+    tests/test_server.py cover every write by construction."""
+    src = source()
+    assert len(re.findall(r'method:\s*"POST"', src)) == 1
+    api = (SRC / "lib" / "api.ts").read_text(encoding="utf-8")
+    assert 'method: "POST"' in api
+    assert 'actor: "dashboard"' in api
 
 
 def test_page_carries_the_ratification_decision():
     """A pending partition is a decision waiting on a human, so it lives in
-    Queues beside the other two -- no page and no rail item of its own."""
-    text = page()
-    for marker in ("Awaiting your ratification", "do-ratify", "do-reject",
-                   "slicing/proposal", "Preview in the spine"):
-        assert marker in text, f"the decision surface lost {marker!r}"
-
-
-def test_the_deciding_controls_write_through_declared_actions():
-    """The one write this page makes, and it is an ordinary relative POST.
-
-    Served at /dashboard it reaches this unit directly; framed under the
-    node it lands inside the proxied prefix, where the proxy forwards it
-    because the path is one of the two declared at /actions. No
-    postMessage, no node internals, still works standalone.
-    """
-    text = page()
-    assert 'method:"POST"' in text.replace(" ", ""), "the page makes no write at all"
-    # Relative, like every read. An absolute path would reach the NODE.
-    assert not re.search(r"fetch\(\s*[\"'`]\s*/", text)
-    assert '"projects/"+enc(STATE.project)+"/slicing/proposal/"' in text.replace(" ", "")
-    for control in ("do-ratify", "do-reject-confirm"):
-        assert f'"{control}").onclick' in text, f"{control} does nothing"
+    Queues beside the other two -- no page of its own."""
+    assert "A slicing proposal is waiting on you" in page()
+    api = (SRC / "lib" / "api.ts").read_text(encoding="utf-8")
+    assert "/slicing/proposal/ratify`" in api and "/slicing/proposal/reject`" in api
 
 
 def test_a_rejection_cannot_be_submitted_without_a_reason():
-    """The note is not decoration: it is kept as `last_rejection` and shown
-    to the next slicing session. Without it that session proposes the same
-    cut again and the round is wasted."""
-    text = page()
-    assert '"do-reject-confirm"${' in text.replace(" ", ""), (
-        "confirm is no longer driven by whether a reason exists"
-    )
-    assert "rejectDraft.note.trim()?" in text.replace(" ", "")
-    assert '"reject-note").oninput' in text, "nothing ever records the reason"
-
-
-def test_the_notice_does_not_claim_the_write_is_enforced():
-    """Absent from /tools means *not offered to the model*, and not one
-    step more. A caller with a shell reaches this unit directly whatever
-    the dashboard does. Saying otherwise on the page would be the page
-    claiming a guarantee the system does not make."""
-    text = page()
-    assert "not one step more" in text or "not one step further" in text
-    assert "do not read this as enforced" in text.lower()
-
-
-def test_preview_does_not_overwrite_real_slice_membership():
-    """Previewing a decision must never look like having taken it, so the
-    proposed membership is held beside the real one rather than replacing
-    it, and the strip carries a flag while it is on."""
-    text = page()
-    assert "trueSlice" in text and "propSlice" in text
-    assert "previewflag" in text
-
-
-def test_the_page_carries_a_spine_and_a_build_order():
-    """Two questions, two views. The spine answers what derives from what
-    and is a graph. Order answers what gets handed out and in what order,
-    and is a timeline of cards -- it left the canvas because a list of
-    tickets is a document, not a diagram."""
-    text = page()
-    for marker in ('data-v="order"', "drawOrder", "drawScene", 'id="order"',
-                   "clustersIn", "unitChain"):
-        assert marker in text, f"the order view lost {marker!r}"
-    # The entry-level dependency drawing it replaced is gone, not hidden.
-    for dead in ("buildOrderScene", "stepDepth", "ord-layer", "drawLayerPicker"):
-        assert dead not in text, f"{dead!r} outlived the order view it belonged to"
-
-
-def test_the_order_view_cannot_hang_on_a_cycle():
-    """The gates refuse a cycle and a unit graph anchored on spec entries
-    cannot express one, but this view still walks edges it did not compute.
-    Both of its walks carry a seen-set, so the worst a malformed payload can
-    do is draw a short chain."""
-    text = page()
-    i = text.index("function unitChain(")
-    assert "seen.has(k)) continue" in text[i:i + 900], "the chain walk can revisit"
-    j = text.index("function clustersIn(")
-    assert "seen.has(other)" in text[j:j + 700], "the cluster walk can revisit"
-
-
-def test_grouped_columns_share_a_midline():
-    """Layers are wildly uneven -- nine intents against thirty-four
-    architecture entries -- and hanging every column from the top puts the
-    short one opposite the start of the long one."""
-    text = page()
-    assert "assignYGrouped" in text
-    assert "tallest" in text
-
-
-def test_slice_grouping_is_the_only_layout():
-    """Ungrouped was a second reading of the same picture that nobody chose
-    deliberately, and the control mostly sat on the wrong setting."""
-    text = page()
-    assert "const GROUPED=true;" in text
-    assert "t-group" not in text, "the toggle should be gone, not defaulted"
-
-
-def test_grouping_resolves_a_slice_through_every_node_being_drawn():
-    """Slices were read off STATE.byId, which holds no ghosts -- so every
-    copy fell into "unsliced" and the band lost slice grouping exactly where
-    the reader needs to know which column a scenario judges."""
-    text = page()
-    assert "const nodeOf = id =>" in text
-    assert 'const s=nodeOf(id).slice||"unsliced";' in text
-
-
-def test_a_copy_can_actually_be_clicked():
-    """An SVG rect with fill:none takes no pointer events, so a click on a
-    ghost fell through to the canvas -- which reads that as clicking blank
-    space and CLEARS the selection. Inert and quietly destructive."""
-    text = page()
-    ghost = re.search(r"\.node\.ghost rect\{([^}]*)\}", text).group(1)
-    unbuilt = re.search(r"\.node\.unbuilt rect\{([^}]*)\}", text).group(1)
-    for rule in (ghost, unbuilt):
-        assert "fill:none" in rule
-        assert "pointer-events:all" in rule
-
-
-def test_the_fork_can_be_drawn_two_ways():
-    """Band and inline trade against each other rather than one being right:
-    band reads as one picture but duplicates every judged contract and puts
-    the chain back to intent off screen; inline duplicates nothing and reads
-    straight across but scatters verification down the whole corpus."""
-    text = page()
-    assert 'let LAYOUT="band";' in text
-    assert 'const inline = LAYOUT === "inline";' in text
-    # The data is identical in both -- this is a drawing decision only, so
-    # both branches read the same STATE and neither filters by layer.
-    i = text.index("function buildScene(")
-    body = text[i:i + 900]
-    assert "? (withVerify ? STATE.entries" in body
-    assert "STATE.entries.filter(e => e.band !== VERIFY)" in body
-    # Whether the verification band is shown is a separate axis from which
-    # of the two layouts is drawn; conflating them would make the toggle a
-    # third layout mode.
-    assert "const withVerify" in body
-
-
-def test_only_the_spine_writes_the_crossings_kpi():
-    """Edge crossings are a property of a drawn graph. The order view draws
-    no edges at all, so anything it wrote there would be a different number
-    under that label -- which is how a dashboard starts lying quietly."""
-    text = page()
-    i = text.index("function drawOrder(")
-    j = text.index("function drawScene(")
-    assert "k-xing" not in text[i:j], "the order view writes the crossings KPI"
-    assert text.count('$("k-xing")') == 2, "the crossings KPI has a new writer"
-
-
-def test_page_carries_a_reading_view():
-    """The graph views answer questions about structure. Neither answers
-    "what does this project actually say", which is what a person needs
-    while the entries are still being written and each has to be read at
-    least once. Clicking 78 nodes is auditing, not reading."""
-    text = page()
-    for marker in ('data-v="read"', "drawRead", "READ_CACHE", "rd-layer", "rd-find"):
-        assert marker in text, f"the read view lost {marker!r}"
-
-
-def test_the_reading_view_reads_whole_layers_not_single_entries():
-    """One request per layer, bodies included, from the endpoint a reviewer
-    already uses. Per-entry fetches would be 78 round trips to render one
-    document."""
-    text = page()
-    assert "/review?layer=" in text
-    # The per-entry read stays for the inspector, and must not be what the
-    # document is built from.
-    assert text.count("/review?layer=") >= 1
-
-
-def test_the_reading_view_survives_two_loads_in_flight():
-    """Switching layer twice quickly leaves two requests running. The slower
-    one must not overwrite the faster one's document."""
-    text = page()
-    assert "READ_TOKEN" in text
-    assert "mine!==READ_TOKEN" in text.replace(" ", "")
-
-
-def test_bodies_are_escaped_in_the_reading_view():
-    """This view renders more agent-written text than anything else on the
-    page -- every body at once. Requirement 8 applies hardest here."""
-    text = page()
-    assert 'class="bd">${esc(r.body' in text.replace(" ", "") or            '${esc(r.body||"")}' in text
-
-
-# -- staying current ----------------------------------------------------
-
-
-def test_the_page_refreshes_itself():
-    """The node cannot do this for a page-tier unit: its only lever is
-    reloading the frame, which discards pan, zoom, selection, the outline's
-    position and any half-typed text."""
-    text = page()
-    for marker in ("POLL_MS", "function tick", "schedulePoll", "startPolling"):
-        assert marker in text, f"the poller lost {marker!r}"
-    assert "10000" in text, "the interval no longer matches the node's chrome"
-
-
-def test_an_unchanged_poll_touches_nothing():
-    """Rule 1, and the one that does the most work. Most polls find no
-    change, so the common case must cost a string comparison and no DOM."""
-    text = page()
-    assert "LAST_SIG" in text and "function signatures" in text
-    assert "every(k => now[k] === was[k])" in text, "nothing short-circuits"
-
-
-def test_a_poll_never_steals_the_view():
-    """Rule 2. A redraw driven by a poll must not re-fit the graph: pan and
-    zoom are state the reader created."""
-    text = page()
-    assert "KEEP_VIEW" in text
-    assert text.count("if(!KEEP_VIEW) requestAnimationFrame(fit)") >= 1, (
-        "a view redraw path re-fits during a poll"
-    )
-
-
-def test_a_structural_redraw_puts_the_selection_back():
-    """drawScene rebuilds every node, discarding the classes that carry the
-    selection and the slice focus. Without a repaint the graph silently
-    un-dims itself on the tick that adds an entry."""
-    text = page()
-    i = text.index("if(structural && MODE !== \"read\")")
-    assert "repaint();" in text[i:i + 500], "a structural redraw drops the selection"
-
-
-def test_only_transient_interaction_pauses_the_refresh():
-    """Rule 4's first half. A drag, an open menu and a click in flight each
-    resolve in seconds on their own, so pausing for them is safe."""
-    text = page()
-    assert "function readerIsBusy" in text
-    for guard in ("POINTER_DOWN", "DRAGGING", "SELECT"):
-        assert guard in text, f"readerIsBusy ignores {guard}"
-    # A plain flag, not a class on the canvas: `cursor` is inherited, so
-    # writing a class there recalculated style for the whole scene twice
-    # per click. Nothing may put an inherited property on an ancestor of
-    # the graph and toggle it.
-    assert ".canvas.dragging" not in text
-    assert "#grabpad{" in text
-
-
-def test_uncommitted_input_is_protected_without_freezing_the_page():
-    """Rule 4's second half, and the trap it names. Pausing on a half-written
-    note looks like the same rule: a reader who types one character and
-    wanders off would stop the page updating indefinitely, with nothing on
-    screen to explain it.
-
-    Protection means *this field is not yours to overwrite* -- so the draft
-    lives in STATE and the textarea is rendered from it. Reconciliation
-    cannot clobber what it does not author.
-    """
-    text = page()
-    assert "rejectDraft" in text, "the draft is not held anywhere durable"
-    # The note must NOT be a reason to stop polling.
-    start = text.index("function readerIsBusy")
-    body = text[start:start + 700]
-    assert "reject-note" not in body, "a half-written note still freezes the page"
-    assert "RD_FIND" not in body, "a typed filter still freezes the page"
-    # Ends on submit or cancel, never on blur.
-    assert text.count('rejectDraft={open:false,note:""}') >= 2, (
-        "the draft is not cleared on both submit and cancel"
-    )
-    assert "onblur" not in text.lower()
-
-
-def test_the_caret_survives_a_refresh_too():
-    """Rendering from STATE preserves the text but not where the caret was,
-    and a refresh that drops it mid-sentence is the same theft in a smaller
-    form."""
-    text = page()
-    assert "captureDraftFocus" in text and "restoreDraftFocus" in text
-    assert "setSelectionRange" in text
-
-
-def test_a_hidden_tab_does_not_poll():
-    """Rule 5. A frame inherits the parent page's visibility, so this needs
-    nothing from the node."""
-    assert "visibilityState" in page()
-
-
-def test_failure_backs_off_and_is_visible():
-    """Rule 6. A dashboard that silently keeps showing its last good data
-    while the unit is unreachable is lying."""
-    text = page()
-    assert "BACKOFF_MAX" in text
-    assert "unreachable" in text
-
-
-def test_the_reading_position_is_restored_instantly():
-    """Restoring a position the reader never left must not animate, or the
-    document slides under their eyes on every tick. Smooth scrolling is
-    opted into per gesture instead of set on the container."""
-    text = page()
-    assert "scroll-behavior:smooth}" not in text.replace(" ", ""), (
-        "a container-level smooth scroll makes restores non-deterministic"
-    )
-    assert "drawReadKeepingPlace" in text
-    assert 'behavior:"smooth"' in text.replace(" ", ""), "no gesture opts in"
-
-
-def test_page_escapes_stored_text():
-    """Entry bodies, titles and issue claims were written by whoever
-    could reach this unit. They are shown as text, never parsed as
-    markup."""
-    text = page()
-    assert "function esc" in text or "const esc=" in text
-    # No identifier interpolated straight into an inline handler.
-    assert not re.search(r'onclick="\w+\(\$\{', text)
-
-
-# -- the verification band ---------------------------------------------------
-
-
-def test_tests_are_a_column_between_spec_and_modules():
-    """The column order is load-bearing. Tests sit between Spec and Modules on
-    x, so the corpus leaves that column empty and the band below occupies
-    exactly Spec, Tests and Modules -- which is what puts a scenario under the
-    contract it judges rather than beside it."""
-    page = dashboard.read_page()
-    layers = re.search(r"const LAYERS=\[(.*?)\];", page, re.S).group(1)
-    order = re.findall(r'\["([IBASTM])"', layers)
-    assert order == ["I", "B", "A", "S", "T", "M"]
-
-
-def test_the_band_is_laid_out_separately_from_the_corpus():
-    """Two bands, laid out independently. Crossing reduction inside the
-    verification band must not be dragged around by the corpus above it, so
-    adjacency is built from the node set being laid out rather than from all
-    of STATE."""
-    page = dashboard.read_page()
-    assert "function layoutBand(" in page
-    assert "function adjacency(nodes)" in page
-    assert "STATE.entries.filter(e => e.band !== VERIFY)" in page
-
-
-def test_a_ghost_is_never_an_entry():
-    """The copy of a spec entry under the scenarios that judge it exists so
-    that edge is one short hop instead of an arc across the whole picture.
-    It must resolve back to the real entry everywhere a reader can act on
-    it, or selecting one would open something that does not exist."""
-    page = dashboard.read_page()
-    assert "const GHOST = id =>" in page
-    assert "const realOf = id =>" in page
-    # selection resolves the copy to the entry it copies
-    assert re.search(r"function pick\(id\)\{\s*\n\s*id = realOf\(id\);", page)
-
-
-def test_scenarios_have_no_slice_of_their_own():
-    """A test's column is its parent's, resolved from the graph. A stored
-    membership would be the second copy that goes stale the first time a
-    slice splits -- which is the same argument the unit itself makes."""
-    page = dashboard.read_page()
-    assert "if(e.test) e.slice = (byId[e.derives[0]] || {}).slice" in page
-
-
-def test_an_unbuilt_scenario_is_not_styled_as_a_failure():
-    """A scenario written but not built is in no work unit, orders nothing,
-    and is not yet expected to pass. Drawn as unfinished, never as broken --
-    so it must not take a warning colour."""
-    page = dashboard.read_page()
-    rule = re.search(r"\.node\.unbuilt rect\{([^}]*)\}", page).group(1)
-    assert "--warn" not in rule and "--down" not in rule
-    assert "stroke-dasharray" in rule
-
-
-def test_the_spine_renders_only_what_is_near_the_viewport():
-    """`dark` is 783 nodes and 1,204 edges in a scene 39,406 px tall, of
-    which 24 nodes are on screen. Drawing all of it re-rasterised 105
-    megapixels per pan frame, and a compositor layer is not available at
-    that size -- so the DOM holds a viewport's worth and the scene model
-    stays whole."""
-    text = page()
-    for marker in ("function renderLive(", "function visibleRect(", "CULL_PAD",
-                   "RENDERED", 'svgEl("g",{id:"live"})'):
-        assert marker in text, f"culling lost {marker!r}"
-    # Moving the view has to be able to pull more in, or panning reaches
-    # the edge of what was drawn and stops showing anything.
-    i = text.index("function applyView(")
-    assert "renderLive(false)" in text[i:i + 400], "the view can move past what is drawn"
-
-
-def test_an_edge_is_culled_by_the_span_it_covers():
-    """The failure this is guarding: a depends_on arc on `dark` runs twenty
-    thousand pixels and its control points sit left of its own column, so
-    the drawn curve is wider than its endpoints. Culled on endpoints alone,
-    lines vanish across the middle of the screen while both ends are off
-    it."""
-    text = page()
-    i = text.index("function renderLive(")
-    body = text[i:i + 2600]
-    # the lane offset that hPath bulges by must be part of the test
-    assert "a.x-30-e.lane*17" in body, "horizontal edges ignore their own bulge"
-    assert "Math.min(gx,a.x,b.x)" in body, "the bulge is not in the culled span"
-
-
-def test_fitting_reads_the_scene_model_not_the_dom():
-    """With culling the DOM describes one screenful. Fitting to its bounding
-    box would zoom to whatever happened to be rendered and then cull to
-    that -- a loop that converges on a corner of the graph."""
-    text = page()
-    i = text.index("const fit=()=>")
-    body = text[i:i + 200]
-    assert "SCENE.bbox" in body
-    assert "getBBox" not in body, "fit still measures the rendered subset"
-
-
-def test_the_spine_does_not_render_work_units():
-    """Two renderings of one fact drift apart, which is the failure this
-    design refuses everywhere else. A work unit is what gets handed out, in
-    what order, beside what else -- the Order view's question, and it owns
-    the answer. The spine names the unit an entry belongs to and hands off.
-
-    The peer-lighting this replaces was not wrong; it was a second place the
-    same relation had to be kept true."""
-    page = dashboard.read_page()
-    assert "function unitSet()" not in page, "the spine still groups by unit"
-    assert ".node.peer" not in page, "the spine still lights unit peers"
-    assert "<hull" not in page
-    # What is left: the name, and a way to the view that owns it.
-    i = page.index("function unitPanel(")
-    body = page[i:i + 700]
-    assert 'id="to-order"' in body, "no way through to the Order view"
-    for gone in ("follows", "waited on by", "disjoint"):
-        assert gone not in body, f"the spine still reports {gone!r} for a unit"
-
-
-def test_the_spine_reads_the_live_projection_not_the_stored_cut():
-    """The two answer different questions. The spine answers "what would I
-    build now", so it takes the live graph -- the same choice get_work_unit
-    makes. A stale cut made an entry's Verification panel say it follows a
-    test unit directly above a Work unit panel saying it waits on nothing."""
-    page = dashboard.read_page()
-    body = re.search(r"function unitSource\(\)\{(.*?)\n\}", page, re.S).group(1)
-    assert "u.live" in body
-    assert body.index("u.live") < body.index("u.cut")
-
-
-def test_the_waves_copy_states_both_sources_of_unit_order():
-    """It used to say order comes from depends_on and nothing else. That was
-    true until verification became a second source, and a paragraph
-    confidently stating a false rule is worse than no paragraph."""
-    page = dashboard.read_page()
-    assert "Order has</b> two sources" in page or "Order has <b>two</b> sources" in page
-    assert "follows the unit\n    holding the scenarios" in page \
-        or "follows the unit" in page
-
-
-# -- the ship view ----------------------------------------------------------
-
-
-def test_the_ship_view_is_reachable_and_has_a_pane():
-    """A nav button with no pane is a button that blanks the stage."""
-    page = dashboard.read_page()
-    assert 'data-v="ship"' in page
-    assert 'id="ship"' in page
-    assert page.count('id="ship"') == 1
-
-
-def test_shipping_reads_the_two_routes_it_needs():
-    """`/repo` says where tickets go and `/emit` says how far a run got.
-    Both are soft reads: a project that has never shipped has neither, and
-    that is a new project rather than a broken one."""
-    page = dashboard.read_page()
-    assert '"/repo"' in page and '"/emit"' in page
-    assert 'soft(base + "/repo"' in page
-    assert 'soft(base + "/emit"' in page
-
-
-def test_the_ship_button_is_guarded_by_its_preconditions():
-    """A refusal arriving after the press is one the reader could have been
-    told about before forming the intention -- and this press costs several
-    hundred issues on somebody's repository when it goes the other way."""
-    page = dashboard.read_page()
-    assert "function shipReady()" in page
-    assert "const blocked = !(r.repo && r.cut && r.sound && r.fresh && r.token)" in page
-    assert 'id="do-ship"' in page
-
-
-def test_the_run_is_polled_separately_from_the_project():
-    """A run advances several times a second; the project payload is far too
-    much to re-read at that rate, and the ordinary interval is far too slow to
-    watch progress with."""
-    page = dashboard.read_page()
-    assert "function watchEmission()" in page
-    assert "EMIT_TIMER" in page
-
-
-def test_a_run_in_flight_is_not_overwritten_by_an_ordinary_tick():
-    """The project poll and the run poll both write the panel. Without this
-    the slower one lands mid-run and replaces live progress with a snapshot
-    taken before it."""
-    page = dashboard.read_page()
-    assert "!(STATE.emission && STATE.emission.running)" in page
-
-
-def test_every_value_the_tracker_returns_is_escaped():
-    """Issue titles, labels and failure reasons are text this unit did not
-    write. None of it may reach the page as markup."""
-    page = dashboard.read_page()
-    start = page.index("function shipTrouble")
-    end = page.index("function drawShip")
-    for field in ("f.key", "f.reason", "u.blocked", "u.blocker", "u.reason",
-                  "k.key", "k.reason"):
-        assert f"esc({field})" in page[start:end], f"{field} is interpolated raw"
+    """SOURCE. The note is not decoration: it is kept as `last_rejection` and
+    shown to the next slicing session. Without it that session proposes the
+    same cut again and the round is wasted."""
+    src = (SRC / "pages" / "screens.tsx").read_text(encoding="utf-8")
+    assert "disabled={!note.trim()" in src
+    assert "write.reject(p, note.trim())" in src
 
 
 def test_the_token_is_a_verdict_and_never_a_value():
-    """The last precondition the panel could not answer. The unit reports a
-    boolean; nothing on the page asks for, renders, or stores the token, and
-    there is no route that would return one."""
-    page = dashboard.read_page()
-    assert "STATE.emission && STATE.emission.token" in page
-    assert "r.repo && r.cut && r.sound && r.fresh && r.token" in page
-    # No input, no field, no echo. The only mention is the variable NAME, as a
-    # remedy for a reader whose token is missing.
-    assert 'id="token' not in page
-    assert "token-in" not in page
-    assert page.count("MU_SPEC_GITHUB_TOKEN") == 1
+    """The unit reports a boolean; nothing on the page asks for, renders, or
+    stores the token, and there is no route that would return one. The only
+    mention is the variable NAME, as a remedy for a missing token."""
+    text, src = page(), source()
+    assert 'id="token' not in text and "token-in" not in text
+    assert src.count("MU_SPEC_GITHUB_TOKEN") == 1
+    assert "d.emission.token" in src
 
 
-def test_the_ship_pane_offers_one_unit_and_sends_the_build_it_read():
-    """M30: a one-unit press is a setting in the left column, and every press
-    names the build the page read, so another build answering refuses."""
-    page = dashboard.read_page()
-    where = page[page.index('<div class="where">'):page.index('<div class="count">')]
-    assert 'id="hm-one"' in where and 'id="unit-in"' in where
-    assert "{unit: pf.unit}" in page and "out.build = build" in page
-    assert "STATE.emission.build" in page
-
-
-def test_the_shipped_preview_is_the_units_own_count():
-    """M29: the held count is what the press holds, computed by the unit."""
-    page = dashboard.read_page()
-    assert "const server = e.shipped;" in page
-    assert "held back" in page
+def test_the_spine_draws_only_edges_the_unit_has():
+    """mu-spec stores derives-from and depends-on. The design also drew
+    "contradicts" and "parent of"; drawing either would be faking data."""
+    code = re.sub(r"//[^\n]*", "", source())  # the comment saying why may name it
+    for text in (page(), code):
+        assert "contradicts" not in text
+    assert re.search(r'export type EdgeKind = "derives" \| "depends"\n', source())

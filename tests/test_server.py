@@ -3245,22 +3245,16 @@ def _page_post_paths() -> set[str]:
     """Every path the dashboard POSTs to, as an /actions path template.
 
     Extracted from the page rather than listed here: a list would be a second
-    statement of the same fact, and the one that goes stale is the copy.
+    statement of the same fact, and the one that goes stale is the copy. Read
+    from the page's source -- every write is a `post(...)` call in
+    app/src/lib/api.ts (tests/test_dashboard.py holds it to one POST helper)
+    -- because the built file is minified and its paths are no longer literal.
     """
-    page = Path("mu_spec/dashboard.html").read_text(encoding="utf-8")
+    api = (Path(__file__).resolve().parent.parent / "app/src/lib/api.ts").read_text(encoding="utf-8")
     paths = set()
-    # The gap must not swallow another fetch: `.*?` across the whole page
-    # pairs the first fetch with a much later POST and yields nonsense.
-    pattern = r'fetch\(((?:(?!fetch\().)*?)\{\s*\n?\s*method\s*:\s*"POST"'
-    for call in re.finditer(pattern, page, re.S):
-        expr = call.group(1)
-        # "projects/" + enc(STATE.project) + "/repo"  ->  projects/{project}/repo
-        expr = re.sub(r'"\s*\+\s*enc\(STATE\.project\)\s*\+\s*"', "{project}", expr)
-        # A dynamic tail -- "/slicing/proposal/" + what -- names a segment the
-        # page chooses at press time. Both spellings must be declared, so the
-        # template keeps the literal prefix and the test checks by prefix.
-        literal = "".join(re.findall(r'"([^"]*)"', expr))
-        paths.add(literal.strip().rstrip(",").rstrip("/"))
+    for tpl in re.findall(r"\bpost\(\s*`([^`]*)`", api):
+        # `projects/${enc(p)}/repo`  ->  projects/{project}/repo
+        paths.add(re.sub(r"\$\{enc\(p\)\}", "{project}", tpl).rstrip("/"))
     return paths
 
 
@@ -3287,15 +3281,14 @@ def test_every_button_on_the_page_is_a_declared_action(store, prompts):
 def test_every_post_the_page_makes_names_the_dashboard_as_actor():
     """The change log reads `actor` from the body first, and the body is what
     the node's proxy forwards for sure. Without it every press logs as
-    "unknown" and a person's write is indistinguishable from a lost one."""
-    page = Path("mu_spec/dashboard.html").read_text(encoding="utf-8")
-    # From the POST to the fetch's closing brace, on its own line.
-    calls = re.findall(r'method\s*:\s*"POST"(.*?)\n\s*\}\s*\)', page, re.S)
-    assert len(calls) == len(_page_post_paths()) >= 5
-    for options in calls:
-        assert 'actor:"dashboard"' in options.replace(" ", ""), (
-            f"a dashboard POST sends no actor: {options.strip()[:120]}"
-        )
+    "unknown" and a person's write is indistinguishable from a lost one.
+
+    Every write goes through the one `post` helper in app/src/lib/api.ts,
+    which spreads `actor: "dashboard"` into the body after the caller's
+    fields, so no caller can leave it out or overwrite it."""
+    api = (Path(__file__).resolve().parent.parent / "app/src/lib/api.ts").read_text(encoding="utf-8")
+    assert "JSON.stringify({ ...body, actor: \"dashboard\" })" in api
+    assert len(_page_post_paths()) >= 7
 
 
 def test_actions_declares_no_path_the_page_never_presses(store, prompts):
